@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#18c1d8" />
+  <title>Operations01</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="dot"></span> Operations01</div>
+      <!-- éléments de navigation injectés par app.js -->
+      <div class="drivebar" id="driveBar"></div>
+    </aside>
+    <main class="content" id="content">
+      <!-- contenu injecté par app.js -->
+    </main>
+  </div>
+
+  <nav class="tabbar" id="tabbar"><!-- onglets mobiles injectés --></nav>
+
+  <div class="install-banner" id="installBanner">
+    <div class="grow">
+      <strong>Installer Operations01</strong>
+      <div class="muted" style="font-size:12px">Ajoutez l'app à votre écran d'accueil / bureau.</div>
+    </div>
+    <button class="btn small" id="installBtn">Installer</button>
+    <button class="btn ghost small" id="installClose">✕</button>
+  </div>
+
+  <script src="https://accounts.google.com/gsi/client" async></script>
+  <script src="config.js"></script>
+  <script src="drive.js"></script>
+  <script src="app.js"></script>
+  <script>
+    // Enregistrement du service worker (hors ligne + installation)
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("service-worker.js").catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>

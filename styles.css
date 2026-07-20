@@ -1,0 +1,154 @@
+:root {
+  --primary:  #18c1d8;
+  --positive: #4dc8bb;
+  --activity: #7fce9f;
+  --finance:  #a2d28c;
+  --planning: #c3d679;
+  --alert:    #e9db65;
+  --bg: #f6f8f9;
+  --card: #ffffff;
+  --text: #14201f;
+  --muted: #6a7a79;
+  --line: #e6ebeb;
+  --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1514; --card: #1a2221; --text: #e8efee; --muted: #93a3a2; --line: #2a3433;
+    --shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+}
+/* Respect d'un choix de thème explicite (attribut data-theme) — prioritaire sur le média */
+:root[data-theme="light"] {
+  --bg: #f6f8f9; --card: #ffffff; --text: #14201f; --muted: #6a7a79; --line: #e6ebeb;
+  --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+}
+:root[data-theme="dark"] {
+  --bg: #0f1514; --card: #1a2221; --text: #e8efee; --muted: #93a3a2; --line: #2a3433;
+  --shadow: 0 1px 3px rgba(0,0,0,.4);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg); color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Mise en page : barre latérale + contenu (grand écran) */
+.app { display: grid; grid-template-columns: 240px 1fr; height: 100vh; }
+.sidebar {
+  background: var(--card); border-right: 1px solid var(--line);
+  padding: 16px 10px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto;
+}
+.brand { display:flex; align-items:center; gap:10px; padding: 6px 10px 14px; font-weight: 700; font-size: 18px; }
+.brand .dot { width: 26px; height: 26px; border-radius: 8px; background: linear-gradient(135deg, var(--primary), var(--activity)); }
+.nav-item {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px;
+  cursor: pointer; color: var(--text); font-size: 15px; border: none; background: none; text-align: left; width: 100%;
+}
+.nav-item:hover { background: rgba(24,193,216,.08); }
+.nav-item.active { background: var(--primary); color: #fff; }
+.nav-item .ic { width: 20px; text-align: center; }
+
+.content { overflow-y: auto; padding: 22px clamp(16px, 4vw, 40px) 90px; }
+.page-title { font-size: 26px; font-weight: 700; margin: 4px 0 18px; }
+
+/* Barre d'onglets bas (mobile) */
+.tabbar { display: none; }
+
+@media (max-width: 720px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+  .content { padding: 16px 16px 84px; }
+  .tabbar {
+    display: flex; position: fixed; bottom: 0; left: 0; right: 0; height: 62px;
+    background: var(--card); border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .tabbar button {
+    flex: 1; border: none; background: none; color: var(--muted);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    font-size: 10px; cursor: pointer;
+  }
+  .tabbar button.active { color: var(--primary); }
+  .tabbar .ic { font-size: 18px; }
+}
+
+/* Cartes et listes */
+.card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; }
+.list { display: flex; flex-direction: column; gap: 10px; }
+.row {
+  background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 12px 14px; display: flex; align-items: center; gap: 12px; cursor: pointer;
+  border-left: 5px solid var(--line);
+}
+.row:hover { background: rgba(24,193,216,.04); }
+.row .grow { flex: 1; min-width: 0; }
+.row .r-title { font-weight: 600; }
+.row .r-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.muted { color: var(--muted); }
+.center-empty { text-align: center; color: var(--muted); padding: 48px 12px; }
+
+/* Badges de statut */
+.badge { font-size: 11px; padding: 3px 9px; border-radius: 999px; white-space: nowrap; font-weight: 600; }
+.badge.enCours   { background: rgba(24,193,216,.18); color: #0e7f90; }
+.badge.aDemarrer { background: rgba(195,214,121,.28); color: #6f7a2e; }
+.badge.enPause   { background: rgba(233,219,101,.28); color: #7a6b17; }
+.badge.terminee  { background: rgba(77,200,187,.22); color: #1f8074; }
+@media (prefers-color-scheme: dark) {
+  .badge.enCours{color:#5fd6e8}.badge.aDemarrer{color:#c3d679}.badge.enPause{color:#e9db65}.badge.terminee{color:#7fdccb}
+}
+
+/* Boutons */
+.btn {
+  border: none; border-radius: 10px; padding: 9px 14px; font-size: 14px; font-weight: 600;
+  cursor: pointer; background: var(--primary); color: #fff; display: inline-flex; align-items: center; gap: 8px;
+}
+.btn.secondary { background: rgba(24,193,216,.12); color: var(--primary); }
+.btn.ghost { background: none; color: var(--primary); }
+.btn.danger { background: rgba(220,60,60,.12); color: #d23c3c; }
+.btn.small { padding: 6px 10px; font-size: 13px; }
+.fab {
+  position: fixed; right: 22px; bottom: 84px; width: 54px; height: 54px; border-radius: 50%;
+  font-size: 26px; box-shadow: var(--shadow); z-index: 20;
+}
+@media (min-width: 721px) { .fab { bottom: 28px; } }
+
+.toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.toolbar .grow { flex: 1; }
+
+/* Formulaires */
+label.field { display: block; margin: 12px 0; }
+label.field > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+input, select, textarea {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg); color: var(--text); font-size: 15px; font-family: inherit;
+}
+textarea { min-height: 72px; resize: vertical; }
+.inline { display: flex; gap: 10px; align-items: center; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+.chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+/* Détail mission : entrées d'historique */
+.entry { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; }
+.entry-head { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.entry-head .ic { width: 22px; text-align: center; }
+.entry-body { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.timer { font-variant-numeric: tabular-nums; font-weight: 600; }
+.running { color: var(--primary); }
+
+.section-h { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 22px 0 8px; }
+.back { background: none; border: none; color: var(--primary); font-size: 15px; cursor: pointer; padding: 4px 0; margin-bottom: 8px; display: inline-flex; align-items: center; gap: 6px; }
+.drivebar { margin-top: auto; padding: 12px 10px 4px; border-top: 1px solid var(--line); }
+
+/* Bandeau installation */
+.install-banner {
+  position: fixed; left: 12px; right: 12px; bottom: 74px; z-index: 30;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+  padding: 12px 14px; display: none; align-items: center; gap: 12px;
+}
+@media (min-width: 721px) { .install-banner { left: auto; right: 22px; width: 340px; bottom: 22px; } }
