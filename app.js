@@ -1,54 +1,65 @@
-/* Operations01 — web app (PWA). Données stockées localement dans le navigateur.
-   Première version : Missions (liste + détail), historique typé avec chronomètre,
-   et un récapitulatif Temps. Les autres sections arrivent ensuite. */
-
+/* Operations01 — web app (PWA). Données locales (localStorage) + Google Drive.
+   Sections : Missions, Temps, Finances, Contacts, Groupe, Tableau de bord. */
 "use strict";
 
-// ----------------------------- Données -----------------------------
-const STORE_KEY = "operations01";
-
+// ----------------------------- Référentiels -----------------------------
 const STATUSES = [
-  { code: "enCours",   label: "En cours",    rank: 0 },
-  { code: "aDemarrer", label: "À démarrer",  rank: 1 },
-  { code: "enPause",   label: "En pause",    rank: 2 },
-  { code: "terminee",  label: "Terminée",    rank: 3 },
+  { code: "enCours", label: "En cours", rank: 0 },
+  { code: "aDemarrer", label: "À démarrer", rank: 1 },
+  { code: "enPause", label: "En pause", rank: 2 },
+  { code: "terminee", label: "Terminée", rank: 3 },
 ];
 const statusLabel = (c) => (STATUSES.find((s) => s.code === c) || STATUSES[1]).label;
-const statusRank  = (c) => (STATUSES.find((s) => s.code === c) || STATUSES[1]).rank;
+const statusRank = (c) => (STATUSES.find((s) => s.code === c) || STATUSES[1]).rank;
 
 const KINDS = [
-  { code: "note",        label: "Note",     ic: "📝" },
-  { code: "email",       label: "E-mail",   ic: "✉️" },
-  { code: "visio",       label: "Visio",    ic: "🎥" },
-  { code: "action",      label: "Action",   ic: "✅" },
+  { code: "note", label: "Note", ic: "📝" }, { code: "email", label: "E-mail", ic: "✉️" },
+  { code: "visio", label: "Visio", ic: "🎥" }, { code: "action", label: "Action", ic: "✅" },
   { code: "deliverable", label: "Livrable", ic: "📦" },
 ];
 const kindMeta = (c) => KINDS.find((k) => k.code === c) || KINDS[0];
 
+const ROLES = [{ code: "holding", label: "Holding" }, { code: "filiale", label: "Filiale" }];
+const CONTACT_CATS = [
+  { code: "client", label: "Client" }, { code: "prospect", label: "Prospect" },
+  { code: "financeur", label: "Financeur" }, { code: "partenaire", label: "Partenaire" },
+  { code: "fournisseur", label: "Fournisseur" }, { code: "institution", label: "Institution" },
+  { code: "concurrent", label: "Concurrent" }, { code: "associe", label: "Associé" },
+];
+const contactCatLabel = (c) => (CONTACT_CATS.find((x) => x.code === c) || CONTACT_CATS[0]).label;
+const DIRECTIONS = [{ code: "recette", label: "Recette" }, { code: "depense", label: "Dépense" }];
+const INV_STATUSES = [
+  { code: "aEmettre", label: "À émettre" }, { code: "emise", label: "Émise" },
+  { code: "aPayer", label: "À payer" }, { code: "payee", label: "Payée" },
+];
+const invStatusLabel = (c) => (INV_STATUSES.find((x) => x.code === c) || INV_STATUSES[0]).label;
+
+// ----------------------------- Données -----------------------------
+const STORE_KEY = "operations01";
 let state = load();
 
+function blankState() {
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], updatedAt: 0 };
+}
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return Object.assign(blankState(), JSON.parse(raw));
   } catch (e) {}
-  return { missions: [] };
+  return blankState();
 }
 function save() {
   state.updatedAt = Date.now();
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
   if (window.DriveSync && DriveSync.isConnected()) DriveSync.push(state);
 }
-function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 // ----------------------------- Utilitaires -----------------------------
 function esc(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (m) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])
-  );
+  return String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 }
+const euros = (v) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(v || 0);
 function fmtDuration(sec) {
   sec = Math.max(0, Math.round(sec));
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
@@ -56,234 +67,350 @@ function fmtDuration(sec) {
   if (m > 0) return `${m}min ${String(s).padStart(2, "0")}s`;
   return `${s}s`;
 }
-function fmtDate(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
-}
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
-function validURL(u) {
-  try { const x = new URL(u); return !!x.protocol; } catch (e) { return false; }
-}
+function fmtDate(iso) { if (!iso) return "—"; const d = new Date(iso + (iso.length <= 10 ? "T12:00:00" : "")); return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" }); }
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const parseDate = (iso) => (iso ? new Date(iso + "T12:00:00") : null);
+function validURL(u) { try { return !!new URL(u).protocol; } catch (e) { return false; } }
 
-// Temps écoulé d'une entrée (cumul + session en cours)
-function entryElapsed(e) {
-  const running = e.timerStartedAt ? (Date.now() - e.timerStartedAt) / 1000 : 0;
-  return (e.accumulatedSeconds || 0) + running;
+const companyName = (id) => { const c = state.companies.find((x) => x.id === id); return c ? c.name : ""; };
+const contactName = (c) => `${c.firstName || ""} ${c.lastName || ""}`.trim() || "Sans nom";
+
+// ----------------------------- Finances (calculs) -----------------------------
+const invTTC = (v) => (v.amount || 0) * (1 + (v.vatRate || 0) / 100);
+function invNature(v) { const cat = state.categories.find((c) => c.name === v.categoryName); return cat ? cat.nature : (v.direction === "recette" ? "produit" : "charge"); }
+function invCashDate(v) {
+  if (v.status === "payee" && v.paymentDate) return parseDate(v.paymentDate);
+  if (v.hasDueDate && v.dueDate) return parseDate(v.dueDate);
+  return parseDate(v.startDate) || new Date();
 }
-function missionTotal(m) {
-  return (m.entries || []).reduce((t, e) => t + entryElapsed(e), 0);
+const invSigned = (v) => (v.direction === "recette" ? 1 : -1) * invTTC(v);
+function companyBalance(c, now) {
+  const cb = parseDate(c.cashBalanceDate) || new Date(0);
+  let s = c.initialCashBalance || 0;
+  state.invoices.filter((v) => v.companyId === c.id).forEach((v) => { const d = invCashDate(v); if (d > cb && d <= now) s += invSigned(v); });
+  return s;
 }
+function treasuryEntities() { return state.companies.filter((c) => (c.initialCashBalance || 0) !== 0 || state.invoices.some((v) => v.companyId === c.id)); }
+function treasuryNow(now) { return treasuryEntities().reduce((t, c) => t + companyBalance(c, now), 0); }
+function treasuryProjected(now, days) {
+  const limit = new Date(now.getTime() + days * 86400000);
+  let base = treasuryNow(now);
+  state.invoices.filter((v) => v.companyId).forEach((v) => { const d = invCashDate(v); if (d > now && d <= limit) base += invSigned(v); });
+  return base;
+}
+const recettes = () => state.invoices.filter((v) => v.direction === "recette");
+const depenses = () => state.invoices.filter((v) => v.direction === "depense");
+const sumAmount = (arr) => arr.reduce((t, v) => t + (v.amount || 0), 0);
 
 // ----------------------------- Navigation -----------------------------
 const SECTIONS = [
-  { id: "missions",  label: "Missions",       ic: "🏁", fn: renderMissions },
-  { id: "time",      label: "Temps",          ic: "⏱️", fn: renderTime },
-  { id: "planning",  label: "Planning",       ic: "📊", fn: () => stub("Planning") },
-  { id: "finances",  label: "Finances",       ic: "€",  fn: () => stub("Finances") },
-  { id: "contacts",  label: "Contacts",       ic: "👥", fn: () => stub("Contacts") },
-  { id: "groupe",    label: "Groupe",         ic: "🏢", fn: () => stub("Groupe") },
-  { id: "dashboard", label: "Tableau de bord", ic: "🎛️", fn: () => stub("Tableau de bord") },
+  { id: "missions", label: "Missions", ic: "🏁", fn: renderMissions },
+  { id: "time", label: "Temps", ic: "⏱️", fn: renderTime },
+  { id: "finances", label: "Finances", ic: "€", fn: renderFinances },
+  { id: "contacts", label: "Contacts", ic: "👥", fn: renderContacts },
+  { id: "groupe", label: "Groupe", ic: "🏢", fn: renderGroupe },
+  { id: "dashboard", label: "Tableau de bord", ic: "🎛️", fn: renderDashboard },
+  { id: "planning", label: "Planning", ic: "📊", fn: () => stub("Planning") },
 ];
+let view = { section: "missions", detailId: null };
+function go(section) { view = { section, detailId: null }; render(); }
+function openDetail(section, id) { view = { section, detailId: id }; render(); }
 
-let view = { section: "missions", missionId: null };
-
-function go(section) { view = { section, missionId: null }; render(); }
-function openMission(id) { view = { section: "missions", missionId: id }; render(); }
-
-// ----------------------------- Rendu principal -----------------------------
+// ----------------------------- Rendu -----------------------------
 function render() {
   renderNav();
   const content = document.getElementById("content");
   const sec = SECTIONS.find((s) => s.id === view.section) || SECTIONS[0];
-  if (view.section === "missions" && view.missionId) {
-    content.innerHTML = renderMissionDetail(view.missionId);
-  } else {
-    content.innerHTML = sec.fn();
-  }
+  content.innerHTML = sec.fn();
   wire();
 }
-
 function renderNav() {
   const sidebar = document.getElementById("sidebar");
   sidebar.querySelectorAll(".nav-item").forEach((n) => n.remove());
+  const driveBar = document.getElementById("driveBar");
   SECTIONS.forEach((s) => {
     const b = document.createElement("button");
     b.className = "nav-item" + (s.id === view.section ? " active" : "");
-    b.innerHTML = `<span class="ic">${s.ic}</span> ${s.label}`;
+    b.innerHTML = `<span class="ic">${s.ic}</span> ${esc(s.label)}`;
     b.onclick = () => go(s.id);
-    sidebar.appendChild(b);
+    sidebar.insertBefore(b, driveBar);
   });
   const tabbar = document.getElementById("tabbar");
   tabbar.innerHTML = "";
   SECTIONS.slice(0, 5).forEach((s) => {
     const b = document.createElement("button");
     b.className = s.id === view.section ? "active" : "";
-    b.innerHTML = `<span class="ic">${s.ic}</span>${s.label}`;
+    b.innerHTML = `<span class="ic">${s.ic}</span>${esc(s.label)}`;
     b.onclick = () => go(s.id);
     tabbar.appendChild(b);
   });
 }
-
 function stub(name) {
-  return `<div class="page-title">${esc(name)}</div>
-    <div class="center-empty">Cette section arrivera dans une prochaine version de la web app.<br>
-    Pour l'instant, <strong>Missions</strong> et <strong>Temps</strong> sont disponibles.</div>`;
+  return `<div class="page-title">${esc(name)}</div><div class="center-empty">Cette section arrivera dans une prochaine version.</div>`;
+}
+function companySelect(bind, current) {
+  const opts = ['<option value="">Aucune</option>'].concat(
+    state.companies.map((c) => `<option value="${c.id}" ${c.id === current ? "selected" : ""}>${esc(c.name || "Sans nom")}</option>`)
+  ).join("");
+  return `<select data-bind="${bind}" data-rerender>${opts}</select>`;
 }
 
 // ----------------------------- Missions -----------------------------
+function missionTotal(m) { return (m.entries || []).reduce((t, e) => t + entryElapsed(e), 0); }
+function entryElapsed(e) { const run = e.timerStartedAt ? (Date.now() - e.timerStartedAt) / 1000 : 0; return (e.accumulatedSeconds || 0) + run; }
 function sortedMissions() {
   return [...state.missions].sort((a, b) => {
     const r = statusRank(a.statusCode) - statusRank(b.statusCode);
-    if (r !== 0) return r;
-    return (a.title || "").localeCompare(b.title || "", "fr", { sensitivity: "base" });
+    return r !== 0 ? r : (a.title || "").localeCompare(b.title || "", "fr", { sensitivity: "base" });
   });
 }
-
 function renderMissions() {
+  if (view.detailId) return renderMissionDetail(view.detailId);
   const items = sortedMissions();
   const rows = items.map((m) => {
     const total = missionTotal(m);
-    const sub = [
-      `${(m.entries || []).length} élément(s)`,
-      total > 0 ? `⏱ ${fmtDuration(total)}` : null,
-    ].filter(Boolean).join(" · ");
-    return `<div class="row" data-open="${m.id}" style="border-left-color:var(--primary)">
-      <div class="grow">
-        <div class="r-title">${esc(m.title || "Nouvelle mission")}</div>
-        <div class="r-sub">${esc(sub)}</div>
-      </div>
-      <span class="badge ${m.statusCode}">${statusLabel(m.statusCode)}</span>
-    </div>`;
+    const sub = [`${(m.entries || []).length} élément(s)`, total > 0 ? `⏱ ${fmtDuration(total)}` : null, m.companyId ? esc(companyName(m.companyId)) : null].filter(Boolean).join(" · ");
+    return `<div class="row" data-open-mission="${m.id}" style="border-left-color:var(--primary)">
+      <div class="grow"><div class="r-title">${esc(m.title || "Nouvelle mission")}</div><div class="r-sub">${sub}</div></div>
+      <span class="badge ${m.statusCode}">${statusLabel(m.statusCode)}</span></div>`;
   }).join("");
-  const empty = `<div class="center-empty">Aucune mission.<br>Touchez « + » pour en créer une.</div>`;
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Missions</div>
       <button class="btn secondary small" data-import>Importer</button>
       <button class="btn secondary small" data-export>Exporter</button>
       <button class="btn" data-add-mission>+ Nouvelle mission</button></div>
-    <div class="list">${items.length ? rows : empty}</div>
-    <button class="btn fab" data-add-mission title="Nouvelle mission">+</button>`;
+    <div class="list">${items.length ? rows : '<div class="center-empty">Aucune mission.</div>'}</div>
+    <button class="btn fab" data-add-mission>+</button>`;
 }
-
 function renderMissionDetail(id) {
   const m = state.missions.find((x) => x.id === id);
   if (!m) return renderMissions();
-  const statusOpts = STATUSES.map(
-    (s) => `<option value="${s.code}" ${s.code === m.statusCode ? "selected" : ""}>${s.label}</option>`
-  ).join("");
-
-  const entries = [...(m.entries || [])].sort((a, b) =>
-    (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0)
-  );
-  const entriesHtml = entries.length
-    ? entries.map((e) => renderEntry(m.id, e)).join("")
-    : `<div class="muted" style="padding:8px 2px">Aucun élément. Ajoutez une note, un e-mail, une visio…</div>`;
-
-  const kindButtons = KINDS.map(
-    (k) => `<button class="chip" data-add-entry="${k.code}" data-m="${m.id}">${k.ic} ${k.label}</button>`
-  ).join("");
-
-  return `
-    <button class="back" data-back>‹ Missions</button>
+  const statusOpts = STATUSES.map((s) => `<option value="${s.code}" ${s.code === m.statusCode ? "selected" : ""}>${s.label}</option>`).join("");
+  const entries = [...(m.entries || [])].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
+  const entriesHtml = entries.length ? entries.map((e) => renderEntry(m.id, e)).join("") : '<div class="muted" style="padding:8px 2px">Aucun élément.</div>';
+  const kindButtons = KINDS.map((k) => `<button class="chip" data-add-entry="${k.code}" data-m="${m.id}">${k.ic} ${k.label}</button>`).join("");
+  return `<button class="back" data-back>‹ Missions</button>
     <div class="toolbar">
-      <input class="grow" data-field="title" data-m="${m.id}" value="${esc(m.title)}" placeholder="Intitulé de la mission" style="font-size:20px;font-weight:700"/>
-      <select data-field="statusCode" data-m="${m.id}" style="width:auto">${statusOpts}</select>
+      <input class="grow" data-bind="missions|${m.id}|title" value="${esc(m.title)}" placeholder="Intitulé" style="font-size:20px;font-weight:700"/>
+      <select data-bind="missions|${m.id}|statusCode" style="width:auto">${statusOpts}</select>
     </div>
-
+    <label class="field"><span>Société</span>${companySelect(`missions|${m.id}|companyId`, m.companyId)}</label>
     <div class="section-h">Historique de la mission</div>
     <div class="list">${entriesHtml}</div>
     <div class="chip-row" style="margin-top:12px">${kindButtons}</div>
-
     <div class="section-h">Suivi du temps</div>
-    <div class="card">
-      <div class="inline"><strong class="grow">Temps total</strong>
-        <span class="timer ${(m.entries||[]).some(e=>e.timerStartedAt)?"running":""}" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span>
-      </div>
-    </div>
-
-    <div style="margin-top:22px">
-      <button class="btn danger small" data-del-mission="${m.id}">Supprimer la mission</button>
-    </div>
-  `;
+    <div class="card"><div class="inline"><strong class="grow">Temps total</strong>
+      <span class="timer ${(m.entries || []).some((e) => e.timerStartedAt) ? "running" : ""}" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span></div></div>
+    <div style="margin-top:22px"><button class="btn danger small" data-del-mission="${m.id}">Supprimer la mission</button></div>`;
 }
-
 function renderEntry(mid, e) {
-  const k = kindMeta(e.kind);
-  const running = !!e.timerStartedAt;
-  const open = e._open ? "block" : "none";
-  const urlLink = validURL(e.url)
-    ? `<a class="btn ghost small" href="${esc(e.url)}" target="_blank" rel="noopener">↗ Ouvrir</a>`
-    : (e.url ? `<span class="muted" style="font-size:12px">Lien invalide</span>` : "");
-  const kindOpts = KINDS.map((x) => `<option value="${x.code}" ${x.code===e.kind?"selected":""}>${x.ic} ${x.label}</option>`).join("");
+  const k = kindMeta(e.kind), running = !!e.timerStartedAt;
+  const urlLink = validURL(e.url) ? `<a class="btn ghost small" href="${esc(e.url)}" target="_blank" rel="noopener">↗ Ouvrir</a>` : (e.url ? '<span class="muted" style="font-size:12px">Lien invalide</span>' : "");
+  const kindOpts = KINDS.map((x) => `<option value="${x.code}" ${x.code === e.kind ? "selected" : ""}>${x.ic} ${x.label}</option>`).join("");
   return `<div class="entry">
     <div class="entry-head" data-toggle="${e.id}" data-m="${mid}">
       <span class="ic">${k.ic}</span>
-      <div class="grow">
-        <div class="r-title">${esc(e.title || k.label)}</div>
-        <div class="r-sub">${k.label} · ${fmtDate(e.date)}${entryElapsed(e)>0?` · ⏱ <span class="timer ${running?"running":""}" data-entry-time="${e.id}">${fmtDuration(entryElapsed(e))}</span>`:""}${running?" 🔴":""}</div>
-      </div>
-      <span class="muted">${e._open ? "▾" : "▸"}</span>
-    </div>
-    <div class="entry-body" style="display:${open}">
-      <label class="field"><span>Type</span>
-        <select data-efield="kind" data-m="${mid}" data-e="${e.id}">${kindOpts}</select></label>
-      <label class="field"><span>Titre</span>
-        <input data-efield="title" data-m="${mid}" data-e="${e.id}" value="${esc(e.title)}" placeholder="Titre"/></label>
-      <label class="field"><span>Date</span>
-        <input type="date" data-efield="date" data-m="${mid}" data-e="${e.id}" value="${esc(e.date || todayISO())}"/></label>
-      <label class="field"><span>Détails</span>
-        <textarea data-efield="content" data-m="${mid}" data-e="${e.id}" placeholder="Détails…">${esc(e.content)}</textarea></label>
-      <label class="field"><span>Lien (Gmail, Drive, Meet…)</span>
-        <input data-efield="url" data-m="${mid}" data-e="${e.id}" value="${esc(e.url)}" placeholder="https://…" inputmode="url"/></label>
+      <div class="grow"><div class="r-title">${esc(e.title || k.label)}</div>
+        <div class="r-sub">${k.label} · ${fmtDate(e.date)}${entryElapsed(e) > 0 ? ` · ⏱ <span class="timer ${running ? "running" : ""}" data-entry-time="${e.id}">${fmtDuration(entryElapsed(e))}</span>` : ""}${running ? " 🔴" : ""}</div></div>
+      <span class="muted">${e._open ? "▾" : "▸"}</span></div>
+    <div class="entry-body" style="display:${e._open ? "block" : "none"}">
+      <label class="field"><span>Type</span><select data-efield="kind" data-m="${mid}" data-e="${e.id}">${kindOpts}</select></label>
+      <label class="field"><span>Titre</span><input data-efield="title" data-m="${mid}" data-e="${e.id}" value="${esc(e.title)}"/></label>
+      <label class="field"><span>Date</span><input type="date" data-efield="date" data-m="${mid}" data-e="${e.id}" value="${esc(e.date || todayISO())}"/></label>
+      <label class="field"><span>Détails</span><textarea data-efield="content" data-m="${mid}" data-e="${e.id}">${esc(e.content)}</textarea></label>
+      <label class="field"><span>Lien (Gmail, Drive, Meet…)</span><input data-efield="url" data-m="${mid}" data-e="${e.id}" value="${esc(e.url)}" inputmode="url"/></label>
       <div class="inline" style="margin-top:6px">
-        <button class="btn ${running?"danger":"secondary"} small" data-timer="${e.id}" data-m="${mid}">
-          ${running ? "■ Arrêter le chrono" : "▶ Démarrer le chrono"}
-        </button>
-        ${urlLink}
-        <span class="grow"></span>
-        <button class="btn ghost small" data-del-entry="${e.id}" data-m="${mid}">Supprimer</button>
-      </div>
-    </div>
-  </div>`;
+        <button class="btn ${running ? "danger" : "secondary"} small" data-timer="${e.id}" data-m="${mid}">${running ? "■ Arrêter le chrono" : "▶ Démarrer le chrono"}</button>
+        ${urlLink}<span class="grow"></span>
+        <button class="btn ghost small" data-del-entry="${e.id}" data-m="${mid}">Supprimer</button></div>
+    </div></div>`;
 }
 
-// ----------------------------- Temps (récap) -----------------------------
+// ----------------------------- Contacts -----------------------------
+function renderContacts() {
+  if (view.detailId) return renderContactDetail(view.detailId);
+  const items = [...state.contacts].sort((a, b) => contactName(a).localeCompare(contactName(b), "fr", { sensitivity: "base" }));
+  const rows = items.map((c) => `<div class="row" data-open-contact="${c.id}" style="border-left-color:var(--activity)">
+    <div class="grow"><div class="r-title">${esc(contactName(c))}</div>
+      <div class="r-sub">${[esc(c.jobTitle), esc(c.organization)].filter(Boolean).join(" · ")}</div></div>
+    <span class="badge aDemarrer">${contactCatLabel(c.category)}</span></div>`).join("");
+  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Contacts</div>
+      <button class="btn" data-add-contact>+ Nouveau contact</button></div>
+    <div class="list">${items.length ? rows : '<div class="center-empty">Aucun contact.</div>'}</div>
+    <button class="btn fab" data-add-contact>+</button>`;
+}
+function renderContactDetail(id) {
+  const c = state.contacts.find((x) => x.id === id);
+  if (!c) return renderContacts();
+  const catOpts = CONTACT_CATS.map((x) => `<option value="${x.code}" ${x.code === c.category ? "selected" : ""}>${x.label}</option>`).join("");
+  const F = (label, field, type) => `<label class="field"><span>${label}</span><input ${type ? `type="${type}"` : ""} data-bind="contacts|${c.id}|${field}" value="${esc(c[field])}"/></label>`;
+  return `<button class="back" data-back>‹ Contacts</button>
+    <div class="page-title">${esc(contactName(c))}</div>
+    <div class="card">
+      ${F("Prénom", "firstName")}${F("Nom", "lastName")}${F("Organisation", "organization")}${F("Fonction", "jobTitle")}
+      <label class="field"><span>Catégorie</span><select data-bind="contacts|${c.id}|category" data-rerender>${catOpts}</select></label>
+      <label class="field"><span>Société</span>${companySelect(`contacts|${c.id}|companyId`, c.companyId)}</label>
+      ${F("Email", "email", "email")}${F("Téléphone", "phone", "tel")}${F("Adresse", "address")}${F("LinkedIn", "linkedIn")}
+      <label class="field"><span>Notes</span><textarea data-bind="contacts|${c.id}|notes">${esc(c.notes)}</textarea></label>
+    </div>
+    <div style="margin-top:18px"><button class="btn danger small" data-del-contact="${c.id}">Supprimer le contact</button></div>`;
+}
+
+// ----------------------------- Groupe (sociétés) -----------------------------
+function renderGroupe() {
+  if (view.detailId) return renderCompanyDetail(view.detailId);
+  const items = [...state.companies].sort((a, b) => (a.name || "").localeCompare(b.name || "", "fr", { sensitivity: "base" }));
+  const rows = items.map((c) => `<div class="row" data-open-company="${c.id}" style="border-left-color:var(--primary)">
+    <div class="grow"><div class="r-title">${esc(c.name || "Nouvelle société")}</div>
+      <div class="r-sub">${(ROLES.find((r) => r.code === c.role) || ROLES[1]).label}${(c.activities || []).length ? ` · ${(c.activities || []).length} activité(s)` : ""}</div></div>
+    <span class="timer muted">${euros(companyBalance(c, new Date()))}</span></div>`).join("");
+  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Groupe</div>
+      <button class="btn" data-add-company>+ Nouvelle société</button></div>
+    <div class="list">${items.length ? rows : '<div class="center-empty">Aucune société.</div>'}</div>
+    <button class="btn fab" data-add-company>+</button>`;
+}
+function renderCompanyDetail(id) {
+  const c = state.companies.find((x) => x.id === id);
+  if (!c) return renderGroupe();
+  const roleOpts = ROLES.map((r) => `<option value="${r.code}" ${r.code === c.role ? "selected" : ""}>${r.label}</option>`).join("");
+  const acts = (c.activities || []).map((a) => `<div class="inline" style="margin:6px 0">
+    <input class="grow" data-actfield="name" data-c="${c.id}" data-a="${a.id}" value="${esc(a.name)}" placeholder="Nom de l'activité"/>
+    <button class="btn ghost small" data-del-act="${a.id}" data-c="${c.id}">✕</button></div>`).join("");
+  return `<button class="back" data-back>‹ Groupe</button>
+    <div class="page-title">${esc(c.name || "Société")}</div>
+    <div class="card">
+      <label class="field"><span>Nom</span><input data-bind="companies|${c.id}|name" value="${esc(c.name)}"/></label>
+      <label class="field"><span>Forme juridique</span><input data-bind="companies|${c.id}|legalForm" value="${esc(c.legalForm)}"/></label>
+      <label class="field"><span>Rôle</span><select data-bind="companies|${c.id}|role" data-rerender>${roleOpts}</select></label>
+      <label class="field"><span>Trésorerie initiale (€)</span><input type="number" data-bind="companies|${c.id}|initialCashBalance" value="${c.initialCashBalance || 0}"/></label>
+      <label class="field"><span>À la date du</span><input type="date" data-bind="companies|${c.id}|cashBalanceDate" value="${esc((c.cashBalanceDate || "").slice(0, 10) || todayISO())}"/></label>
+      <label class="field"><span>Notes</span><textarea data-bind="companies|${c.id}|notes">${esc(c.notes)}</textarea></label>
+    </div>
+    <div class="section-h">Activités</div>
+    <div class="card">${acts || '<div class="muted">Aucune activité.</div>'}<div style="margin-top:8px"><button class="btn secondary small" data-add-act="${c.id}">+ Ajouter une activité</button></div></div>
+    <div style="margin-top:18px"><button class="btn danger small" data-del-company="${c.id}">Supprimer la société</button></div>`;
+}
+
+// ----------------------------- Finances -----------------------------
+let financeTab = "factures";
+function renderFinances() {
+  if (view.detailId) return renderInvoiceDetail(view.detailId);
+  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"]]
+    .map(([id, lbl]) => `<button class="chip ${financeTab === id ? "active" : ""}" data-ftab="${id}">${lbl}</button>`).join("");
+  let body = "";
+  if (financeTab === "factures") body = financeFactures();
+  else if (financeTab === "cdr") body = financeCDR();
+  else body = financeTresorerie();
+  return `<div class="page-title">Finances</div><div class="chip-row" style="margin-bottom:16px">${tabs}</div>${body}`;
+}
+function financeFactures() {
+  const items = [...state.invoices].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+  const rows = items.map((v) => `<div class="row" data-open-invoice="${v.id}" style="border-left-color:${v.direction === "recette" ? "var(--finance)" : "var(--alert)"}">
+    <div class="grow"><div class="r-title">${esc(v.title || "Nouvelle facture")}</div>
+      <div class="r-sub">${[esc(companyName(v.companyId)), v.categoryName ? esc(v.categoryName) : null].filter(Boolean).join(" · ")}</div></div>
+    <div style="text-align:right"><div>${euros(v.amount)}</div><span class="badge aDemarrer" style="font-size:10px">${invStatusLabel(v.status)}</span></div></div>`).join("");
+  return `<div class="toolbar"><span class="grow"></span><button class="btn" data-add-invoice>+ Nouvelle facture</button></div>
+    <div class="list">${items.length ? rows : '<div class="center-empty">Aucune facture.</div>'}</div>`;
+}
+function financeCDR() {
+  const lines = (nature) => {
+    const map = {};
+    state.invoices.filter((v) => invNature(v) === nature).forEach((v) => { const key = v.categoryName || "À catégoriser"; map[key] = (map[key] || 0) + (v.amount || 0); });
+    return Object.entries(map).filter(([, val]) => val !== 0).sort((a, b) => b[1] - a[1]);
+  };
+  const produits = lines("produit"), charges = lines("charge");
+  const totP = produits.reduce((t, l) => t + l[1], 0), totC = charges.reduce((t, l) => t + l[1], 0);
+  const block = (title, arr, tot, color) => `<div class="section-h">${title}</div><div class="card">
+    ${arr.length ? arr.map((l) => `<div class="inline" style="padding:4px 0"><span class="grow">${esc(l[0])}</span><span class="muted">${euros(l[1])}</span></div>`).join("") : '<div class="muted">—</div>'}
+    <div class="inline" style="padding:6px 0;border-top:1px solid var(--line);margin-top:6px"><strong class="grow">Total ${title.toLowerCase()}</strong><strong style="color:${color}">${euros(tot)}</strong></div></div>`;
+  return `${block("Produits", produits, totP, "var(--finance)")}${block("Charges", charges, totC, "var(--alert)")}
+    <div class="card" style="margin-top:12px"><div class="inline"><strong class="grow">Résultat à date</strong>
+      <strong style="color:${totP - totC >= 0 ? "var(--positive)" : "#d23c3c"};font-size:18px">${euros(totP - totC)}</strong></div>
+      <div class="muted" style="font-size:12px;margin-top:4px">Montants HT, toutes factures confondues.</div></div>`;
+}
+function financeTresorerie() {
+  const now = new Date();
+  const ents = treasuryEntities();
+  const perEnt = ents.map((c) => `<div class="inline" style="padding:5px 0"><span class="grow">${esc(c.name || "Sans nom")}</span><span class="timer">${euros(companyBalance(c, now))}</span></div>`).join("");
+  return `<div class="card"><div class="inline"><strong class="grow">Trésorerie consolidée</strong>
+      <strong style="color:${treasuryNow(now) >= 0 ? "var(--positive)" : "#d23c3c"};font-size:18px">${euros(treasuryNow(now))}</strong></div></div>
+    <div class="section-h">Prévisionnel</div><div class="card">
+      <div class="inline" style="padding:4px 0"><span class="grow">À 30 jours</span><span class="timer">${euros(treasuryProjected(now, 30))}</span></div>
+      <div class="inline" style="padding:4px 0"><span class="grow">À 60 jours</span><span class="timer">${euros(treasuryProjected(now, 60))}</span></div>
+      <div class="inline" style="padding:4px 0"><span class="grow">À 90 jours</span><span class="timer">${euros(treasuryProjected(now, 90))}</span></div></div>
+    <div class="section-h">Par société</div><div class="card">${perEnt || '<div class="muted">—</div>'}</div>`;
+}
+function renderInvoiceDetail(id) {
+  const v = state.invoices.find((x) => x.id === id);
+  if (!v) { view.detailId = null; return renderFinances(); }
+  const dirOpts = DIRECTIONS.map((d) => `<option value="${d.code}" ${d.code === v.direction ? "selected" : ""}>${d.label}</option>`).join("");
+  const stOpts = INV_STATUSES.map((d) => `<option value="${d.code}" ${d.code === v.status ? "selected" : ""}>${d.label}</option>`).join("");
+  const catOpts = ['<option value="">À catégoriser</option>'].concat(state.categories.map((c) => `<option value="${esc(c.name)}" ${c.name === v.categoryName ? "selected" : ""}>${esc(c.name)}</option>`)).join("");
+  const ctOpts = ['<option value="">Aucun</option>'].concat(state.contacts.map((c) => `<option value="${c.id}" ${c.id === v.contactId ? "selected" : ""}>${esc(contactName(c))}</option>`)).join("");
+  return `<button class="back" data-back-invoice>‹ Finances</button>
+    <div class="page-title">${esc(v.title || "Facture")}</div>
+    <div class="card">
+      <label class="field"><span>Intitulé</span><input data-bind="invoices|${v.id}|title" value="${esc(v.title)}"/></label>
+      <label class="field"><span>Sens</span><select data-bind="invoices|${v.id}|direction" data-rerender>${dirOpts}</select></label>
+      <label class="field"><span>Statut</span><select data-bind="invoices|${v.id}|status" data-rerender>${stOpts}</select></label>
+      <label class="field"><span>Montant HT (€)</span><input type="number" data-bind="invoices|${v.id}|amount" value="${v.amount || 0}"/></label>
+      <label class="field"><span>TVA (%)</span><input type="number" data-bind="invoices|${v.id}|vatRate" value="${v.vatRate == null ? 20 : v.vatRate}"/></label>
+      <div class="inline" style="margin:6px 0"><span class="grow muted">Montant TTC</span><strong>${euros(invTTC(v))}</strong></div>
+      <label class="field"><span>Catégorie</span><select data-bind="invoices|${v.id}|categoryName">${catOpts}</select></label>
+      <label class="field"><span>Société</span>${companySelect(`invoices|${v.id}|companyId`, v.companyId)}</label>
+      <label class="field"><span>Tiers</span><select data-bind="invoices|${v.id}|contactId">${ctOpts}</select></label>
+      <label class="field"><span>Date</span><input type="date" data-bind="invoices|${v.id}|startDate" value="${esc((v.startDate || "").slice(0, 10) || todayISO())}"/></label>
+      <label class="field"><span>Échéance</span><input type="date" data-bind="invoices|${v.id}|dueDate" value="${esc((v.dueDate || "").slice(0, 10))}"/></label>
+      <label class="field"><span>Payée le</span><input type="date" data-bind="invoices|${v.id}|paymentDate" value="${esc((v.paymentDate || "").slice(0, 10))}"/></label>
+    </div>
+    <div style="margin-top:18px"><button class="btn danger small" data-del-invoice="${v.id}">Supprimer la facture</button></div>`;
+}
+
+// ----------------------------- Tableau de bord -----------------------------
+function renderDashboard() {
+  const now = new Date();
+  const caFacture = sumAmount(recettes().filter((v) => v.status === "emise" || v.status === "payee"));
+  const caEncaisse = sumAmount(recettes().filter((v) => v.status === "payee"));
+  const caAEmettre = sumAmount(recettes().filter((v) => v.status === "aEmettre"));
+  const produits = state.invoices.filter((v) => invNature(v) === "produit").reduce((t, v) => t + (v.amount || 0), 0);
+  const charges = state.invoices.filter((v) => invNature(v) === "charge").reduce((t, v) => t + (v.amount || 0), 0);
+  const overdue = recettes().filter((v) => v.status !== "payee" && invCashDate(v) < now);
+  const toPay = depenses().filter((v) => v.status !== "payee");
+  const missionsEnCours = state.missions.filter((m) => m.statusCode === "enCours").length;
+  const card = (title, value, sub, color) => `<div class="card" style="background:${color}1f">
+    <div class="timer" style="font-size:20px;font-weight:700;color:${color}">${value}</div>
+    <div style="margin-top:2px">${title}</div>${sub ? `<div class="muted" style="font-size:11px">${sub}</div>` : ""}</div>`;
+  const grid = (items) => `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px">${items}</div>`;
+  const alerts = [];
+  if (overdue.length) alerts.push(`${overdue.length} facture(s) client en retard · ${euros(overdue.reduce((t, v) => t + invTTC(v), 0))}`);
+  if (toPay.length) alerts.push(`${toPay.length} facture(s) fournisseur à payer · ${euros(toPay.reduce((t, v) => t + invTTC(v), 0))}`);
+  return `<div class="page-title">Tableau de bord</div>
+    <div class="section-h">Activité (HT)</div>
+    ${grid(card("CA facturé", euros(caFacture), "émises + payées", "#18c1d8") + card("CA encaissé", euros(caEncaisse), "payées", "#4dc8bb") + card("CA à émettre", euros(caAEmettre), "en attente", "#c3d679") + card("Résultat à date", euros(produits - charges), "produits − charges", produits - charges >= 0 ? "#4dc8bb" : "#d23c3c"))}
+    <div class="section-h">Trésorerie consolidée (TTC)</div>
+    ${grid(card("Disponible", euros(treasuryNow(now)), "aujourd'hui", "#4dc8bb") + card("Prév. 30 j", euros(treasuryProjected(now, 30)), "", "#a2d28c") + card("Prév. 60 j", euros(treasuryProjected(now, 60)), "", "#a2d28c") + card("Prév. 90 j", euros(treasuryProjected(now, 90)), "", "#a2d28c"))}
+    <div class="section-h">À traiter</div>
+    ${grid(card("Clients en retard", String(overdue.length), euros(overdue.reduce((t, v) => t + invTTC(v), 0)), overdue.length ? "#d23c3c" : "#4dc8bb") + card("Fournisseurs à payer", String(toPay.length), euros(toPay.reduce((t, v) => t + invTTC(v), 0)), "#e9db65") + card("Missions en cours", String(missionsEnCours), "", "#18c1d8") + card("Sociétés", String(state.companies.length), `${state.contacts.length} contacts`, "#18c1d8"))}
+    ${alerts.length ? `<div class="section-h">Alertes</div><div class="card">${alerts.map((a) => `<div style="padding:4px 0">⚠️ ${esc(a)}</div>`).join("")}</div>` : ""}`;
+}
+
+// ----------------------------- Temps -----------------------------
 function renderTime() {
-  // agrège toutes les entrées par mission, sur la semaine courante (lundi→dimanche)
   const { start, end } = weekInterval(new Date());
-  let total = 0;
-  const perMission = [];
+  let total = 0; const perMission = [];
   state.missions.forEach((m) => {
     let s = 0;
-    (m.entries || []).forEach((e) => {
-      const d = e.date ? new Date(e.date + "T12:00:00") : null;
-      if (d && d >= start && d < end) s += entryElapsed(e);
-    });
+    (m.entries || []).forEach((e) => { const d = e.date ? new Date(e.date + "T12:00:00") : null; if (d && d >= start && d < end) s += entryElapsed(e); });
     if (s > 0) { perMission.push({ title: m.title || "Sans titre", s }); total += s; }
   });
   perMission.sort((a, b) => b.s - a.s);
-  const rows = perMission.length
-    ? perMission.map((p) => `<div class="inline" style="padding:6px 0"><span class="grow">${esc(p.title)}</span><span class="timer">${fmtDuration(p.s)}</span></div>`).join("")
-    : `<div class="muted">Aucun temps cette semaine. Datez vos entrées d'historique et lancez un chrono.</div>`;
-  const label = `${fmtDate(start.toISOString())} → ${fmtDate(new Date(end - 86400000).toISOString())}`;
+  const rows = perMission.length ? perMission.map((p) => `<div class="inline" style="padding:6px 0"><span class="grow">${esc(p.title)}</span><span class="timer">${fmtDuration(p.s)}</span></div>`).join("") : '<div class="muted">Aucun temps cette semaine.</div>';
   return `<div class="page-title">Temps</div>
-    <div class="card">
-      <div class="muted" style="font-size:13px">Semaine · lundi → dimanche</div>
-      <div style="font-weight:600;margin:2px 0 10px">${label}</div>
-      <div class="inline"><strong class="grow">Temps total</strong><span class="timer" style="color:var(--primary);font-size:18px">${fmtDuration(total)}</span></div>
-    </div>
-    <div class="section-h">Par mission</div>
-    <div class="card">${rows}</div>`;
+    <div class="card"><div class="muted" style="font-size:13px">Semaine · lundi → dimanche</div>
+      <div style="font-weight:600;margin:2px 0 10px">${fmtDate(start.toISOString().slice(0, 10))} → ${fmtDate(new Date(end - 86400000).toISOString().slice(0, 10))}</div>
+      <div class="inline"><strong class="grow">Temps total</strong><span class="timer" style="color:var(--primary);font-size:18px">${fmtDuration(total)}</span></div></div>
+    <div class="section-h">Par mission</div><div class="card">${rows}</div>`;
 }
-function weekInterval(date) {
-  const d = new Date(date); d.setHours(0, 0, 0, 0);
-  const day = (d.getDay() + 6) % 7; // 0 = lundi
-  const start = new Date(d); start.setDate(d.getDate() - day);
-  const end = new Date(start); end.setDate(start.getDate() + 7);
-  return { start, end };
-}
+function weekInterval(date) { const d = new Date(date); d.setHours(0, 0, 0, 0); const day = (d.getDay() + 6) % 7; const start = new Date(d); start.setDate(d.getDate() - day); const end = new Date(start); end.setDate(start.getDate() + 7); return { start, end }; }
 
 // ----------------------------- Interactions -----------------------------
 function findMission(id) { return state.missions.find((m) => m.id === id); }
@@ -292,191 +419,123 @@ function findEntry(m, id) { return (m.entries || []).find((e) => e.id === id); }
 function wire() {
   const c = document.getElementById("content");
 
-  c.querySelectorAll("[data-add-mission]").forEach((b) => b.onclick = () => {
-    const m = { id: uid(), title: "", statusCode: "aDemarrer", createdAt: Date.now(), entries: [] };
-    state.missions.push(m); save(); openMission(m.id);
+  // liaison générique des champs top-niveau : data-bind="collection|id|field"
+  c.querySelectorAll("[data-bind]").forEach((el) => {
+    const [coll, id, field] = el.dataset.bind.split("|");
+    const h = () => { const o = (state[coll] || []).find((x) => x.id === id); if (!o) return; o[field] = el.type === "number" ? (parseFloat(el.value) || 0) : el.value; save(); if (el.dataset.rerender !== undefined) render(); };
+    el.addEventListener("change", h); el.addEventListener("blur", h);
   });
-  c.querySelectorAll("[data-open]").forEach((r) => r.onclick = () => openMission(r.dataset.open));
-  const back = c.querySelector("[data-back]"); if (back) back.onclick = () => go("missions");
+
+  // ouvertures
+  c.querySelectorAll("[data-open-mission]").forEach((r) => r.onclick = () => openDetail("missions", r.dataset.openMission));
+  c.querySelectorAll("[data-open-contact]").forEach((r) => r.onclick = () => openDetail("contacts", r.dataset.openContact));
+  c.querySelectorAll("[data-open-company]").forEach((r) => r.onclick = () => openDetail("groupe", r.dataset.openCompany));
+  c.querySelectorAll("[data-open-invoice]").forEach((r) => r.onclick = () => openDetail("finances", r.dataset.openInvoice));
+  const back = c.querySelector("[data-back]"); if (back) back.onclick = () => { view.detailId = null; render(); };
+  const backInv = c.querySelector("[data-back-invoice]"); if (backInv) backInv.onclick = () => { view.detailId = null; render(); };
+
+  // ajouts
+  c.querySelectorAll("[data-add-mission]").forEach((b) => b.onclick = () => { const m = { id: uid(), title: "", statusCode: "aDemarrer", companyId: null, createdAt: Date.now(), entries: [] }; state.missions.push(m); save(); openDetail("missions", m.id); });
+  c.querySelectorAll("[data-add-contact]").forEach((b) => b.onclick = () => { const x = { id: uid(), firstName: "", lastName: "", organization: "", jobTitle: "", email: "", phone: "", address: "", linkedIn: "", category: "client", notes: "", companyId: null }; state.contacts.push(x); save(); openDetail("contacts", x.id); });
+  c.querySelectorAll("[data-add-company]").forEach((b) => b.onclick = () => { const x = { id: uid(), name: "", legalForm: "", role: "filiale", notes: "", initialCashBalance: 0, cashBalanceDate: todayISO(), activities: [] }; state.companies.push(x); save(); openDetail("groupe", x.id); });
+  c.querySelectorAll("[data-add-invoice]").forEach((b) => b.onclick = () => { const x = { id: uid(), title: "", reference: "", direction: "recette", status: "aEmettre", amount: 0, vatRate: 20, startDate: todayISO(), hasDueDate: false, dueDate: "", paymentDate: "", companyId: null, contactId: null, categoryName: "" }; state.invoices.push(x); save(); openDetail("finances", x.id); });
+
+  // suppressions
+  c.querySelectorAll("[data-del-mission]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette mission ?")) { state.missions = state.missions.filter((m) => m.id !== b.dataset.delMission); save(); go("missions"); } });
+  c.querySelectorAll("[data-del-contact]").forEach((b) => b.onclick = () => { if (confirm("Supprimer ce contact ?")) { state.contacts = state.contacts.filter((x) => x.id !== b.dataset.delContact); save(); go("contacts"); } });
+  c.querySelectorAll("[data-del-company]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette société ?")) { state.companies = state.companies.filter((x) => x.id !== b.dataset.delCompany); save(); go("groupe"); } });
+  c.querySelectorAll("[data-del-invoice]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette facture ?")) { state.invoices = state.invoices.filter((x) => x.id !== b.dataset.delInvoice); save(); view.detailId = null; go("finances"); } });
+
+  // activités (société)
+  c.querySelectorAll("[data-add-act]").forEach((b) => b.onclick = () => { const co = state.companies.find((x) => x.id === b.dataset.addAct); if (!co) return; (co.activities = co.activities || []).push({ id: uid(), name: "", detail: "" }); save(); render(); });
+  c.querySelectorAll("[data-del-act]").forEach((b) => b.onclick = () => { const co = state.companies.find((x) => x.id === b.dataset.c); if (!co) return; co.activities = (co.activities || []).filter((a) => a.id !== b.dataset.delAct); save(); render(); });
+  c.querySelectorAll("[data-actfield]").forEach((el) => { const h = () => { const co = state.companies.find((x) => x.id === el.dataset.c); const a = (co.activities || []).find((z) => z.id === el.dataset.a); if (a) { a[el.dataset.actfield] = el.value; save(); } }; el.addEventListener("change", h); el.addEventListener("blur", h); });
+
+  // onglets Finances
+  c.querySelectorAll("[data-ftab]").forEach((b) => b.onclick = () => { financeTab = b.dataset.ftab; render(); });
+
+  // import / export
   c.querySelectorAll("[data-import]").forEach((b) => b.onclick = importClick);
   c.querySelectorAll("[data-export]").forEach((b) => b.onclick = exportJSON);
 
-  // champs mission
-  c.querySelectorAll("[data-field]").forEach((el) => {
-    const handler = () => { const m = findMission(el.dataset.m); if (!m) return; m[el.dataset.field] = el.value; save(); if (el.dataset.field === "statusCode") { /* pas de re-render pour garder le focus */ } };
-    el.addEventListener("change", handler);
-    el.addEventListener("blur", handler);
-  });
-
-  // ajouter une entrée
-  c.querySelectorAll("[data-add-entry]").forEach((b) => b.onclick = () => {
-    const m = findMission(b.dataset.m); if (!m) return;
-    const e = { id: uid(), kind: b.dataset.addEntry, title: "", content: "", date: todayISO(), url: "", accumulatedSeconds: 0, timerStartedAt: null, createdAt: Date.now(), _open: true };
-    m.entries.push(e); save(); render();
-  });
-
-  // déplier / replier une entrée
-  c.querySelectorAll("[data-toggle]").forEach((h) => h.onclick = (ev) => {
-    if (ev.target.closest("a,button,input,select,textarea")) return;
-    const m = findMission(h.dataset.m); const e = findEntry(m, h.dataset.toggle);
-    if (e) { e._open = !e._open; render(); }
-  });
-
-  // champs d'entrée
-  c.querySelectorAll("[data-efield]").forEach((el) => {
-    const handler = () => { const m = findMission(el.dataset.m); const e = findEntry(m, el.dataset.e); if (!e) return; e[el.dataset.efield] = el.value; save(); if (el.dataset.efield === "kind") render(); };
-    el.addEventListener("change", handler);
-    el.addEventListener("blur", handler);
-  });
-
-  // chrono
-  c.querySelectorAll("[data-timer]").forEach((b) => b.onclick = () => {
-    const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.timer); if (!e) return;
-    if (e.timerStartedAt) { e.accumulatedSeconds = (e.accumulatedSeconds || 0) + (Date.now() - e.timerStartedAt) / 1000; e.timerStartedAt = null; }
-    else { e.timerStartedAt = Date.now(); }
-    save(); render();
-  });
-
-  // suppressions
-  c.querySelectorAll("[data-del-entry]").forEach((b) => b.onclick = () => {
-    const m = findMission(b.dataset.m); if (!m) return;
-    m.entries = m.entries.filter((e) => e.id !== b.dataset.delEntry); save(); render();
-  });
-  c.querySelectorAll("[data-del-mission]").forEach((b) => b.onclick = () => {
-    if (!confirm("Supprimer définitivement cette mission ?")) return;
-    state.missions = state.missions.filter((m) => m.id !== b.dataset.delMission); save(); go("missions");
-  });
+  // entrées d'historique
+  c.querySelectorAll("[data-add-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); if (!m) return; m.entries.push({ id: uid(), kind: b.dataset.addEntry, title: "", content: "", date: todayISO(), url: "", accumulatedSeconds: 0, timerStartedAt: null, createdAt: Date.now(), _open: true }); save(); render(); });
+  c.querySelectorAll("[data-toggle]").forEach((h) => h.onclick = (ev) => { if (ev.target.closest("a,button,input,select,textarea")) return; const m = findMission(h.dataset.m); const e = findEntry(m, h.dataset.toggle); if (e) { e._open = !e._open; render(); } });
+  c.querySelectorAll("[data-efield]").forEach((el) => { const h = () => { const m = findMission(el.dataset.m); const e = findEntry(m, el.dataset.e); if (!e) return; e[el.dataset.efield] = el.value; save(); if (el.dataset.efield === "kind") render(); }; el.addEventListener("change", h); el.addEventListener("blur", h); });
+  c.querySelectorAll("[data-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.timer); if (!e) return; if (e.timerStartedAt) { e.accumulatedSeconds = (e.accumulatedSeconds || 0) + (Date.now() - e.timerStartedAt) / 1000; e.timerStartedAt = null; } else { e.timerStartedAt = Date.now(); } save(); render(); });
+  c.querySelectorAll("[data-del-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); if (!m) return; m.entries = m.entries.filter((e) => e.id !== b.dataset.delEntry); save(); render(); });
 }
 
-// mise à jour en direct des chronos qui tournent (chaque seconde)
+// ----------------------------- Import / Export -----------------------------
+function normStatus(c) { return STATUSES.some((s) => s.code === c) ? c : "aDemarrer"; }
+function normKind(c) { return KINDS.some((k) => k.code === c) ? c : "note"; }
+function importClick() {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = ".json,application/json";
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => importJSON(String(r.result)); r.readAsText(f); };
+  inp.click();
+}
+function importJSON(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (e) { alert("Fichier JSON invalide."); return; }
+  if (Array.isArray(data)) data = { missions: data };
+  const replace = confirm("Remplacer TOUTES les données actuelles par ce fichier ?\n\n(OK = remplacer · Annuler = ajouter aux données existantes)");
+  if (replace) state = blankState();
+
+  const compByName = {};
+  (data.companies || []).forEach((c) => {
+    const m = { id: uid(), name: c.name || "", legalForm: c.legalForm || "", role: c.role || "filiale", notes: c.notes || "", initialCashBalance: Number(c.initialCashBalance) || 0, cashBalanceDate: (c.cashBalanceDate || "").slice(0, 10) || todayISO(), activities: (c.activities || []).map((a) => ({ id: uid(), name: a.name || "", detail: a.detail || "" })) };
+    state.companies.push(m); if (m.name) compByName[m.name] = m.id;
+  });
+  (data.categories || []).forEach((c) => { if (c.name && !state.categories.some((x) => x.name === c.name)) state.categories.push({ name: c.name, nature: c.nature === "produit" ? "produit" : "charge", sortIndex: Number(c.sortIndex) || 0 }); });
+  (data.contacts || []).forEach((c) => state.contacts.push({ id: uid(), firstName: c.firstName || "", lastName: c.lastName || "", organization: c.organization || "", jobTitle: c.jobTitle || "", email: c.email || "", phone: c.phone || "", address: c.address || "", linkedIn: c.linkedIn || "", category: (CONTACT_CATS.some((x) => x.code === c.category) ? c.category : "client"), notes: c.notes || "", companyId: compByName[c.companyName] || null }));
+  const contactByName = {}; state.contacts.forEach((c) => { contactByName[contactName(c)] = c.id; });
+  (data.invoices || []).forEach((v) => state.invoices.push({ id: uid(), title: v.title || "", reference: v.reference || "", direction: v.direction === "depense" ? "depense" : "recette", status: (INV_STATUSES.some((x) => x.code === v.status) ? v.status : "aEmettre"), amount: Number(v.amount) || 0, vatRate: v.vatRate == null ? 20 : Number(v.vatRate), startDate: (v.startDate || "").slice(0, 10) || todayISO(), hasDueDate: !!v.hasDueDate, dueDate: (v.dueDate || "").slice(0, 10), paymentDate: (v.paymentDate || "").slice(0, 10), companyId: compByName[v.companyName] || null, contactId: contactByName[v.contactName] || null, categoryName: v.categoryName || "" }));
+  (data.missions || []).forEach((m) => state.missions.push({ id: uid(), title: m.title || "", statusCode: normStatus(m.statusCode || m.status), companyId: compByName[m.companyName] || null, createdAt: Date.now(), entries: (m.entries || []).map((e) => ({ id: uid(), kind: normKind(e.kind), title: e.title || "", content: e.content || "", date: (e.date || "").slice(0, 10) || todayISO(), url: e.url || e.urlString || "", accumulatedSeconds: Number(e.accumulatedSeconds) || 0, timerStartedAt: null, createdAt: Date.now() })) }));
+
+  save();
+  alert(`Import terminé : ${state.companies.length} société(s), ${state.contacts.length} contact(s), ${state.invoices.length} facture(s), ${state.missions.length} mission(s).`);
+  go("dashboard");
+}
+function exportJSON() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "operations01-data.json"; a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ----------------------------- Google Drive -----------------------------
+function renderDriveBar() {
+  const el = document.getElementById("driveBar"); if (!el) return;
+  const cfgOk = window.OPERATIONS01_CONFIG && OPERATIONS01_CONFIG.googleClientId;
+  if (!cfgOk) { el.innerHTML = `<div class="muted" style="font-size:11px;line-height:1.4">Google Drive non configuré.<br>Voir README → « Google Drive ».</div>`; return; }
+  if (window.DriveSync && DriveSync.isConnected()) { el.innerHTML = `<div style="font-size:12px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">synchronisé</span></div>`; }
+  else { el.innerHTML = `<button class="btn secondary small" id="driveConnect" style="width:100%">Se connecter à Google Drive</button>`; const b = document.getElementById("driveConnect"); if (b) b.onclick = connectDrive; }
+}
+async function connectDrive() {
+  if (!(window.DriveSync && DriveSync.ready())) { alert("Google Drive n'est pas disponible (identifiant manquant ou app non hébergée en HTTPS)."); return; }
+  try {
+    const remote = await DriveSync.connect();
+    if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) { state = Object.assign(blankState(), remote); localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+    else DriveSync.push(state);
+    renderDriveBar(); render();
+  } catch (e) { alert("Connexion Google Drive impossible : " + e.message); }
+}
+
+// ----------------------------- Chronos live -----------------------------
 setInterval(() => {
   document.querySelectorAll("[data-entry-time]").forEach((span) => {
     const id = span.dataset.entryTime;
-    for (const m of state.missions) {
-      const e = (m.entries || []).find((x) => x.id === id);
-      if (e && e.timerStartedAt) { span.textContent = fmtDuration(entryElapsed(e)); }
-    }
+    for (const m of state.missions) { const e = (m.entries || []).find((x) => x.id === id); if (e && e.timerStartedAt) span.textContent = fmtDuration(entryElapsed(e)); }
   });
-  document.querySelectorAll("[data-total]").forEach((span) => {
-    const m = findMission(span.dataset.total);
-    if (m && (m.entries || []).some((e) => e.timerStartedAt)) span.textContent = fmtDuration(missionTotal(m));
-  });
+  document.querySelectorAll("[data-total]").forEach((span) => { const m = findMission(span.dataset.total); if (m && (m.entries || []).some((e) => e.timerStartedAt)) span.textContent = fmtDuration(missionTotal(m)); });
 }, 1000);
 
 // ----------------------------- Installation (PWA) -----------------------------
 let deferredPrompt = null;
-window.addEventListener("beforeinstallprompt", (e) => {
-  e.preventDefault(); deferredPrompt = e;
-  document.getElementById("installBanner").style.display = "flex";
-});
-document.getElementById("installBtn").onclick = async () => {
-  document.getElementById("installBanner").style.display = "none";
-  if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt = null; }
-};
-document.getElementById("installClose").onclick = () => {
-  document.getElementById("installBanner").style.display = "none";
-};
-
-// ----------------------------- Import / Export (pont de données) -----------------------------
-function normStatus(c) { return STATUSES.some((s) => s.code === c) ? c : "aDemarrer"; }
-function normKind(c) { return KINDS.some((k) => k.code === c) ? c : "note"; }
-
-function importClick() {
-  const inp = document.createElement("input");
-  inp.type = "file"; inp.accept = ".json,application/json";
-  inp.onchange = () => {
-    const f = inp.files && inp.files[0]; if (!f) return;
-    const r = new FileReader();
-    r.onload = () => importJSON(String(r.result));
-    r.readAsText(f);
-  };
-  inp.click();
-}
-
-function importJSON(text) {
-  let data;
-  try { data = JSON.parse(text); } catch (e) { alert("Fichier JSON invalide."); return; }
-  const incoming = Array.isArray(data) ? data : (data.missions || []);
-  if (!incoming.length) { alert("Aucune mission trouvée dans ce fichier."); return; }
-  incoming.forEach((m) => {
-    state.missions.push({
-      id: uid(),
-      title: m.title || "",
-      statusCode: normStatus(m.statusCode || m.status),
-      createdAt: Date.now(),
-      entries: (m.entries || []).map((e) => ({
-        id: uid(),
-        kind: normKind(e.kind),
-        title: e.title || "",
-        content: e.content || "",
-        date: (e.date || "").slice(0, 10) || todayISO(),
-        url: e.url || e.urlString || "",
-        accumulatedSeconds: Number(e.accumulatedSeconds) || 0,
-        timerStartedAt: null,
-        createdAt: Date.now(),
-      })),
-    });
-  });
-  save();
-  alert(incoming.length + " mission(s) importée(s). Vos données existantes n'ont pas été supprimées.");
-  go("missions");
-}
-
-function exportJSON() {
-  const blob = new Blob([JSON.stringify({ missions: state.missions }, null, 2)], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "operations01-data.json";
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-// ----------------------------- Google Drive (UI) -----------------------------
-function renderDriveBar() {
-  const el = document.getElementById("driveBar");
-  if (!el) return;
-  const cfgOk = window.OPERATIONS01_CONFIG && OPERATIONS01_CONFIG.googleClientId;
-  if (!cfgOk) {
-    el.innerHTML = `<div class="muted" style="font-size:11px;line-height:1.4">Google Drive non configuré.<br>Voir README → « Google Drive ».</div>`;
-    return;
-  }
-  if (window.DriveSync && DriveSync.isConnected()) {
-    el.innerHTML = `<div style="font-size:12px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">synchronisé</span></div>`;
-  } else {
-    el.innerHTML = `<button class="btn secondary small" id="driveConnect" style="width:100%">Se connecter à Google Drive</button>`;
-    const b = document.getElementById("driveConnect");
-    if (b) b.onclick = connectDrive;
-  }
-}
-
-async function connectDrive() {
-  if (!(window.DriveSync && DriveSync.ready())) {
-    alert("Google Drive n'est pas disponible ici (identifiant client manquant, ou app non hébergée en HTTPS).");
-    return;
-  }
-  try {
-    const remote = await DriveSync.connect();
-    if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) {
-      // le fichier Drive est plus récent : on le charge
-      state = remote;
-      localStorage.setItem(STORE_KEY, JSON.stringify(state));
-    } else {
-      // le local est plus récent (ou Drive vide) : on pousse le local vers Drive
-      DriveSync.push(state);
-    }
-    renderDriveBar();
-    render();
-  } catch (e) {
-    alert("Connexion Google Drive impossible : " + e.message);
-  }
-}
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferredPrompt = e; document.getElementById("installBanner").style.display = "flex"; });
+document.getElementById("installBtn").onclick = () => { document.getElementById("installBanner").style.display = "none"; if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt = null; } };
+document.getElementById("installClose").onclick = () => { document.getElementById("installBanner").style.display = "none"; };
 
 // ----------------------------- Démarrage -----------------------------
 render();
 renderDriveBar();
-if (window.DriveSync) {
-  DriveSync.onStatus((s) => {
-    const el = document.getElementById("driveStatus");
-    if (el) el.textContent = s;
-  });
-}
+if (window.DriveSync) DriveSync.onStatus((s) => { const el = document.getElementById("driveStatus"); if (el) el.textContent = s; });
