@@ -299,11 +299,12 @@ function renderCompanyDetail(id) {
 let financeTab = "factures";
 function renderFinances() {
   if (view.detailId) return renderInvoiceDetail(view.detailId);
-  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"]]
+  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"], ["import", "Import bancaire"]]
     .map(([id, lbl]) => `<button class="chip ${financeTab === id ? "active" : ""}" data-ftab="${id}">${lbl}</button>`).join("");
   let body = "";
   if (financeTab === "factures") body = financeFactures();
   else if (financeTab === "cdr") body = financeCDR();
+  else if (financeTab === "import") body = financeImport();
   else body = financeTresorerie();
   return `<div class="page-title">Finances</div><div class="chip-row" style="margin-bottom:16px">${tabs}</div>${body}`;
 }
@@ -368,6 +369,131 @@ function renderInvoiceDetail(id) {
       <label class="field"><span>Payée le</span><input type="date" data-bind="invoices|${v.id}|paymentDate" value="${esc((v.paymentDate || "").slice(0, 10))}"/></label>
     </div>
     <div style="margin-top:18px"><button class="btn danger small" data-del-invoice="${v.id}">Supprimer la facture</button></div>`;
+}
+
+// ----------------------------- Import bancaire (CSV / OFX) -----------------------------
+let bankImport = { companyId: "", rows: [], fileName: "" };
+function parseNumberFR(s) {
+  if (typeof s === "number") return s;
+  s = String(s).trim().replace(/\s/g, "").replace(/[€$]/g, "");
+  if (!s) return NaN;
+  if (s.indexOf(",") > -1 && s.lastIndexOf(",") > s.lastIndexOf(".")) s = s.replace(/\./g, "").replace(",", ".");
+  else s = s.replace(/,/g, "");
+  return parseFloat(s);
+}
+function parseDateAny(s) {
+  s = String(s).trim(); let m;
+  if ((m = s.match(/^(\d{4})[-\/](\d{2})[-\/](\d{2})/))) return `${m[1]}-${m[2]}-${m[3]}`;
+  if ((m = s.match(/^(\d{2})[\/\-.](\d{2})[\/\-.](\d{2,4})/))) { let y = m[3]; if (y.length === 2) y = "20" + y; return `${y}-${m[2]}-${m[1]}`; }
+  if ((m = s.match(/^(\d{8})$/))) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  return "";
+}
+function splitCSVLine(line, delim) {
+  const out = []; let cur = "", q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) { if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else { if (ch === '"') q = true; else if (ch === delim) { out.push(cur); cur = ""; } else cur += ch; }
+  }
+  out.push(cur); return out;
+}
+function detectDelim(l) { const c = { ";": (l.match(/;/g) || []).length, "\t": (l.match(/\t/g) || []).length, ",": (l.match(/,/g) || []).length }; return Object.keys(c).sort((a, b) => c[b] - c[a])[0]; }
+function parseCSVBank(text) {
+  const lines = text.split(/\r\n|\n|\r/).filter((l) => l.trim() !== "");
+  if (!lines.length) return [];
+  let headerIdx = -1, delim = ";", cols = [];
+  for (let i = 0; i < Math.min(lines.length, 20); i++) {
+    const d = detectDelim(lines[i]);
+    const cells = splitCSVLine(lines[i], d).map((x) => x.toLowerCase().trim());
+    if (cells.some((c) => c.includes("date")) && cells.some((c) => c.includes("montant") || c.includes("débit") || c.includes("debit") || c.includes("crédit") || c.includes("credit"))) { headerIdx = i; delim = d; cols = cells; break; }
+  }
+  if (headerIdx === -1) {
+    delim = detectDelim(lines[0]);
+    return lines.map((l) => { const c = splitCSVLine(l, delim); const date = parseDateAny(c[0] || ""); const amount = parseNumberFR(c[c.length - 1] || ""); const label = (c.slice(1, c.length - 1).join(" ") || "").trim() || "Opération"; return (date && !isNaN(amount)) ? { date, label, amount } : null; }).filter(Boolean);
+  }
+  const find = (keys) => cols.findIndex((c) => keys.some((k) => c.includes(k)));
+  const iDate = find(["date de comptab", "date d'opé", "date ope", "date val", "date"]);
+  const iLabel = find(["libellé", "libelle", "description", "nature", "motif", "détail", "detail", "intitulé", "intitule", "opération", "operation"]);
+  const iAmount = find(["montant"]);
+  const iDebit = find(["débit", "debit"]);
+  const iCredit = find(["crédit", "credit"]);
+  const rows = [];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const c = splitCSVLine(lines[i], delim); if (c.length < 2) continue;
+    const date = parseDateAny(c[iDate] || ""); if (!date) continue;
+    let amount;
+    if (iAmount > -1 && (c[iAmount] || "").trim() !== "") amount = parseNumberFR(c[iAmount]);
+    else { const deb = iDebit > -1 ? parseNumberFR(c[iDebit]) : NaN; const cred = iCredit > -1 ? parseNumberFR(c[iCredit]) : NaN; amount = (!isNaN(cred) && cred !== 0) ? Math.abs(cred) : (!isNaN(deb) && deb !== 0 ? -Math.abs(deb) : NaN); }
+    if (isNaN(amount)) continue;
+    rows.push({ date, label: (iLabel > -1 ? c[iLabel] : "").trim() || "Opération", amount });
+  }
+  return rows;
+}
+function parseOFX(text) {
+  const rows = []; const blocks = text.split(/<STMTTRN>/i).slice(1);
+  blocks.forEach((b) => {
+    const g = (tag) => { const m = b.match(new RegExp("<" + tag + ">([^<\\r\\n]*)", "i")); return m ? m[1].trim() : ""; };
+    const amount = parseFloat(g("TRNAMT").replace(",", ".")); const dt = g("DTPOSTED").slice(0, 8);
+    const date = dt.length === 8 ? `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}` : "";
+    const label = (g("NAME") || g("MEMO") || "Opération").trim();
+    if (!isNaN(amount) && date) rows.push({ date, label, amount });
+  });
+  return rows;
+}
+function parseBankFile(text, name) {
+  if (/<OFX>/i.test(text) || /<STMTTRN>/i.test(text) || /\.ofx$/i.test(name || "")) return parseOFX(text);
+  return parseCSVBank(text);
+}
+function financeImport() {
+  const compOpts = ['<option value="">Choisir la société / le compte…</option>'].concat(state.companies.map((c) => `<option value="${c.id}" ${c.id === bankImport.companyId ? "selected" : ""}>${esc(c.name || "Sans nom")}</option>`)).join("");
+  const rows = bankImport.rows;
+  let preview = "";
+  if (rows.length) {
+    const credit = rows.filter((r) => r.amount > 0).reduce((t, r) => t + r.amount, 0);
+    const debit = rows.filter((r) => r.amount < 0).reduce((t, r) => t + r.amount, 0);
+    const list = rows.map((r, i) => `<tr>
+      <td style="text-align:center"><input type="checkbox" data-bankrow="${i}" checked style="width:auto"/></td>
+      <td style="white-space:nowrap">${fmtDate(r.date)}</td>
+      <td>${esc(r.label)}</td>
+      <td style="text-align:right;white-space:nowrap;color:${r.amount >= 0 ? "var(--positive)" : "#d23c3c"}">${euros(r.amount)}</td></tr>`).join("");
+    preview = `<div class="section-h">${rows.length} opération(s) détectée(s)${bankImport.fileName ? ` · ${esc(bankImport.fileName)}` : ""}</div>
+      <div class="card" style="padding:8px">
+        <div style="overflow-x:auto"><table class="bank-table">
+          <thead><tr><th></th><th>Date</th><th>Libellé</th><th style="text-align:right">Montant</th></tr></thead>
+          <tbody>${list}</tbody></table></div>
+        <div class="inline" style="margin-top:10px;font-size:13px"><span class="grow muted">Crédits ${euros(credit)} · Débits ${euros(debit)}</span></div>
+      </div>
+      <div class="inline" style="margin-top:12px">
+        <button class="btn" data-bank-import>Importer les opérations cochées</button>
+        <button class="btn ghost small" data-bank-clear>Annuler</button></div>`;
+  }
+  return `<div class="card">
+      <div style="font-weight:600;margin-bottom:8px">Importer un relevé bancaire</div>
+      <div class="muted" style="font-size:13px;line-height:1.5;margin-bottom:12px">Exporte un relevé depuis ta banque au format <strong>CSV</strong> ou <strong>OFX</strong>, puis charge-le ici. Les opérations sont ajoutées comme factures <em>payées</em> (crédit = recette, débit = dépense) et alimentent la trésorerie.</div>
+      <label class="field"><span>Rattacher au compte</span><select id="bankCompany">${compOpts}</select></label>
+      <label class="field"><span>Fichier du relevé (CSV ou OFX)</span><input type="file" id="bankFile" accept=".csv,.ofx,.txt,text/csv"/></label>
+    </div>
+    ${preview}
+    <div class="muted" style="font-size:11px;margin-top:12px;line-height:1.5">⚠️ Ces opérations sont des mouvements de trésorerie réels (montants TTC, TVA 0). Si tu saisis aussi les factures à la main, tu peux avoir un double comptage : range les opérations importées dans une catégorie dédiée pour les distinguer. Les doublons d'un même relevé ré-importé sont automatiquement ignorés.</div>`;
+}
+function doBankImport() {
+  if (!bankImport.companyId) { alert("Choisis d'abord la société / le compte de rattachement."); return; }
+  const chosen = [];
+  document.querySelectorAll("[data-bankrow]").forEach((cb) => { if (cb.checked) chosen.push(bankImport.rows[Number(cb.dataset.bankrow)]); });
+  if (!chosen.length) { alert("Aucune opération sélectionnée."); return; }
+  const existing = new Set(state.invoices.filter((v) => v.bankKey).map((v) => v.bankKey));
+  let added = 0, skipped = 0;
+  chosen.forEach((r) => {
+    const key = `${bankImport.companyId}|${r.date}|${r.amount.toFixed(2)}|${r.label}`;
+    if (existing.has(key)) { skipped++; return; }
+    existing.add(key);
+    state.invoices.push({ id: uid(), title: r.label, reference: "", direction: r.amount >= 0 ? "recette" : "depense", status: "payee", amount: Math.abs(r.amount), vatRate: 0, startDate: r.date, hasDueDate: false, dueDate: "", paymentDate: r.date, companyId: bankImport.companyId, contactId: null, categoryName: "", bankKey: key });
+    added++;
+  });
+  save();
+  bankImport.rows = []; bankImport.fileName = "";
+  alert(`Import terminé : ${added} opération(s) ajoutée(s)${skipped ? `, ${skipped} déjà présente(s) ignorée(s)` : ""}.`);
+  financeTab = "factures"; render();
 }
 
 // ----------------------------- Tableau de bord -----------------------------
@@ -665,6 +791,24 @@ function wire() {
 
   // onglets Finances
   c.querySelectorAll("[data-ftab]").forEach((b) => b.onclick = () => { financeTab = b.dataset.ftab; render(); });
+
+  // import bancaire
+  const bankComp = c.querySelector("#bankCompany"); if (bankComp) bankComp.onchange = () => { bankImport.companyId = bankComp.value; };
+  const bankFile = c.querySelector("#bankFile"); if (bankFile) bankFile.onchange = () => {
+    const f = bankFile.files && bankFile.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      let text; const buf = r.result;
+      try { text = new TextDecoder("utf-8", { fatal: true }).decode(buf); }
+      catch (e) { try { text = new TextDecoder("windows-1252").decode(buf); } catch (e2) { text = new TextDecoder().decode(buf); } }
+      bankImport.rows = parseBankFile(text, f.name); bankImport.fileName = f.name;
+      if (!bankImport.rows.length) alert("Aucune opération détectée. Vérifie que le fichier est bien un relevé au format CSV ou OFX.");
+      render();
+    };
+    r.readAsArrayBuffer(f);
+  };
+  const bankClear = c.querySelector("[data-bank-clear]"); if (bankClear) bankClear.onclick = () => { bankImport.rows = []; bankImport.fileName = ""; render(); };
+  const bankImp = c.querySelector("[data-bank-import]"); if (bankImp) bankImp.onclick = doBankImport;
 
   // import / export / reset
   c.querySelectorAll("[data-import]").forEach((b) => b.onclick = importClick);
