@@ -33,13 +33,14 @@ const INV_STATUSES = [
   { code: "aPayer", label: "À payer" }, { code: "payee", label: "Payée" },
 ];
 const invStatusLabel = (c) => (INV_STATUSES.find((x) => x.code === c) || INV_STATUSES[0]).label;
+const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours", label: "En cours" }, { code: "termine", label: "Terminée" }];
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], updatedAt: 0 };
 }
 function load() {
   try {
@@ -105,6 +106,8 @@ const sumAmount = (arr) => arr.reduce((t, v) => t + (v.amount || 0), 0);
 // ----------------------------- Navigation -----------------------------
 const SECTIONS = [
   { id: "missions", label: "Missions", ic: "🏁", fn: renderMissions },
+  { id: "tasks", label: "Tâches", ic: "✅", fn: renderTasks },
+  { id: "actions", label: "Actions", ic: "🎫", fn: renderActions },
   { id: "time", label: "Temps", ic: "⏱️", fn: renderTime },
   { id: "finances", label: "Finances", ic: "€", fn: renderFinances },
   { id: "contacts", label: "Contacts", ic: "👥", fn: renderContacts },
@@ -137,7 +140,7 @@ function renderNav() {
   });
   const tabbar = document.getElementById("tabbar");
   tabbar.innerHTML = "";
-  SECTIONS.slice(0, 5).forEach((s) => {
+  SECTIONS.forEach((s) => {
     const b = document.createElement("button");
     b.className = s.id === view.section ? "active" : "";
     b.innerHTML = `<span class="ic">${s.ic}</span>${esc(s.label)}`;
@@ -175,6 +178,7 @@ function renderMissions() {
       <span class="badge ${m.statusCode}">${statusLabel(m.statusCode)}</span></div>`;
   }).join("");
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Missions</div>
+      <button class="btn danger small" data-reset>Réinitialiser</button>
       <button class="btn secondary small" data-import>Importer</button>
       <button class="btn secondary small" data-export>Exporter</button>
       <button class="btn" data-add-mission>+ Nouvelle mission</button></div>
@@ -412,6 +416,86 @@ function renderTime() {
 }
 function weekInterval(date) { const d = new Date(date); d.setHours(0, 0, 0, 0); const day = (d.getDay() + 6) % 7; const start = new Date(d); start.setDate(d.getDate() - day); const end = new Date(start); end.setDate(start.getDate() + 7); return { start, end }; }
 
+// ----------------------------- Tâches -----------------------------
+function missionSelect(bind, current) {
+  const opts = ['<option value="">Aucune mission</option>'].concat(
+    sortedMissions().map((m) => `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`)
+  ).join("");
+  return `<select data-bind="${bind}">${opts}</select>`;
+}
+const taskStatusLabel = (c) => (TASK_STATUSES.find((s) => s.code === c) || TASK_STATUSES[0]).label;
+function renderTasks() {
+  const groups = TASK_STATUSES.map((st) => {
+    const items = state.tasks.filter((t) => (t.status || "aFaire") === st.code)
+      .sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999") || (b.createdAt || 0) - (a.createdAt || 0));
+    const rows = items.map((t) => {
+      const sub = [t.missionId ? esc(missionTitle(t.missionId)) : null, t.dueDate ? `échéance ${fmtDate(t.dueDate)}` : null].filter(Boolean).join(" · ");
+      const nextOpts = TASK_STATUSES.map((s) => `<option value="${s.code}" ${s.code === (t.status || "aFaire") ? "selected" : ""}>${s.label}</option>`).join("");
+      return `<div class="row" style="border-left-color:var(--primary)">
+        <div class="grow"><input class="flat-input r-title" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
+          ${sub ? `<div class="r-sub">${sub}</div>` : ""}</div>
+        <select data-task-status="${t.id}" style="width:auto">${nextOpts}</select>
+        <button class="btn ghost small" data-del-task="${t.id}">✕</button></div>`;
+    }).join("");
+    return `<div class="section-h">${st.label} <span class="muted">(${items.length})</span></div>
+      <div class="list">${items.length ? rows : '<div class="muted" style="padding:4px 2px">—</div>'}</div>`;
+  }).join("");
+  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tâches</div>
+      <button class="btn" data-add-task>+ Nouvelle tâche</button></div>
+    ${groups}
+    <button class="btn fab" data-add-task>+</button>`;
+}
+function missionTitle(id) { const m = state.missions.find((x) => x.id === id); return m ? (m.title || "Sans titre") : ""; }
+
+// ----------------------------- Actions (tickets) -----------------------------
+function renderActions() {
+  if (view.detailId) return renderActionDetail(view.detailId);
+  const open = state.actions.filter((a) => !a.closed);
+  const closed = state.actions.filter((a) => a.closed);
+  const card = (a) => {
+    const sub = [a.recipientName ? esc(a.recipientName) : null, a.projectName ? esc(a.projectName) : (a.missionId ? esc(missionTitle(a.missionId)) : null)].filter(Boolean).join(" · ");
+    return `<div class="row" data-open-action="${a.id}" style="border-left-color:${a.closed ? "var(--line)" : "var(--alert)"}">
+      <div class="grow"><div class="r-title">${esc(a.title || "Sans objet")}</div>
+        <div class="r-sub">${sub || "—"}${a.reminderDaily && !a.closed ? " · 🔔 rappel quotidien 9h" : ""}</div></div>
+      <span class="badge ${a.closed ? "terminee" : "enCours"}">${a.closed ? "Close" : "Ouverte"}</span></div>`;
+  };
+  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Actions</div>
+      <button class="btn" data-add-action>+ Nouvelle action</button></div>
+    <div class="muted" style="font-size:12px;margin-bottom:10px">Suivi des documents ou informations à recevoir d'un interlocuteur. Tant qu'une action est ouverte, un rappel e-mail est envoyé chaque jour à 9h (via le script Google, voir la doc).</div>
+    <div class="section-h">Ouvertes <span class="muted">(${open.length})</span></div>
+    <div class="list">${open.length ? open.map(card).join("") : '<div class="muted" style="padding:4px 2px">Aucune action ouverte.</div>'}</div>
+    ${closed.length ? `<div class="section-h">Closes <span class="muted">(${closed.length})</span></div><div class="list">${closed.map(card).join("")}</div>` : ""}
+    <button class="btn fab" data-add-action>+</button>`;
+}
+function renderActionDetail(id) {
+  const a = state.actions.find((x) => x.id === id);
+  if (!a) { view.detailId = null; return renderActions(); }
+  const ctOpts = ['<option value="">— Saisie libre —</option>'].concat(
+    state.contacts.map((c) => `<option value="${c.id}" ${c.id === a.contactId ? "selected" : ""}>${esc(contactName(c))}${c.email ? ` · ${esc(c.email)}` : ""}</option>`)
+  ).join("");
+  return `<button class="back" data-back-action>‹ Actions</button>
+    <div class="page-title">${esc(a.title || "Action")}</div>
+    <div class="card">
+      <label class="field"><span>Objet</span><input data-bind="actions|${a.id}|title" value="${esc(a.title)}" placeholder="Ex. Recevoir le bilan 2025"/></label>
+      <label class="field"><span>Projet / mission</span>${missionSelect(`actions|${a.id}|missionId`, a.missionId)}</label>
+      <label class="field"><span>Projet (libre, si hors mission)</span><input data-bind="actions|${a.id}|projectName" value="${esc(a.projectName)}"/></label>
+      <label class="field"><span>Documents / informations à recevoir</span><textarea data-bind="actions|${a.id}|request">${esc(a.request)}</textarea></label>
+      <label class="field"><span>Interlocuteur (dans les contacts)</span><select data-action-contact="${a.id}" data-rerender>${ctOpts}</select></label>
+      <label class="field"><span>Nom de l'interlocuteur</span><input data-bind="actions|${a.id}|recipientName" value="${esc(a.recipientName)}"/></label>
+      <label class="field"><span>E-mail du destinataire</span><input type="email" data-bind="actions|${a.id}|recipientEmail" value="${esc(a.recipientEmail)}" inputmode="email"/></label>
+      <label class="field"><span>Échéance souhaitée</span><input type="date" data-bind="actions|${a.id}|dueDate" value="${esc((a.dueDate || "").slice(0, 10))}"/></label>
+      <label class="field inline-check"><input type="checkbox" data-action-reminder="${a.id}" ${a.reminderDaily ? "checked" : ""}/> <span>Rappel e-mail quotidien à 9h tant que l'action est ouverte</span></label>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="inline"><span class="grow"><strong>Statut :</strong> ${a.closed ? "Close" : "Ouverte"}</span>
+        ${a.closed
+          ? `<button class="btn secondary small" data-reopen-action="${a.id}">Rouvrir</button>`
+          : `<button class="btn small" data-close-action="${a.id}">Clore l'action</button>`}</div>
+      <div class="muted" style="font-size:12px;margin-top:6px">${a.closed && a.closedAt ? `Close le ${fmtDate(new Date(a.closedAt).toISOString().slice(0, 10))}.` : (a.reminderDaily ? "Un rappel est envoyé chaque matin à 9h au destinataire (script Google)." : "Rappel quotidien désactivé.")}</div>
+    </div>
+    <div style="margin-top:18px"><button class="btn danger small" data-del-action="${a.id}">Supprimer l'action</button></div>`;
+}
+
 // ----------------------------- Interactions -----------------------------
 function findMission(id) { return state.missions.find((m) => m.id === id); }
 function findEntry(m, id) { return (m.entries || []).find((e) => e.id === id); }
@@ -454,9 +538,10 @@ function wire() {
   // onglets Finances
   c.querySelectorAll("[data-ftab]").forEach((b) => b.onclick = () => { financeTab = b.dataset.ftab; render(); });
 
-  // import / export
+  // import / export / reset
   c.querySelectorAll("[data-import]").forEach((b) => b.onclick = importClick);
   c.querySelectorAll("[data-export]").forEach((b) => b.onclick = exportJSON);
+  c.querySelectorAll("[data-reset]").forEach((b) => b.onclick = () => { if (confirm("Effacer TOUTES les données de la web app ? (irréversible)")) { state = blankState(); save(); go("missions"); } });
 
   // entrées d'historique
   c.querySelectorAll("[data-add-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); if (!m) return; m.entries.push({ id: uid(), kind: b.dataset.addEntry, title: "", content: "", date: todayISO(), url: "", accumulatedSeconds: 0, timerStartedAt: null, createdAt: Date.now(), _open: true }); save(); render(); });
@@ -464,6 +549,22 @@ function wire() {
   c.querySelectorAll("[data-efield]").forEach((el) => { const h = () => { const m = findMission(el.dataset.m); const e = findEntry(m, el.dataset.e); if (!e) return; e[el.dataset.efield] = el.value; save(); if (el.dataset.efield === "kind") render(); }; el.addEventListener("change", h); el.addEventListener("blur", h); });
   c.querySelectorAll("[data-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.timer); if (!e) return; if (e.timerStartedAt) { e.accumulatedSeconds = (e.accumulatedSeconds || 0) + (Date.now() - e.timerStartedAt) / 1000; e.timerStartedAt = null; } else { e.timerStartedAt = Date.now(); } save(); render(); });
   c.querySelectorAll("[data-del-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); if (!m) return; m.entries = m.entries.filter((e) => e.id !== b.dataset.delEntry); save(); render(); });
+
+  // Tâches
+  c.querySelectorAll("[data-add-task]").forEach((b) => b.onclick = () => { state.tasks.push({ id: uid(), title: "", status: "aFaire", missionId: null, dueDate: "", createdAt: Date.now() }); save(); render(); });
+  c.querySelectorAll("[data-taskfield]").forEach((el) => { const h = () => { const t = state.tasks.find((x) => x.id === el.dataset.t); if (t) { t[el.dataset.taskfield] = el.value; save(); } }; el.addEventListener("change", h); el.addEventListener("blur", h); });
+  c.querySelectorAll("[data-task-status]").forEach((sel) => sel.onchange = () => { const t = state.tasks.find((x) => x.id === sel.dataset.taskStatus); if (t) { t.status = sel.value; save(); render(); } });
+  c.querySelectorAll("[data-del-task]").forEach((b) => b.onclick = () => { state.tasks = state.tasks.filter((t) => t.id !== b.dataset.delTask); save(); render(); });
+
+  // Actions (tickets)
+  c.querySelectorAll("[data-open-action]").forEach((r) => r.onclick = () => openDetail("actions", r.dataset.openAction));
+  const backAct = c.querySelector("[data-back-action]"); if (backAct) backAct.onclick = () => { view.detailId = null; render(); };
+  c.querySelectorAll("[data-add-action]").forEach((b) => b.onclick = () => { const x = { id: uid(), title: "", projectName: "", missionId: null, request: "", contactId: null, recipientName: "", recipientEmail: "", dueDate: "", reminderDaily: true, closed: false, closedAt: null, createdAt: Date.now() }; state.actions.push(x); save(); openDetail("actions", x.id); });
+  c.querySelectorAll("[data-action-contact]").forEach((sel) => sel.onchange = () => { const a = state.actions.find((x) => x.id === sel.dataset.actionContact); if (!a) return; a.contactId = sel.value || null; const ct = state.contacts.find((x) => x.id === a.contactId); if (ct) { a.recipientName = contactName(ct); if (ct.email) a.recipientEmail = ct.email; } save(); render(); });
+  c.querySelectorAll("[data-action-reminder]").forEach((cb) => cb.onchange = () => { const a = state.actions.find((x) => x.id === cb.dataset.actionReminder); if (a) { a.reminderDaily = cb.checked; save(); render(); } });
+  c.querySelectorAll("[data-close-action]").forEach((b) => b.onclick = () => { const a = state.actions.find((x) => x.id === b.dataset.closeAction); if (a) { a.closed = true; a.closedAt = Date.now(); save(); render(); } });
+  c.querySelectorAll("[data-reopen-action]").forEach((b) => b.onclick = () => { const a = state.actions.find((x) => x.id === b.dataset.reopenAction); if (a) { a.closed = false; a.closedAt = null; save(); render(); } });
+  c.querySelectorAll("[data-del-action]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette action ?")) { state.actions = state.actions.filter((x) => x.id !== b.dataset.delAction); save(); view.detailId = null; go("actions"); } });
 }
 
 // ----------------------------- Import / Export -----------------------------
@@ -491,7 +592,10 @@ function importJSON(text) {
   (data.contacts || []).forEach((c) => state.contacts.push({ id: uid(), firstName: c.firstName || "", lastName: c.lastName || "", organization: c.organization || "", jobTitle: c.jobTitle || "", email: c.email || "", phone: c.phone || "", address: c.address || "", linkedIn: c.linkedIn || "", category: (CONTACT_CATS.some((x) => x.code === c.category) ? c.category : "client"), notes: c.notes || "", companyId: compByName[c.companyName] || null }));
   const contactByName = {}; state.contacts.forEach((c) => { contactByName[contactName(c)] = c.id; });
   (data.invoices || []).forEach((v) => state.invoices.push({ id: uid(), title: v.title || "", reference: v.reference || "", direction: v.direction === "depense" ? "depense" : "recette", status: (INV_STATUSES.some((x) => x.code === v.status) ? v.status : "aEmettre"), amount: Number(v.amount) || 0, vatRate: v.vatRate == null ? 20 : Number(v.vatRate), startDate: (v.startDate || "").slice(0, 10) || todayISO(), hasDueDate: !!v.hasDueDate, dueDate: (v.dueDate || "").slice(0, 10), paymentDate: (v.paymentDate || "").slice(0, 10), companyId: compByName[v.companyName] || null, contactId: contactByName[v.contactName] || null, categoryName: v.categoryName || "" }));
-  (data.missions || []).forEach((m) => state.missions.push({ id: uid(), title: m.title || "", statusCode: normStatus(m.statusCode || m.status), companyId: compByName[m.companyName] || null, createdAt: Date.now(), entries: (m.entries || []).map((e) => ({ id: uid(), kind: normKind(e.kind), title: e.title || "", content: e.content || "", date: (e.date || "").slice(0, 10) || todayISO(), url: e.url || e.urlString || "", accumulatedSeconds: Number(e.accumulatedSeconds) || 0, timerStartedAt: null, createdAt: Date.now() })) }));
+  const missionByTitle = {};
+  (data.missions || []).forEach((m) => { const nm = { id: uid(), title: m.title || "", statusCode: normStatus(m.statusCode || m.status), companyId: compByName[m.companyName] || null, createdAt: Date.now(), entries: (m.entries || []).map((e) => ({ id: uid(), kind: normKind(e.kind), title: e.title || "", content: e.content || "", date: (e.date || "").slice(0, 10) || todayISO(), url: e.url || e.urlString || "", accumulatedSeconds: Number(e.accumulatedSeconds) || 0, timerStartedAt: null, createdAt: Date.now() })) }; state.missions.push(nm); if (nm.title) missionByTitle[nm.title] = nm.id; });
+  (data.tasks || []).forEach((t) => state.tasks.push({ id: uid(), title: t.title || "", status: (TASK_STATUSES.some((s) => s.code === t.status) ? t.status : "aFaire"), missionId: missionByTitle[t.missionTitle] || null, dueDate: (t.dueDate || "").slice(0, 10), createdAt: Date.now() }));
+  (data.actions || []).forEach((a) => state.actions.push({ id: uid(), title: a.title || "", projectName: a.projectName || "", missionId: missionByTitle[a.missionTitle] || null, request: a.request || "", contactId: null, recipientName: a.recipientName || "", recipientEmail: a.recipientEmail || "", dueDate: (a.dueDate || "").slice(0, 10), reminderDaily: a.reminderDaily !== false, closed: !!a.closed, closedAt: a.closedAt || null, createdAt: Date.now() }));
 
   save();
   alert(`Import terminé : ${state.companies.length} société(s), ${state.contacts.length} contact(s), ${state.invoices.length} facture(s), ${state.missions.length} mission(s).`);

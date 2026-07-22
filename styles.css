@@ -67,9 +67,11 @@ body {
     display: flex; position: fixed; bottom: 0; left: 0; right: 0; height: 62px;
     background: var(--card); border-top: 1px solid var(--line);
     padding-bottom: env(safe-area-inset-bottom);
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
   }
+  .tabbar::-webkit-scrollbar { display: none; }
   .tabbar button {
-    flex: 1; border: none; background: none; color: var(--muted);
+    flex: 0 0 auto; min-width: 68px; border: none; background: none; color: var(--muted);
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
     font-size: 10px; cursor: pointer;
   }
@@ -128,6 +130,11 @@ input, select, textarea {
   background: var(--bg); color: var(--text); font-size: 15px; font-family: inherit;
 }
 textarea { min-height: 72px; resize: vertical; }
+.flat-input { border: none; background: transparent; padding: 2px 0; border-radius: 0; }
+.flat-input:focus { outline: none; border-bottom: 1px solid var(--primary); }
+label.field.inline-check { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+label.field.inline-check > span { margin-bottom: 0; }
+.inline-check input { width: auto; }
 .inline { display: flex; gap: 10px; align-items: center; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
