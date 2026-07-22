@@ -106,6 +106,7 @@ const sumAmount = (arr) => arr.reduce((t, v) => t + (v.amount || 0), 0);
 // ----------------------------- Navigation -----------------------------
 const SECTIONS = [
   { id: "search", label: "Recherche", ic: "🔎", fn: renderSearch },
+  { id: "relances", label: "Relances", ic: "📨", fn: renderRelances },
   { id: "missions", label: "Missions", ic: "🏁", fn: renderMissions },
   { id: "tasks", label: "Tâches", ic: "✅", fn: renderTasks },
   { id: "actions", label: "Actions", ic: "🎫", fn: renderActions },
@@ -180,6 +181,40 @@ function renderSearch() {
   return `<div class="page-title">Recherche</div>
     <input id="globalSearch" placeholder="Rechercher une mission, un contact, une facture…" value="${esc(searchQ)}" style="margin-bottom:14px"/>
     ${q ? `<div class="muted" style="font-size:12px;margin-bottom:8px">${results.length} résultat(s)</div><div class="list">${rows || '<div class="center-empty">Aucun résultat.</div>'}</div>` : '<div class="center-empty">Tape un mot-clé pour chercher dans toutes les sections.</div>'}`;
+}
+
+// ----------------------------- Relances (analyse des mails) -----------------------------
+let mailData = null, mailLoading = false;
+async function loadMails() {
+  if (!(window.DriveSync && DriveSync.isConnected())) return;
+  mailLoading = true; if (view.section === "relances") render();
+  try { mailData = await DriveSync.readMails(); } catch (e) { mailData = null; }
+  mailLoading = false; if (view.section === "relances") render();
+}
+function mailRow(it, extra) {
+  const link = it.link ? `<a class="btn ghost small" href="${esc(it.link)}" target="_blank" rel="noopener">Ouvrir</a>` : "";
+  const info = [extra ? extra(it) : null, it.date ? fmtDate((it.date || "").slice(0, 10)) : null].filter(Boolean).join(" · ");
+  return `<div class="row" style="cursor:default;border-left-color:var(--activity)">
+    <div class="grow"><div class="r-title">${esc(it.subject || "(sans objet)")}</div>
+      <div class="r-sub">${esc(it.name || it.from || "")}${info ? ` · ${esc(info)}` : ""}</div></div>${link}</div>`;
+}
+function renderRelances() {
+  if (!(window.DriveSync && DriveSync.isConnected()))
+    return `<div class="page-title">Relances</div><div class="center-empty">Connecte-toi à Google Drive (menu de gauche) pour activer le suivi des mails.</div>`;
+  const head = `<div class="toolbar"><div class="page-title grow" style="margin:0">Relances</div>
+      <button class="btn secondary small" data-mail-refresh>${mailLoading ? "…" : "↻ Rafraîchir"}</button></div>`;
+  const m = mailData;
+  if (!m) return head + (mailLoading
+    ? '<div class="center-empty">Chargement…</div>'
+    : `<div class="center-empty">Aucune analyse disponible.<br>Installe le script « Mails » (voir la marche à suivre) : il analysera ta boîte Gmail chaque heure et remplira cet onglet.</div>`);
+  const grp = (title, ic, arr, extra) => `<div class="section-h">${ic} ${title} <span class="muted">(${(arr || []).length})</span></div>
+    <div class="list">${(arr || []).length ? arr.map((x) => mailRow(x, extra)).join("") : '<div class="muted" style="padding:4px 2px">—</div>'}</div>`;
+  const when = m.generatedAt ? `Dernière analyse : ${new Date(m.generatedAt).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })}` : "";
+  return head + `<div class="muted" style="font-size:12px;margin-bottom:8px">${esc(when)}</div>`
+    + grp("Non lus de contacts", "📩", m.unread)
+    + grp("À relancer", "⏰", m.relance, (it) => `sans réponse depuis ${it.jours != null ? it.jours : "?"} j`)
+    + grp("Nouveaux expéditeurs", "🆕", m.nouveau)
+    + grp("Rendez-vous à préparer", "📅", m.rdvPrep);
 }
 
 // ----------------------------- Missions -----------------------------
@@ -968,6 +1003,10 @@ function wire() {
   onclick("[data-export-temps-csv]", exportTempsCSV);
   onclick("[data-export-factures]", exportFacturesCSV);
 
+  // relances (mails)
+  const mailRefresh = c.querySelector("[data-mail-refresh]"); if (mailRefresh) mailRefresh.onclick = loadMails;
+  if (view.section === "relances" && !mailData && !mailLoading && window.DriveSync && DriveSync.isConnected()) loadMails();
+
   // recherche globale
   const gs = c.querySelector("#globalSearch");
   if (gs) { gs.oninput = () => { searchQ = gs.value; render(); }; if (searchQ) { gs.focus(); const v = gs.value; try { gs.setSelectionRange(v.length, v.length); } catch (e) {} } }
@@ -1153,6 +1192,7 @@ async function connectDrive() {
     if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) { state = Object.assign(blankState(), remote); localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
     if (generateRecurrences() > 0) save(); else DriveSync.push(state);
     renderDriveBar(); render();
+    loadMails();
   } catch (e) { alert("Connexion Google Drive impossible : " + e.message); }
 }
 

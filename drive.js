@@ -93,6 +93,27 @@
     return await (await api(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`)).text();
   }
 
+  async function findByName(name) {
+    const q = encodeURIComponent(`name='${name}' and trashed=false`);
+    const r = await api(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,modifiedTime)`);
+    const j = await r.json();
+    return (j.files && j.files[0]) ? j.files[0] : null;
+  }
+
+  // Lit le fichier d'alertes mail (rempli par le script Apps Script).
+  // Portée drive.file : l'app doit avoir créé le fichier pour le voir ; on le crée
+  // vide s'il n'existe pas encore, afin que le script puisse ensuite le remplir.
+  const MAILS_FILE = "operations01-mails.json";
+  async function readMails() {
+    if (!accessToken) return null;
+    const f = await findByName(MAILS_FILE);
+    if (!f) {
+      try { await createNamed(MAILS_FILE, JSON.stringify({ updatedAt: 0, unread: [], relance: [], nouveau: [], rdvPrep: [] })); } catch (e) {}
+      return null;
+    }
+    try { return JSON.parse(await download(f.id)); } catch (e) { return null; }
+  }
+
   async function deleteFile(id) {
     await api(`https://www.googleapis.com/drive/v3/files/${id}`, { method: "DELETE" });
   }
@@ -196,6 +217,7 @@
     isConnected: () => !!accessToken,
     listBackups,
     restore,
-    backupNow
+    backupNow,
+    readMails
   };
 })();
