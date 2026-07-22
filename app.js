@@ -315,7 +315,9 @@ function financeFactures() {
     <div class="grow"><div class="r-title">${esc(v.title || "Nouvelle facture")}</div>
       <div class="r-sub">${[esc(companyName(v.companyId)), v.categoryName ? esc(v.categoryName) : null].filter(Boolean).join(" · ")}</div></div>
     <div style="text-align:right"><div>${euros(v.amount)}</div><span class="badge aDemarrer" style="font-size:10px">${invStatusLabel(v.status)}</span></div></div>`).join("");
-  return `<div class="toolbar"><span class="grow"></span><button class="btn" data-add-invoice>+ Nouvelle facture</button></div>
+  return `<div class="toolbar"><span class="grow"></span>
+      <button class="btn secondary small" data-export-factures>⬇ CSV</button>
+      <button class="btn" data-add-invoice>+ Nouvelle facture</button></div>
     <div class="list">${items.length ? rows : '<div class="center-empty">Aucune facture.</div>'}</div>`;
 }
 function financeCDR() {
@@ -326,10 +328,11 @@ function financeCDR() {
   };
   const produits = lines("produit"), charges = lines("charge");
   const totP = produits.reduce((t, l) => t + l[1], 0), totC = charges.reduce((t, l) => t + l[1], 0);
+  const expBar = `<div class="toolbar"><span class="grow"></span><button class="btn secondary small" data-export-cdr>📄 Exporter (PDF)</button></div>`;
   const block = (title, arr, tot, color) => `<div class="section-h">${title}</div><div class="card">
     ${arr.length ? arr.map((l) => `<div class="inline" style="padding:4px 0"><span class="grow">${esc(l[0])}</span><span class="muted">${euros(l[1])}</span></div>`).join("") : '<div class="muted">—</div>'}
     <div class="inline" style="padding:6px 0;border-top:1px solid var(--line);margin-top:6px"><strong class="grow">Total ${title.toLowerCase()}</strong><strong style="color:${color}">${euros(tot)}</strong></div></div>`;
-  return `${block("Produits", produits, totP, "var(--finance)")}${block("Charges", charges, totC, "var(--alert)")}
+  return `${expBar}${block("Produits", produits, totP, "var(--finance)")}${block("Charges", charges, totC, "var(--alert)")}
     <div class="card" style="margin-top:12px"><div class="inline"><strong class="grow">Résultat à date</strong>
       <strong style="color:${totP - totC >= 0 ? "var(--positive)" : "#d23c3c"};font-size:18px">${euros(totP - totC)}</strong></div>
       <div class="muted" style="font-size:12px;margin-top:4px">Montants HT, toutes factures confondues.</div></div>`;
@@ -338,7 +341,8 @@ function financeTresorerie() {
   const now = new Date();
   const ents = treasuryEntities();
   const perEnt = ents.map((c) => `<div class="inline" style="padding:5px 0"><span class="grow">${esc(c.name || "Sans nom")}</span><span class="timer">${euros(companyBalance(c, now))}</span></div>`).join("");
-  return `<div class="card"><div class="inline"><strong class="grow">Trésorerie consolidée</strong>
+  return `<div class="toolbar"><span class="grow"></span><button class="btn secondary small" data-export-treso>📄 Exporter (PDF)</button></div>
+    <div class="card"><div class="inline"><strong class="grow">Trésorerie consolidée</strong>
       <strong style="color:${treasuryNow(now) >= 0 ? "var(--positive)" : "#d23c3c"};font-size:18px">${euros(treasuryNow(now))}</strong></div></div>
     <div class="section-h">Prévisionnel</div><div class="card">
       <div class="inline" style="padding:4px 0"><span class="grow">À 30 jours</span><span class="timer">${euros(treasuryProjected(now, 30))}</span></div>
@@ -543,7 +547,8 @@ function renderDashboard() {
   const alerts = [];
   if (overdue.length) alerts.push(`${overdue.length} facture(s) client en retard · ${euros(overdue.reduce((t, v) => t + invTTC(v), 0))}`);
   if (toPay.length) alerts.push(`${toPay.length} facture(s) fournisseur à payer · ${euros(toPay.reduce((t, v) => t + invTTC(v), 0))}`);
-  return `<div class="page-title">Tableau de bord</div>
+  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tableau de bord</div>
+      <button class="btn secondary small" data-export-dashboard>📄 Exporter (PDF)</button></div>
     <div class="section-h">Activité (HT)</div>
     ${grid(card("CA facturé", euros(caFacture), "émises + payées", "#18c1d8") + card("CA encaissé", euros(caEncaisse), "payées", "#4dc8bb") + card("CA à émettre", euros(caAEmettre), "en attente", "#c3d679") + card("Résultat à date", euros(produits - charges), "produits − charges", produits - charges >= 0 ? "#4dc8bb" : "#d23c3c"))}
     <div class="section-h">Trésorerie consolidée (TTC)</div>
@@ -564,7 +569,9 @@ function renderTime() {
   });
   perMission.sort((a, b) => b.s - a.s);
   const rows = perMission.length ? perMission.map((p) => `<div class="inline" style="padding:6px 0"><span class="grow">${esc(p.title)}</span><span class="timer">${fmtDuration(p.s)}</span></div>`).join("") : '<div class="muted">Aucun temps cette semaine.</div>';
-  return `<div class="page-title">Temps</div>
+  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Temps</div>
+      <button class="btn secondary small" data-export-temps-csv>⬇ CSV</button>
+      <button class="btn secondary small" data-export-temps-pdf>📄 PDF</button></div>
     <div class="card"><div class="muted" style="font-size:13px">Semaine · lundi → dimanche</div>
       <div style="font-weight:600;margin:2px 0 10px">${fmtDate(start.toISOString().slice(0, 10))} → ${fmtDate(new Date(end - 86400000).toISOString().slice(0, 10))}</div>
       <div class="inline"><strong class="grow">Temps total</strong><span class="timer" style="color:var(--primary);font-size:18px">${fmtDuration(total)}</span></div></div>
@@ -843,6 +850,15 @@ function wire() {
     el.addEventListener("change", h); el.addEventListener("blur", h);
   });
 
+  // exports PDF / CSV
+  const onclick = (sel, fn) => c.querySelectorAll(sel).forEach((b) => b.onclick = fn);
+  onclick("[data-export-cdr]", () => printReport("Operations01 - Compte de resultat", "Compte de résultat", reportCDR()));
+  onclick("[data-export-treso]", () => printReport("Operations01 - Tresorerie", "Trésorerie", reportTresorerie()));
+  onclick("[data-export-dashboard]", () => printReport("Operations01 - Tableau de bord", "Tableau de bord", reportDashboard()));
+  onclick("[data-export-temps-pdf]", () => printReport("Operations01 - Suivi du temps", "Suivi du temps (semaine)", reportTemps()));
+  onclick("[data-export-temps-csv]", exportTempsCSV);
+  onclick("[data-export-factures]", exportFacturesCSV);
+
   // import bancaire
   const bankComp = c.querySelector("#bankCompany"); if (bankComp) bankComp.onchange = () => { bankImport.companyId = bankComp.value; };
   const bankFile = c.querySelector("#bankFile"); if (bankFile) bankFile.onchange = () => {
@@ -1008,6 +1024,108 @@ async function connectDrive() {
     else DriveSync.push(state);
     renderDriveBar(); render();
   } catch (e) { alert("Connexion Google Drive impossible : " + e.message); }
+}
+
+// ----------------------------- Exports (PDF via impression + CSV) -----------------------------
+const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 210" width="150" height="49" role="img" aria-label="choice">
+  <defs><linearGradient id="choiceGrad" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#0FB6D8"/><stop offset="0.5" stop-color="#7FC96B"/><stop offset="1" stop-color="#F2D64B"/></linearGradient></defs>
+  <text x="8" y="165" font-family="'Baloo 2','Quicksand','Nunito','Segoe UI',Helvetica,Arial,sans-serif" font-weight="800" font-size="200" fill="url(#choiceGrad)">choice</text></svg>`;
+function reportHeader(subtitle) {
+  const d = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+  return `<div class="rep-head"><div>${LOGO_SVG}</div>
+    <div style="flex:1"></div>
+    <div style="text-align:right"><div class="rep-title">${esc(subtitle)}</div><div class="rep-date">Édité le ${d} · Operations01</div></div></div>`;
+}
+function printReport(fileTitle, subtitle, bodyHtml) {
+  let pa = document.getElementById("printArea");
+  if (!pa) { pa = document.createElement("div"); pa.id = "printArea"; document.body.appendChild(pa); }
+  pa.innerHTML = reportHeader(subtitle) + bodyHtml;
+  const prev = document.title; document.title = fileTitle;
+  const restore = () => { document.title = prev; window.removeEventListener("afterprint", restore); };
+  window.addEventListener("afterprint", restore);
+  window.print();
+}
+const repNum = (v) => euros(v);
+function cdrLines(nature) {
+  const map = {};
+  state.invoices.filter((v) => invNature(v) === nature).forEach((v) => { const k = v.categoryName || "À catégoriser"; map[k] = (map[k] || 0) + (v.amount || 0); });
+  return Object.entries(map).filter(([, val]) => val !== 0).sort((a, b) => b[1] - a[1]);
+}
+function reportCDR() {
+  const produits = cdrLines("produit"), charges = cdrLines("charge");
+  const totP = produits.reduce((t, l) => t + l[1], 0), totC = charges.reduce((t, l) => t + l[1], 0);
+  const tbl = (title, arr, tot) => `<div class="rep-section">${title}</div>
+    <table class="rep-table"><thead><tr><th>Catégorie</th><th class="num">Montant HT</th></tr></thead><tbody>
+    ${arr.length ? arr.map((l) => `<tr><td>${esc(l[0])}</td><td class="num">${repNum(l[1])}</td></tr>`).join("") : '<tr><td colspan="2">—</td></tr>'}
+    <tr class="rep-total"><td>Total ${title.toLowerCase()}</td><td class="num">${repNum(tot)}</td></tr></tbody></table>`;
+  return tbl("Produits", produits, totP) + tbl("Charges", charges, totC) +
+    `<table class="rep-table"><tbody><tr class="rep-total"><td>Résultat à date (produits − charges)</td><td class="num">${repNum(totP - totC)}</td></tr></tbody></table>
+     <div class="rep-date">Montants HT, toutes factures confondues.</div>`;
+}
+function reportTresorerie() {
+  const now = new Date();
+  const ents = treasuryEntities();
+  const rows = ents.map((c) => `<tr><td>${esc(c.name || "Sans nom")}</td><td class="num">${repNum(companyBalance(c, now))}</td></tr>`).join("");
+  return `<table class="rep-table"><tbody>
+      <tr class="rep-total"><td>Trésorerie consolidée (aujourd'hui)</td><td class="num">${repNum(treasuryNow(now))}</td></tr></tbody></table>
+    <div class="rep-section">Prévisionnel</div>
+    <table class="rep-table"><tbody>
+      <tr><td>À 30 jours</td><td class="num">${repNum(treasuryProjected(now, 30))}</td></tr>
+      <tr><td>À 60 jours</td><td class="num">${repNum(treasuryProjected(now, 60))}</td></tr>
+      <tr><td>À 90 jours</td><td class="num">${repNum(treasuryProjected(now, 90))}</td></tr></tbody></table>
+    <div class="rep-section">Par société</div>
+    <table class="rep-table"><thead><tr><th>Société</th><th class="num">Solde</th></tr></thead><tbody>${rows || '<tr><td colspan="2">—</td></tr>'}</tbody></table>`;
+}
+function reportTemps() {
+  const { start, end } = weekInterval(new Date());
+  let total = 0; const per = [];
+  state.missions.forEach((m) => { let s = 0; (m.entries || []).forEach((e) => { const d = e.date ? new Date(e.date + "T12:00:00") : null; if (d && d >= start && d < end) s += entryElapsed(e); }); if (s > 0) { per.push({ t: m.title || "Sans titre", s }); total += s; } });
+  per.sort((a, b) => b.s - a.s);
+  const rows = per.map((p) => `<tr><td>${esc(p.t)}</td><td class="num">${(p.s / 3600).toFixed(2).replace(".", ",")}</td><td class="num">${fmtDuration(p.s)}</td></tr>`).join("");
+  return `<div class="rep-date">Semaine du ${fmtDate(start.toISOString().slice(0, 10))} au ${fmtDate(new Date(end - 86400000).toISOString().slice(0, 10))}</div>
+    <table class="rep-table"><thead><tr><th>Mission</th><th class="num">Heures</th><th class="num">Durée</th></tr></thead><tbody>
+    ${rows || '<tr><td colspan="3">Aucun temps cette semaine.</td></tr>'}
+    <tr class="rep-total"><td>Total</td><td class="num">${(total / 3600).toFixed(2).replace(".", ",")}</td><td class="num">${fmtDuration(total)}</td></tr></tbody></table>`;
+}
+function reportDashboard() {
+  const now = new Date();
+  const caFacture = sumAmount(recettes().filter((v) => v.status === "emise" || v.status === "payee"));
+  const caEncaisse = sumAmount(recettes().filter((v) => v.status === "payee"));
+  const produits = state.invoices.filter((v) => invNature(v) === "produit").reduce((t, v) => t + (v.amount || 0), 0);
+  const charges = state.invoices.filter((v) => invNature(v) === "charge").reduce((t, v) => t + (v.amount || 0), 0);
+  const line = (k, v) => `<tr><td>${k}</td><td class="num">${v}</td></tr>`;
+  return `<div class="rep-section">Activité (HT)</div><table class="rep-table"><tbody>
+      ${line("CA facturé (émises + payées)", repNum(caFacture))}${line("CA encaissé (payées)", repNum(caEncaisse))}
+      ${line("Produits", repNum(produits))}${line("Charges", repNum(charges))}
+      <tr class="rep-total"><td>Résultat à date</td><td class="num">${repNum(produits - charges)}</td></tr></tbody></table>
+    <div class="rep-section">Trésorerie (TTC)</div><table class="rep-table"><tbody>
+      ${line("Disponible aujourd'hui", repNum(treasuryNow(now)))}${line("Prévisionnel 30 j", repNum(treasuryProjected(now, 30)))}
+      ${line("Prévisionnel 60 j", repNum(treasuryProjected(now, 60)))}${line("Prévisionnel 90 j", repNum(treasuryProjected(now, 90)))}</tbody></table>
+    <div class="rep-section">Structure</div><table class="rep-table"><tbody>
+      ${line("Sociétés", state.companies.length)}${line("Contacts", state.contacts.length)}
+      ${line("Missions en cours", state.missions.filter((m) => m.statusCode === "enCours").length)}</tbody></table>`;
+}
+// --- CSV ---
+function csvCell(s) { return '"' + String(s == null ? "" : s).replace(/"/g, '""') + '"'; }
+const csvNum = (v) => (+v || 0).toFixed(2).replace(".", ",");
+function downloadFile(name, content, type) { const blob = new Blob([content], { type }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href); }
+function contactNameById(id) { const c = state.contacts.find((x) => x.id === id); return c ? contactName(c) : ""; }
+function exportFacturesCSV() {
+  const H = ["Date", "Intitulé", "Société", "Catégorie", "Nature", "Sens", "Statut", "Montant HT", "TVA %", "Montant TTC", "Échéance", "Payée le", "Tiers"];
+  const rows = [...state.invoices].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || "")).map((v) => [
+    v.startDate || "", v.title || "", companyName(v.companyId), v.categoryName || "", invNature(v), v.direction === "recette" ? "Recette" : "Dépense", invStatusLabel(v.status),
+    csvNum(v.amount), v.vatRate == null ? "" : v.vatRate, csvNum(invTTC(v)), v.dueDate || "", v.paymentDate || "", contactNameById(v.contactId)]);
+  const csv = "﻿" + [H, ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
+  downloadFile("operations01-factures.csv", csv, "text/csv;charset=utf-8");
+}
+function exportTempsCSV() {
+  const { start, end } = weekInterval(new Date());
+  const H = ["Mission", "Heures", "Durée"];
+  const rows = [];
+  state.missions.forEach((m) => { let s = 0; (m.entries || []).forEach((e) => { const d = e.date ? new Date(e.date + "T12:00:00") : null; if (d && d >= start && d < end) s += entryElapsed(e); }); if (s > 0) rows.push([m.title || "Sans titre", (s / 3600).toFixed(2).replace(".", ","), fmtDuration(s)]); });
+  const csv = "﻿" + [H, ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
+  downloadFile("operations01-temps-semaine.csv", csv, "text/csv;charset=utf-8");
 }
 
 // ----------------------------- Chronos live -----------------------------

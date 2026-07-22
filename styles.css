@@ -146,6 +146,24 @@ textarea { min-height: 72px; resize: vertical; }
 .modal { background: var(--card); color: var(--text); border-radius: var(--radius); box-shadow: 0 12px 40px rgba(0,0,0,.3); padding: 18px; width: 100%; max-width: 460px; max-height: 82vh; overflow-y: auto; }
 .modal-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .modal .list, .modal #backupList { display: flex; flex-direction: column; gap: 8px; }
+/* Rapports imprimables (exports PDF) */
+#printArea { display: none; }
+.rep-head { display: flex; align-items: flex-end; gap: 16px; border-bottom: 3px solid #18c1d8; padding-bottom: 12px; margin-bottom: 20px; }
+.rep-title { font-size: 22px; font-weight: 700; color: #111; }
+.rep-date { font-size: 12px; color: #666; }
+.rep-section { font-size: 15px; font-weight: 700; margin: 18px 0 4px; color: #0e7f90; }
+.rep-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0 14px; }
+.rep-table th { text-align: left; background: #f2fbfd; border-bottom: 2px solid #18c1d8; padding: 7px 10px; font-size: 12px; color: #111; }
+.rep-table td { padding: 6px 10px; border-bottom: 1px solid #e5e9ec; color: #111; }
+.rep-table .num { text-align: right; white-space: nowrap; }
+.rep-table .rep-total td { font-weight: 700; border-top: 2px solid #111; background: #fafafa; }
+@media print {
+  @page { margin: 15mm; }
+  body * { visibility: hidden; }
+  #printArea, #printArea * { visibility: visible; }
+  #printArea { display: block; position: absolute; left: 0; top: 0; width: 100%; background: #fff; padding: 0; }
+  .app, .tabbar, .install-banner { display: none !important; }
+}
 label.field.inline-check { display: flex; flex-direction: row; align-items: center; gap: 8px; }
 label.field.inline-check > span { margin-bottom: 0; }
 .inline-check input { width: auto; }
