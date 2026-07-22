@@ -299,12 +299,13 @@ function renderCompanyDetail(id) {
 let financeTab = "factures";
 function renderFinances() {
   if (view.detailId) return renderInvoiceDetail(view.detailId);
-  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"], ["import", "Import bancaire"]]
+  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"], ["categories", "Catégories"], ["import", "Import bancaire"]]
     .map(([id, lbl]) => `<button class="chip ${financeTab === id ? "active" : ""}" data-ftab="${id}">${lbl}</button>`).join("");
   let body = "";
   if (financeTab === "factures") body = financeFactures();
   else if (financeTab === "cdr") body = financeCDR();
   else if (financeTab === "import") body = financeImport();
+  else if (financeTab === "categories") body = financeCategories();
   else body = financeTresorerie();
   return `<div class="page-title">Finances</div><div class="chip-row" style="margin-bottom:16px">${tabs}</div>${body}`;
 }
@@ -369,6 +370,34 @@ function renderInvoiceDetail(id) {
       <label class="field"><span>Payée le</span><input type="date" data-bind="invoices|${v.id}|paymentDate" value="${esc((v.paymentDate || "").slice(0, 10))}"/></label>
     </div>
     <div style="margin-top:18px"><button class="btn danger small" data-del-invoice="${v.id}">Supprimer la facture</button></div>`;
+}
+
+// ----------------------------- Catégories -----------------------------
+const NATURES = [{ code: "produit", label: "Produit (recette)" }, { code: "charge", label: "Charge (dépense)" }];
+function ensureCatIds() { state.categories.forEach((c) => { if (!c.id) c.id = uid(); }); }
+function catUsage(name) { return state.invoices.filter((v) => v.categoryName === name).length; }
+function financeCategories() {
+  ensureCatIds();
+  const cats = [...state.categories].sort((a, b) => (a.nature || "").localeCompare(b.nature || "") || (a.name || "").localeCompare(b.name || "", "fr"));
+  const block = (nature, label) => {
+    const arr = cats.filter((c) => (c.nature || "charge") === nature);
+    const rows = arr.map((c) => {
+      const natOpts = NATURES.map((n) => `<option value="${n.code}" ${n.code === (c.nature || "charge") ? "selected" : ""}>${n.label}</option>`).join("");
+      const used = catUsage(c.name);
+      return `<div class="row" style="cursor:default;border-left-color:${nature === "produit" ? "var(--finance)" : "var(--alert)"}">
+        <input class="grow" data-catfield="name" data-cat="${c.id}" data-old="${esc(c.name)}" value="${esc(c.name)}" placeholder="Nom de la catégorie"/>
+        <select data-catfield="nature" data-cat="${c.id}" style="width:auto">${natOpts}</select>
+        <span class="muted" style="font-size:11px;white-space:nowrap">${used} fact.</span>
+        <button class="btn ghost small" data-del-cat="${c.id}">✕</button></div>`;
+    }).join("");
+    return `<div class="section-h">${label} <span class="muted">(${arr.length})</span></div>
+      <div class="list">${arr.length ? rows : '<div class="muted" style="padding:4px 2px">Aucune catégorie.</div>'}</div>`;
+  };
+  return `<div class="toolbar"><span class="grow muted" style="font-size:12px">Les catégories structurent le compte de résultat (produits / charges).</span>
+      <button class="btn small" data-add-cat="produit">+ Produit</button>
+      <button class="btn small" data-add-cat="charge">+ Charge</button></div>
+    ${block("produit", "Produits")}
+    ${block("charge", "Charges")}`;
 }
 
 // ----------------------------- Import bancaire (CSV / OFX) -----------------------------
@@ -791,6 +820,28 @@ function wire() {
 
   // onglets Finances
   c.querySelectorAll("[data-ftab]").forEach((b) => b.onclick = () => { financeTab = b.dataset.ftab; render(); });
+
+  // catégories
+  c.querySelectorAll("[data-add-cat]").forEach((b) => b.onclick = () => { ensureCatIds(); state.categories.push({ id: uid(), name: "", nature: b.dataset.addCat, sortIndex: state.categories.length }); save(); render(); });
+  c.querySelectorAll("[data-del-cat]").forEach((b) => b.onclick = () => {
+    const cat = state.categories.find((x) => x.id === b.dataset.delCat); if (!cat) return;
+    const used = catUsage(cat.name);
+    if (!confirm(`Supprimer la catégorie « ${cat.name || "sans nom"} » ?${used ? `\n${used} facture(s) l'utilisent : elles repasseront « à catégoriser ».` : ""}`)) return;
+    if (used) state.invoices.forEach((v) => { if (v.categoryName === cat.name) v.categoryName = ""; });
+    state.categories = state.categories.filter((x) => x.id !== b.dataset.delCat); save(); render();
+  });
+  c.querySelectorAll("[data-catfield]").forEach((el) => {
+    const h = () => {
+      const cat = state.categories.find((x) => x.id === el.dataset.cat); if (!cat) return;
+      const field = el.dataset.catfield;
+      if (field === "name") {
+        const oldName = el.dataset.old, newName = el.value.trim();
+        if (newName && newName !== oldName) state.invoices.forEach((v) => { if (v.categoryName === oldName) v.categoryName = newName; });
+        cat.name = newName; el.dataset.old = newName; save();
+      } else { cat.nature = el.value; save(); render(); }
+    };
+    el.addEventListener("change", h); el.addEventListener("blur", h);
+  });
 
   // import bancaire
   const bankComp = c.querySelector("#bankCompany"); if (bankComp) bankComp.onchange = () => { bankImport.companyId = bankComp.value; };
