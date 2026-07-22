@@ -40,7 +40,7 @@ const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], updatedAt: 0 };
 }
 function load() {
   try {
@@ -105,6 +105,7 @@ const sumAmount = (arr) => arr.reduce((t, v) => t + (v.amount || 0), 0);
 
 // ----------------------------- Navigation -----------------------------
 const SECTIONS = [
+  { id: "search", label: "Recherche", ic: "🔎", fn: renderSearch },
   { id: "missions", label: "Missions", ic: "🏁", fn: renderMissions },
   { id: "tasks", label: "Tâches", ic: "✅", fn: renderTasks },
   { id: "actions", label: "Actions", ic: "🎫", fn: renderActions },
@@ -157,6 +158,28 @@ function companySelect(bind, current) {
     state.companies.map((c) => `<option value="${c.id}" ${c.id === current ? "selected" : ""}>${esc(c.name || "Sans nom")}</option>`)
   ).join("");
   return `<select data-bind="${bind}" data-rerender>${opts}</select>`;
+}
+
+// ----------------------------- Recherche globale -----------------------------
+let searchQ = "";
+function renderSearch() {
+  const q = searchQ.trim().toLowerCase();
+  const results = [];
+  if (q) {
+    const has = (s) => String(s || "").toLowerCase().includes(q);
+    state.missions.forEach((m) => { if (has(m.title) || has(companyName(m.companyId))) results.push({ sec: "missions", id: m.id, ic: "🏁", title: m.title || "Mission", sub: companyName(m.companyId) }); });
+    state.contacts.forEach((c) => { if (has(contactName(c)) || has(c.organization) || has(c.email) || has(c.jobTitle)) results.push({ sec: "contacts", id: c.id, ic: "👥", title: contactName(c), sub: [c.jobTitle, c.organization].filter(Boolean).join(" · ") }); });
+    state.companies.forEach((c) => { if (has(c.name)) results.push({ sec: "groupe", id: c.id, ic: "🏢", title: c.name || "Société", sub: "" }); });
+    state.invoices.forEach((v) => { if (has(v.title) || has(v.categoryName) || has(companyName(v.companyId))) results.push({ sec: "finances", id: v.id, ic: "€", title: v.title || "Facture", sub: `${euros(v.amount)} · ${companyName(v.companyId)}` }); });
+    state.tasks.forEach((t) => { if (has(t.title)) results.push({ sec: "tasks", id: null, ic: "✅", title: t.title || "Tâche", sub: taskStatusLabel(t.status) }); });
+    state.actions.forEach((a) => { if (has(a.title) || has(a.recipientName)) results.push({ sec: "actions", id: a.id, ic: "🎫", title: a.title || "Action", sub: a.recipientName || "" }); });
+    state.rendezvous.forEach((r) => { if (has(r.title) || has(r.withName)) results.push({ sec: "rendezvous", id: r.id, ic: "📅", title: r.title || "Rendez-vous", sub: rdvWhen(r) }); });
+  }
+  const rows = results.map((r) => `<div class="row" data-search-open="${r.sec}" data-search-id="${r.id || ""}" style="border-left-color:var(--primary)">
+    <span class="ic">${r.ic}</span><div class="grow"><div class="r-title">${esc(r.title)}</div><div class="r-sub">${esc(r.sub)}</div></div></div>`).join("");
+  return `<div class="page-title">Recherche</div>
+    <input id="globalSearch" placeholder="Rechercher une mission, un contact, une facture…" value="${esc(searchQ)}" style="margin-bottom:14px"/>
+    ${q ? `<div class="muted" style="font-size:12px;margin-bottom:8px">${results.length} résultat(s)</div><div class="list">${rows || '<div class="center-empty">Aucun résultat.</div>'}</div>` : '<div class="center-empty">Tape un mot-clé pour chercher dans toutes les sections.</div>'}`;
 }
 
 // ----------------------------- Missions -----------------------------
@@ -299,25 +322,47 @@ function renderCompanyDetail(id) {
 let financeTab = "factures";
 function renderFinances() {
   if (view.detailId) return renderInvoiceDetail(view.detailId);
-  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"], ["categories", "Catégories"], ["import", "Import bancaire"]]
+  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"], ["categories", "Catégories"], ["recurrences", "Récurrences"], ["import", "Import bancaire"]]
     .map(([id, lbl]) => `<button class="chip ${financeTab === id ? "active" : ""}" data-ftab="${id}">${lbl}</button>`).join("");
   let body = "";
   if (financeTab === "factures") body = financeFactures();
   else if (financeTab === "cdr") body = financeCDR();
   else if (financeTab === "import") body = financeImport();
   else if (financeTab === "categories") body = financeCategories();
+  else if (financeTab === "recurrences") body = financeRecurrences();
   else body = financeTresorerie();
   return `<div class="page-title">Finances</div><div class="chip-row" style="margin-bottom:16px">${tabs}</div>${body}`;
 }
+let factureFilter = { q: "", companyId: "", status: "", from: "", to: "" };
 function financeFactures() {
-  const items = [...state.invoices].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+  const f = factureFilter;
+  let items = [...state.invoices];
+  if (f.q) { const q = f.q.toLowerCase(); items = items.filter((v) => [v.title, v.categoryName, companyName(v.companyId), contactNameById(v.contactId)].some((s) => String(s || "").toLowerCase().includes(q))); }
+  if (f.companyId) items = items.filter((v) => v.companyId === f.companyId);
+  if (f.status) items = items.filter((v) => v.status === f.status);
+  if (f.from) items = items.filter((v) => (v.startDate || "") >= f.from);
+  if (f.to) items = items.filter((v) => (v.startDate || "") <= f.to);
+  items.sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+  const totalHT = items.reduce((t, v) => t + (v.amount || 0), 0);
+  const compOpts = ['<option value="">Toutes sociétés</option>'].concat(state.companies.map((c) => `<option value="${c.id}" ${c.id === f.companyId ? "selected" : ""}>${esc(c.name || "Sans nom")}</option>`)).join("");
+  const stOpts = ['<option value="">Tous statuts</option>'].concat(INV_STATUSES.map((s) => `<option value="${s.code}" ${s.code === f.status ? "selected" : ""}>${s.label}</option>`)).join("");
+  const active = f.q || f.companyId || f.status || f.from || f.to;
   const rows = items.map((v) => `<div class="row" data-open-invoice="${v.id}" style="border-left-color:${v.direction === "recette" ? "var(--finance)" : "var(--alert)"}">
     <div class="grow"><div class="r-title">${esc(v.title || "Nouvelle facture")}</div>
-      <div class="r-sub">${[esc(companyName(v.companyId)), v.categoryName ? esc(v.categoryName) : null].filter(Boolean).join(" · ")}</div></div>
+      <div class="r-sub">${[fmtDate(v.startDate), esc(companyName(v.companyId)), v.categoryName ? esc(v.categoryName) : null].filter(Boolean).join(" · ")}</div></div>
     <div style="text-align:right"><div>${euros(v.amount)}</div><span class="badge aDemarrer" style="font-size:10px">${invStatusLabel(v.status)}</span></div></div>`).join("");
   return `<div class="toolbar"><span class="grow"></span>
       <button class="btn secondary small" data-export-factures>⬇ CSV</button>
       <button class="btn" data-add-invoice>+ Nouvelle facture</button></div>
+    <div class="filterbar">
+      <input id="factureSearch" placeholder="🔎 Rechercher…" value="${esc(f.q)}"/>
+      <select id="factureCompany">${compOpts}</select>
+      <select id="factureStatus">${stOpts}</select>
+      <input type="date" id="factureFrom" value="${esc(f.from)}" title="Depuis"/>
+      <input type="date" id="factureTo" value="${esc(f.to)}" title="Jusqu'à"/>
+      ${active ? '<button class="btn ghost small" data-facture-reset>✕</button>' : ""}
+    </div>
+    <div class="muted" style="font-size:12px;margin:2px 0 8px">${items.length} facture(s) · Total HT ${euros(totalHT)}</div>
     <div class="list">${items.length ? rows : '<div class="center-empty">Aucune facture.</div>'}</div>`;
 }
 function financeCDR() {
@@ -402,6 +447,66 @@ function financeCategories() {
       <button class="btn small" data-add-cat="charge">+ Charge</button></div>
     ${block("produit", "Produits")}
     ${block("charge", "Charges")}`;
+}
+
+// ----------------------------- Récurrences (factures & tâches) -----------------------------
+const FREQS = [{ code: "hebdomadaire", label: "Hebdomadaire" }, { code: "mensuelle", label: "Mensuelle" }, { code: "trimestrielle", label: "Trimestrielle" }, { code: "annuelle", label: "Annuelle" }];
+function nextOccurrence(dateStr, freq) {
+  const d = new Date(dateStr + "T12:00:00");
+  if (freq === "hebdomadaire") d.setDate(d.getDate() + 7);
+  else if (freq === "trimestrielle") d.setMonth(d.getMonth() + 3);
+  else if (freq === "annuelle") d.setFullYear(d.getFullYear() + 1);
+  else d.setMonth(d.getMonth() + 1);
+  return d.toISOString().slice(0, 10);
+}
+function materializeRecurrence(rec, date) {
+  if (rec.kind === "task") {
+    state.tasks.push({ id: uid(), title: rec.title || "Tâche récurrente", status: "aFaire", missionId: rec.missionId || null, dueDate: date, createdAt: Date.now(), recurrenceId: rec.id });
+  } else {
+    state.invoices.push({ id: uid(), title: rec.title || "Facture récurrente", reference: "", direction: rec.direction || "depense", status: rec.direction === "recette" ? "aEmettre" : "aPayer", amount: Number(rec.amount) || 0, vatRate: rec.vatRate == null ? 20 : Number(rec.vatRate), startDate: date, hasDueDate: false, dueDate: "", paymentDate: "", companyId: rec.companyId || null, contactId: null, categoryName: rec.categoryName || "", recurrenceId: rec.id });
+  }
+}
+function generateRecurrences() {
+  const today = todayISO(); let created = 0;
+  (state.recurrences || []).forEach((rec) => {
+    if (!rec.active || !rec.anchorDate) return;
+    let occ = rec.lastGenerated ? nextOccurrence(rec.lastGenerated, rec.frequency) : rec.anchorDate;
+    let guard = 0;
+    while (occ <= today && guard < 600) { materializeRecurrence(rec, occ); rec.lastGenerated = occ; created++; occ = nextOccurrence(occ, rec.frequency); guard++; }
+  });
+  return created;
+}
+function recCount(id) { return state.invoices.filter((v) => v.recurrenceId === id).length + state.tasks.filter((t) => t.recurrenceId === id).length; }
+function financeRecurrences() {
+  const cards = state.recurrences.map((rec) => {
+    const freqOpts = FREQS.map((fr) => `<option value="${fr.code}" ${fr.code === rec.frequency ? "selected" : ""}>${fr.label}</option>`).join("");
+    const head = `<div class="inline"><strong class="grow">${rec.kind === "task" ? "✅ Tâche" : "€ Facture"} récurrente</strong>
+      <label class="inline-check" style="margin:0"><input type="checkbox" data-recfield="active" data-rec="${rec.id}" ${rec.active ? "checked" : ""}/> <span style="font-size:12px">Active</span></label></div>`;
+    let fields = `<label class="field"><span>Intitulé</span><input data-recfield="title" data-rec="${rec.id}" value="${esc(rec.title)}"/></label>
+      <label class="field"><span>Fréquence</span><select data-recfield="frequency" data-rec="${rec.id}">${freqOpts}</select></label>
+      <label class="field"><span>Première échéance</span><input type="date" data-recfield="anchorDate" data-rec="${rec.id}" value="${esc(rec.anchorDate || todayISO())}"/></label>`;
+    if (rec.kind === "task") {
+      const misOpts = ['<option value="">Aucune mission</option>'].concat(sortedMissions().map((m) => `<option value="${m.id}" ${m.id === rec.missionId ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`)).join("");
+      fields += `<label class="field"><span>Mission</span><select data-recfield="missionId" data-rec="${rec.id}">${misOpts}</select></label>`;
+    } else {
+      const dirOpts = DIRECTIONS.map((d) => `<option value="${d.code}" ${d.code === rec.direction ? "selected" : ""}>${d.label}</option>`).join("");
+      const catOpts = ['<option value="">À catégoriser</option>'].concat(state.categories.map((c) => `<option value="${esc(c.name)}" ${c.name === rec.categoryName ? "selected" : ""}>${esc(c.name)}</option>`)).join("");
+      const comOpts = ['<option value="">Aucune</option>'].concat(state.companies.map((c) => `<option value="${c.id}" ${c.id === rec.companyId ? "selected" : ""}>${esc(c.name || "Sans nom")}</option>`)).join("");
+      fields += `<label class="field"><span>Sens</span><select data-recfield="direction" data-rec="${rec.id}">${dirOpts}</select></label>
+        <label class="field"><span>Montant HT (€)</span><input type="number" data-recfield="amount" data-rec="${rec.id}" value="${rec.amount || 0}"/></label>
+        <label class="field"><span>TVA (%)</span><input type="number" data-recfield="vatRate" data-rec="${rec.id}" value="${rec.vatRate == null ? 20 : rec.vatRate}"/></label>
+        <label class="field"><span>Catégorie</span><select data-recfield="categoryName" data-rec="${rec.id}">${catOpts}</select></label>
+        <label class="field"><span>Société</span><select data-recfield="companyId" data-rec="${rec.id}">${comOpts}</select></label>`;
+    }
+    return `<div class="card" style="margin-bottom:12px">${head}${fields}
+      <div class="inline" style="margin-top:6px"><span class="grow muted" style="font-size:11px">${recCount(rec.id)} élément(s) généré(s)${rec.lastGenerated ? ` · dernier : ${fmtDate(rec.lastGenerated)}` : ""}</span>
+        <button class="btn ghost small" data-del-rec="${rec.id}">Supprimer</button></div></div>`;
+  }).join("");
+  return `<div class="toolbar"><span class="grow muted" style="font-size:12px">Modèles générant automatiquement des factures ou tâches à chaque échéance.</span>
+      <button class="btn small" data-add-rec="invoice">+ Facture</button>
+      <button class="btn small" data-add-rec="task">+ Tâche</button></div>
+    ${state.recurrences.length ? cards : '<div class="center-empty">Aucune récurrence.</div>'}
+    <div class="inline" style="margin-top:8px"><button class="btn secondary small" data-gen-rec>↻ Générer les échéances dues</button></div>`;
 }
 
 // ----------------------------- Import bancaire (CSV / OFX) -----------------------------
@@ -555,7 +660,11 @@ function renderDashboard() {
     ${grid(card("Disponible", euros(treasuryNow(now)), "aujourd'hui", "#4dc8bb") + card("Prév. 30 j", euros(treasuryProjected(now, 30)), "", "#a2d28c") + card("Prév. 60 j", euros(treasuryProjected(now, 60)), "", "#a2d28c") + card("Prév. 90 j", euros(treasuryProjected(now, 90)), "", "#a2d28c"))}
     <div class="section-h">À traiter</div>
     ${grid(card("Clients en retard", String(overdue.length), euros(overdue.reduce((t, v) => t + invTTC(v), 0)), overdue.length ? "#d23c3c" : "#4dc8bb") + card("Fournisseurs à payer", String(toPay.length), euros(toPay.reduce((t, v) => t + invTTC(v), 0)), "#e9db65") + card("Missions en cours", String(missionsEnCours), "", "#18c1d8") + card("Sociétés", String(state.companies.length), `${state.contacts.length} contacts`, "#18c1d8"))}
-    ${alerts.length ? `<div class="section-h">Alertes</div><div class="card">${alerts.map((a) => `<div style="padding:4px 0">⚠️ ${esc(a)}</div>`).join("")}</div>` : ""}`;
+    ${alerts.length ? `<div class="section-h">Alertes</div><div class="card">${alerts.map((a) => `<div style="padding:4px 0">⚠️ ${esc(a)}</div>`).join("")}</div>` : ""}
+    <div class="section-h">Trésorerie prévisionnelle (90 jours)</div>
+    <div class="card">${svgLineChart(Array.from({ length: 19 }, (_, i) => ({ x: i * 5, y: treasuryProjected(now, i * 5) })), { color: "#18c1d8", xTicks: [{ x: 0, label: "auj." }, { x: 30, label: "30j" }, { x: 60, label: "60j" }, { x: 90, label: "90j" }] })}</div>
+    <div class="section-h">Évolution du CA (12 mois, HT)</div>
+    <div class="card">${svgBarChart(last12MonthsCA().map((a) => ({ label: a.label, value: a.value })), { color: "#4dc8bb" })}</div>`;
 }
 
 // ----------------------------- Temps -----------------------------
@@ -859,6 +968,26 @@ function wire() {
   onclick("[data-export-temps-csv]", exportTempsCSV);
   onclick("[data-export-factures]", exportFacturesCSV);
 
+  // recherche globale
+  const gs = c.querySelector("#globalSearch");
+  if (gs) { gs.oninput = () => { searchQ = gs.value; render(); }; if (searchQ) { gs.focus(); const v = gs.value; try { gs.setSelectionRange(v.length, v.length); } catch (e) {} } }
+  c.querySelectorAll("[data-search-open]").forEach((r) => r.onclick = () => { const sec = r.dataset.searchOpen, id = r.dataset.searchId; if (id) openDetail(sec, id); else go(sec); });
+
+  // filtres factures
+  const fs = c.querySelector("#factureSearch");
+  if (fs) { fs.oninput = () => { factureFilter.q = fs.value; render(); }; if (factureFilter.q) { fs.focus(); const v = fs.value; try { fs.setSelectionRange(v.length, v.length); } catch (e) {} } }
+  const fCo = c.querySelector("#factureCompany"); if (fCo) fCo.onchange = () => { factureFilter.companyId = fCo.value; render(); };
+  const fSt = c.querySelector("#factureStatus"); if (fSt) fSt.onchange = () => { factureFilter.status = fSt.value; render(); };
+  const fFr = c.querySelector("#factureFrom"); if (fFr) fFr.onchange = () => { factureFilter.from = fFr.value; render(); };
+  const fTo = c.querySelector("#factureTo"); if (fTo) fTo.onchange = () => { factureFilter.to = fTo.value; render(); };
+  const fRe = c.querySelector("[data-facture-reset]"); if (fRe) fRe.onclick = () => { factureFilter = { q: "", companyId: "", status: "", from: "", to: "" }; render(); };
+
+  // récurrences
+  c.querySelectorAll("[data-add-rec]").forEach((b) => b.onclick = () => { state.recurrences.push({ id: uid(), kind: b.dataset.addRec, active: true, title: "", frequency: "mensuelle", anchorDate: todayISO(), lastGenerated: null, direction: "depense", amount: 0, vatRate: 20, categoryName: "", companyId: null, missionId: null }); save(); render(); });
+  c.querySelectorAll("[data-del-rec]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette récurrence ? Les éléments déjà générés sont conservés.")) { state.recurrences = state.recurrences.filter((x) => x.id !== b.dataset.delRec); save(); render(); } });
+  c.querySelectorAll("[data-recfield]").forEach((el) => { const h = () => { const rec = state.recurrences.find((x) => x.id === el.dataset.rec); if (!rec) return; const f = el.dataset.recfield; if (el.type === "checkbox") rec[f] = el.checked; else if (el.type === "number") rec[f] = parseFloat(el.value) || 0; else rec[f] = el.value; save(); if (f === "active") render(); }; el.addEventListener("change", h); if (el.tagName === "INPUT" && el.type !== "checkbox") el.addEventListener("blur", h); });
+  const genRec = c.querySelector("[data-gen-rec]"); if (genRec) genRec.onclick = () => { const n = generateRecurrences(); save(); render(); alert(n ? `${n} échéance(s) générée(s).` : "Aucune échéance due pour l'instant."); };
+
   // import bancaire
   const bankComp = c.querySelector("#bankCompany"); if (bankComp) bankComp.onchange = () => { bankImport.companyId = bankComp.value; };
   const bankFile = c.querySelector("#bankFile"); if (bankFile) bankFile.onchange = () => {
@@ -947,6 +1076,7 @@ function importJSON(text) {
   (data.tasks || []).forEach((t) => state.tasks.push({ id: uid(), title: t.title || "", status: (TASK_STATUSES.some((s) => s.code === t.status) ? t.status : "aFaire"), missionId: missionByTitle[t.missionTitle] || null, dueDate: (t.dueDate || "").slice(0, 10), createdAt: Date.now() }));
   (data.actions || []).forEach((a) => state.actions.push({ id: uid(), title: a.title || "", projectName: a.projectName || "", missionId: missionByTitle[a.missionTitle] || null, request: a.request || "", contactId: null, recipientName: a.recipientName || "", recipientEmail: a.recipientEmail || "", dueDate: (a.dueDate || "").slice(0, 10), reminderDaily: a.reminderDaily !== false, closed: !!a.closed, closedAt: a.closedAt || null, createdAt: Date.now() }));
   (data.rendezvous || []).forEach((r) => state.rendezvous.push({ id: uid(), title: r.title || "", date: (r.date || "").slice(0, 10), time: r.time || "", location: r.location || "", contactId: null, withName: r.withName || "", missionId: missionByTitle[r.missionTitle] || null, notes: r.notes || "", createdAt: Date.now() }));
+  (data.recurrences || []).forEach((r) => state.recurrences.push({ id: uid(), kind: r.kind === "task" ? "task" : "invoice", active: r.active !== false, title: r.title || "", frequency: (FREQS.some((f) => f.code === r.frequency) ? r.frequency : "mensuelle"), anchorDate: (r.anchorDate || "").slice(0, 10) || todayISO(), lastGenerated: (r.lastGenerated || "").slice(0, 10) || null, direction: r.direction === "recette" ? "recette" : "depense", amount: Number(r.amount) || 0, vatRate: r.vatRate == null ? 20 : Number(r.vatRate), categoryName: r.categoryName || "", companyId: compByName[r.companyName] || null, missionId: missionByTitle[r.missionTitle] || null }));
 
   save();
   alert(`Import terminé : ${state.companies.length} société(s), ${state.contacts.length} contact(s), ${state.invoices.length} facture(s), ${state.missions.length} mission(s).`);
@@ -1021,9 +1151,49 @@ async function connectDrive() {
   try {
     const remote = await DriveSync.connect();
     if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) { state = Object.assign(blankState(), remote); localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
-    else DriveSync.push(state);
+    if (generateRecurrences() > 0) save(); else DriveSync.push(state);
     renderDriveBar(); render();
   } catch (e) { alert("Connexion Google Drive impossible : " + e.message); }
+}
+
+// ----------------------------- Graphiques (SVG, sans librairie) -----------------------------
+function fmtK(v) { const a = Math.abs(v); if (a >= 1000) return (v / 1000).toFixed(a >= 10000 ? 0 : 1).replace(".", ",") + "k"; return Math.round(v) + ""; }
+function svgLineChart(series, opts) {
+  opts = opts || {}; const w = opts.w || 560, h = opts.h || 170, pad = { l: 46, r: 14, t: 12, b: 24 }, color = opts.color || "#18c1d8";
+  if (series.length < 2) return '<div class="muted" style="font-size:12px">Pas assez de données.</div>';
+  const xs = series.map((p) => p.x), ys = series.map((p) => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  let minY = Math.min(...ys, 0), maxY = Math.max(...ys, 0); if (minY === maxY) maxY = minY + 1;
+  const X = (x) => pad.l + (maxX === minX ? 0 : (x - minX) / (maxX - minX)) * (w - pad.l - pad.r);
+  const Y = (y) => pad.t + (1 - (y - minY) / (maxY - minY)) * (h - pad.t - pad.b);
+  const line = series.map((p) => `${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join(" ");
+  const z = Y(0);
+  const area = `${X(minX).toFixed(1)},${z.toFixed(1)} ${line} ${X(maxX).toFixed(1)},${z.toFixed(1)}`;
+  const yl = [maxY, 0, minY].filter((v, i, a) => a.indexOf(v) === i);
+  const grid = yl.map((v) => `<line x1="${pad.l}" y1="${Y(v).toFixed(1)}" x2="${w - pad.r}" y2="${Y(v).toFixed(1)}" stroke="var(--line)"/><text x="${pad.l - 5}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--muted)">${fmtK(v)}</text>`).join("");
+  const xl = (opts.xTicks || []).map((t) => `<text x="${X(t.x).toFixed(1)}" y="${h - 7}" text-anchor="middle" font-size="10" fill="var(--muted)">${esc(t.label)}</text>`).join("");
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" style="max-width:100%;height:auto" preserveAspectRatio="xMidYMid meet">
+    ${grid}<polygon points="${area}" fill="${color}" opacity="0.14"/>
+    <polyline points="${line}" fill="none" stroke="${color}" stroke-width="2.5"/>${xl}</svg>`;
+}
+function svgBarChart(series, opts) {
+  opts = opts || {}; const w = opts.w || 560, h = opts.h || 170, pad = { l: 46, r: 14, t: 12, b: 26 }, color = opts.color || "#4dc8bb";
+  if (!series.length) return '<div class="muted" style="font-size:12px">Pas de données.</div>';
+  const ys = series.map((s) => s.value);
+  let minY = Math.min(...ys, 0), maxY = Math.max(...ys, 0); if (minY === maxY) maxY = minY + 1;
+  const n = series.length, bw = (w - pad.l - pad.r) / n;
+  const Y = (y) => pad.t + (1 - (y - minY) / (maxY - minY)) * (h - pad.t - pad.b);
+  const z = Y(0);
+  const bars = series.map((s, i) => { const x = pad.l + i * bw + bw * 0.15, bwi = bw * 0.7; const yTop = Y(Math.max(s.value, 0)); const hh = Math.abs(Y(s.value) - z); return `<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${bwi.toFixed(1)}" height="${Math.max(hh, 1).toFixed(1)}" rx="2" fill="${color}"/><text x="${(x + bwi / 2).toFixed(1)}" y="${h - 8}" text-anchor="middle" font-size="9" fill="var(--muted)">${esc(s.label)}</text>`; }).join("");
+  const yl = [maxY, 0].filter((v, i, a) => a.indexOf(v) === i);
+  const grid = yl.map((v) => `<line x1="${pad.l}" y1="${Y(v).toFixed(1)}" x2="${w - pad.r}" y2="${Y(v).toFixed(1)}" stroke="var(--line)"/><text x="${pad.l - 5}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--muted)">${fmtK(v)}</text>`).join("");
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" style="max-width:100%;height:auto">${grid}${bars}</svg>`;
+}
+function last12MonthsCA() {
+  const now = new Date(); const arr = []; const idx = {};
+  for (let i = 11; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; idx[key] = arr.length; arr.push({ key, label: d.toLocaleDateString("fr-FR", { month: "short" }), value: 0 }); }
+  state.invoices.filter((v) => v.direction === "recette").forEach((v) => { const k = (v.startDate || "").slice(0, 7); if (k in idx) arr[idx[k]].value += (v.amount || 0); });
+  return arr;
 }
 
 // ----------------------------- Exports (PDF via impression + CSV) -----------------------------
@@ -1144,6 +1314,7 @@ document.getElementById("installBtn").onclick = () => { document.getElementById(
 document.getElementById("installClose").onclick = () => { document.getElementById("installBanner").style.display = "none"; };
 
 // ----------------------------- Démarrage -----------------------------
+if (generateRecurrences() > 0) save();
 render();
 renderDriveBar();
 if (window.DriveSync) DriveSync.onStatus((s) => { const el = document.getElementById("driveStatus"); if (el) el.textContent = s; });

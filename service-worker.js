@@ -1,7 +1,7 @@
 // Service worker Operations01 — hors ligne + mises à jour automatiques.
 // Stratégie « réseau d'abord » : en ligne, on récupère toujours la dernière version
 // (plus besoin de vider le cache à la main) ; hors ligne, on sert la copie en cache.
-const CACHE = "operations01-v10";
+const CACHE = "operations01-v11";
 const ASSETS = [".", "index.html", "styles.css", "config.js", "drive.js", "app.js", "manifest.webmanifest", "icon.svg"];
 
 self.addEventListener("install", (event) => {
