@@ -946,8 +946,59 @@ function renderDriveBar() {
   const el = document.getElementById("driveBar"); if (!el) return;
   const cfgOk = window.OPERATIONS01_CONFIG && OPERATIONS01_CONFIG.googleClientId;
   if (!cfgOk) { el.innerHTML = `<div class="muted" style="font-size:11px;line-height:1.4">Google Drive non configuré.<br>Voir README → « Google Drive ».</div>`; return; }
-  if (window.DriveSync && DriveSync.isConnected()) { el.innerHTML = `<div style="font-size:12px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">synchronisé</span></div>`; }
+  if (window.DriveSync && DriveSync.isConnected()) {
+    el.innerHTML = `<div style="font-size:12px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">synchronisé</span></div>
+      <button class="btn ghost small" id="driveBackups" style="width:100%;margin-top:6px">🛟 Sauvegardes</button>`;
+    const b = document.getElementById("driveBackups"); if (b) b.onclick = openBackups;
+  }
   else { el.innerHTML = `<button class="btn secondary small" id="driveConnect" style="width:100%">Se connecter à Google Drive</button>`; const b = document.getElementById("driveConnect"); if (b) b.onclick = connectDrive; }
+}
+// ---- Panneau Sauvegardes ----
+function closeModal() { const m = document.getElementById("modalOverlay"); if (m) m.remove(); }
+function showModal(html) {
+  closeModal();
+  const ov = document.createElement("div");
+  ov.id = "modalOverlay"; ov.className = "modal-overlay";
+  ov.innerHTML = `<div class="modal">${html}</div>`;
+  ov.addEventListener("click", (e) => { if (e.target === ov) closeModal(); });
+  document.body.appendChild(ov);
+  return ov;
+}
+async function openBackups() {
+  showModal(`<div class="modal-head"><strong class="grow">Sauvegardes Google Drive</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <div class="muted" style="font-size:12px;margin-bottom:10px">Une sauvegarde automatique est créée chaque jour. Tu peux en restaurer une, ou en créer une maintenant.</div>
+    <div class="inline" style="margin-bottom:10px"><button class="btn small" data-backup-now>Sauvegarder maintenant</button></div>
+    <div id="backupList" class="muted" style="font-size:13px">Chargement…</div>`);
+  document.querySelector("[data-modal-close]").onclick = closeModal;
+  document.querySelector("[data-backup-now]").onclick = async () => {
+    try { await DriveSync.backupNow(state); await refreshBackupList(); } catch (e) { alert("Sauvegarde impossible : " + e.message); }
+  };
+  refreshBackupList();
+}
+async function refreshBackupList() {
+  const box = document.getElementById("backupList"); if (!box) return;
+  try {
+    const files = await DriveSync.listBackups();
+    if (!files.length) { box.innerHTML = "Aucune sauvegarde pour l'instant."; return; }
+    box.innerHTML = files.map((f) => {
+      const conflict = f.name.indexOf("conflit") > -1;
+      const when = f.modifiedTime ? new Date(f.modifiedTime).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" }) : "";
+      return `<div class="row" style="cursor:default;border-left-color:${conflict ? "var(--alert)" : "var(--primary)"}">
+        <div class="grow"><div class="r-title" style="font-size:13px">${conflict ? "⚠️ Conflit" : "🛟 Sauvegarde"} · ${esc(when)}</div>
+          <div class="r-sub" style="font-size:11px">${esc(f.name)}</div></div>
+        <button class="btn ghost small" data-restore="${f.id}">Restaurer</button></div>`;
+    }).join("");
+    box.querySelectorAll("[data-restore]").forEach((b) => b.onclick = async () => {
+      if (!confirm("Restaurer cette sauvegarde ? Les données actuelles seront remplacées (une sauvegarde de sécurité est créée avant).")) return;
+      try {
+        await DriveSync.backupNow(state); // filet de sécurité avant restauration
+        const restored = await DriveSync.restore(b.dataset.restore);
+        state = Object.assign(blankState(), restored);
+        save(); closeModal(); go("dashboard");
+        alert("Sauvegarde restaurée.");
+      } catch (e) { alert("Restauration impossible : " + e.message); }
+    });
+  } catch (e) { box.innerHTML = "Impossible de charger les sauvegardes : " + esc(e.message); }
 }
 async function connectDrive() {
   if (!(window.DriveSync && DriveSync.ready())) { alert("Google Drive n'est pas disponible (identifiant manquant ou app non hébergée en HTTPS)."); return; }

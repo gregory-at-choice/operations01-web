@@ -142,6 +142,10 @@ textarea { min-height: 72px; resize: vertical; }
 .bank-table th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--line); }
 .bank-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .bank-table tr:last-child td { border-bottom: none; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 18px; z-index: 100; }
+.modal { background: var(--card); color: var(--text); border-radius: var(--radius); box-shadow: 0 12px 40px rgba(0,0,0,.3); padding: 18px; width: 100%; max-width: 460px; max-height: 82vh; overflow-y: auto; }
+.modal-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.modal .list, .modal #backupList { display: flex; flex-direction: column; gap: 8px; }
 label.field.inline-check { display: flex; flex-direction: row; align-items: center; gap: 8px; }
 label.field.inline-check > span { margin-bottom: 0; }
 .inline-check input { width: auto; }
