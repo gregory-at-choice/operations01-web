@@ -424,24 +424,59 @@ function missionSelect(bind, current) {
   return `<select data-bind="${bind}">${opts}</select>`;
 }
 const taskStatusLabel = (c) => (TASK_STATUSES.find((s) => s.code === c) || TASK_STATUSES[0]).label;
+// Nombre de jours (arrondi) entre aujourd'hui et une date ISO (négatif = passé).
+function daysUntil(due) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(due + "T00:00:00");
+  return Math.round((d - today) / 86400000);
+}
+// Couleur d'échéance : plus la deadline approche, plus on descend le disque
+// chromatique du cyan (lointain) vers le rouge (imminent). HORIZON = jours au-delà
+// desquels la tâche est considérée « lointaine » (couleur la plus froide).
+const DEADLINE_HORIZON = 21;
+function deadlineColor(days) {
+  if (days <= 0) return "hsl(0,85%,45%)"; // échéance atteinte ou dépassée → rouge
+  const t = Math.min(days / DEADLINE_HORIZON, 1); // 0 = imminent, 1 = lointain
+  const hue = Math.round(t * 190); // 0° rouge → 190° cyan (rouge→orange→jaune→vert→cyan)
+  return `hsl(${hue},80%,45%)`;
+}
+function deadlineInfo(due, done) {
+  if (!due) return { color: "var(--line)", label: "Sans échéance", muted: true };
+  const days = daysUntil(due);
+  if (done) return { color: "var(--line)", label: `Échéance ${fmtDate(due)}`, muted: true };
+  let label;
+  if (days < 0) label = `En retard de ${-days} j · ${fmtDate(due)}`;
+  else if (days === 0) label = `Aujourd'hui · ${fmtDate(due)}`;
+  else if (days === 1) label = `Demain (J-1) · ${fmtDate(due)}`;
+  else label = `J-${days} · ${fmtDate(due)}`;
+  return { color: deadlineColor(days), label, muted: false };
+}
 function renderTasks() {
   const groups = TASK_STATUSES.map((st) => {
     const items = state.tasks.filter((t) => (t.status || "aFaire") === st.code)
       .sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999") || (b.createdAt || 0) - (a.createdAt || 0));
     const rows = items.map((t) => {
-      const sub = [t.missionId ? esc(missionTitle(t.missionId)) : null, t.dueDate ? `échéance ${fmtDate(t.dueDate)}` : null].filter(Boolean).join(" · ");
+      const done = (t.status || "aFaire") === "termine";
+      const di = deadlineInfo(t.dueDate, done);
       const nextOpts = TASK_STATUSES.map((s) => `<option value="${s.code}" ${s.code === (t.status || "aFaire") ? "selected" : ""}>${s.label}</option>`).join("");
-      return `<div class="row" style="border-left-color:var(--primary)">
-        <div class="grow"><input class="flat-input r-title" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
-          ${sub ? `<div class="r-sub">${sub}</div>` : ""}</div>
+      const mission = t.missionId ? `<span>${esc(missionTitle(t.missionId))}</span>` : "";
+      const dl = `<span style="color:${di.muted ? "var(--muted)" : di.color};font-weight:${di.muted ? 400 : 600}">${di.muted ? "" : "⬤ "}${esc(di.label)}</span>`;
+      return `<div class="row task-row" style="border-left-color:${di.color}">
+        <div class="grow" style="min-width:160px"><input class="flat-input r-title" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
+          <div class="r-sub">${[mission, dl].filter(Boolean).join(" · ")}</div></div>
+        <input type="date" class="task-due" data-taskdue="${t.id}" value="${esc(t.dueDate || "")}" title="Échéance"/>
         <select data-task-status="${t.id}" style="width:auto">${nextOpts}</select>
         <button class="btn ghost small" data-del-task="${t.id}">✕</button></div>`;
     }).join("");
     return `<div class="section-h">${st.label} <span class="muted">(${items.length})</span></div>
       <div class="list">${items.length ? rows : '<div class="muted" style="padding:4px 2px">—</div>'}</div>`;
   }).join("");
+  const legend = `<div class="dl-legend"><span class="muted">Échéance :</span>
+    <span class="dl-grad"></span>
+    <span class="muted" style="font-size:11px">lointaine → imminente</span></div>`;
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tâches</div>
       <button class="btn" data-add-task>+ Nouvelle tâche</button></div>
+    ${legend}
     ${groups}
     <button class="btn fab" data-add-task>+</button>`;
 }
@@ -553,6 +588,7 @@ function wire() {
   // Tâches
   c.querySelectorAll("[data-add-task]").forEach((b) => b.onclick = () => { state.tasks.push({ id: uid(), title: "", status: "aFaire", missionId: null, dueDate: "", createdAt: Date.now() }); save(); render(); });
   c.querySelectorAll("[data-taskfield]").forEach((el) => { const h = () => { const t = state.tasks.find((x) => x.id === el.dataset.t); if (t) { t[el.dataset.taskfield] = el.value; save(); } }; el.addEventListener("change", h); el.addEventListener("blur", h); });
+  c.querySelectorAll("[data-taskdue]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskdue); if (t) { t.dueDate = el.value; save(); render(); } });
   c.querySelectorAll("[data-task-status]").forEach((sel) => sel.onchange = () => { const t = state.tasks.find((x) => x.id === sel.dataset.taskStatus); if (t) { t.status = sel.value; save(); render(); } });
   c.querySelectorAll("[data-del-task]").forEach((b) => b.onclick = () => { state.tasks = state.tasks.filter((t) => t.id !== b.dataset.delTask); save(); render(); });
 

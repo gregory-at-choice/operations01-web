@@ -132,6 +132,11 @@ input, select, textarea {
 textarea { min-height: 72px; resize: vertical; }
 .flat-input { border: none; background: transparent; padding: 2px 0; border-radius: 0; }
 .flat-input:focus { outline: none; border-bottom: 1px solid var(--primary); }
+.task-row { flex-wrap: wrap; }
+.task-due { width: auto; flex: 0 0 auto; padding: 6px 8px; font-size: 13px; }
+.dl-legend { display: flex; align-items: center; gap: 8px; margin: 2px 0 14px; font-size: 12px; }
+.dl-grad { flex: 0 0 120px; height: 10px; border-radius: 999px;
+  background: linear-gradient(90deg, hsl(190,80%,45%), hsl(120,80%,45%), hsl(60,80%,45%), hsl(30,80%,45%), hsl(0,85%,45%)); }
 label.field.inline-check { display: flex; flex-direction: row; align-items: center; gap: 8px; }
 label.field.inline-check > span { margin-bottom: 0; }
 .inline-check input { width: auto; }
