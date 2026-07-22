@@ -40,7 +40,7 @@ const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], updatedAt: 0 };
 }
 function load() {
   try {
@@ -108,12 +108,13 @@ const SECTIONS = [
   { id: "missions", label: "Missions", ic: "🏁", fn: renderMissions },
   { id: "tasks", label: "Tâches", ic: "✅", fn: renderTasks },
   { id: "actions", label: "Actions", ic: "🎫", fn: renderActions },
+  { id: "rendezvous", label: "Rendez-vous", ic: "📅", fn: renderRendezvous },
+  { id: "planning", label: "Planning", ic: "🗓️", fn: renderPlanning },
   { id: "time", label: "Temps", ic: "⏱️", fn: renderTime },
   { id: "finances", label: "Finances", ic: "€", fn: renderFinances },
   { id: "contacts", label: "Contacts", ic: "👥", fn: renderContacts },
   { id: "groupe", label: "Groupe", ic: "🏢", fn: renderGroupe },
   { id: "dashboard", label: "Tableau de bord", ic: "🎛️", fn: renderDashboard },
-  { id: "planning", label: "Planning", ic: "📊", fn: () => stub("Planning") },
 ];
 let view = { section: "missions", detailId: null };
 function go(section) { view = { section, detailId: null }; render(); }
@@ -531,6 +532,98 @@ function renderActionDetail(id) {
     <div style="margin-top:18px"><button class="btn danger small" data-del-action="${a.id}">Supprimer l'action</button></div>`;
 }
 
+// ----------------------------- Rendez-vous -----------------------------
+function rdvWhen(r) {
+  if (!r.date) return "Date à définir";
+  return fmtDate(r.date) + (r.time ? ` · ${r.time}` : "");
+}
+function renderRendezvous() {
+  if (view.detailId) return renderRendezvousDetail(view.detailId);
+  const today = todayISO();
+  const sorted = [...state.rendezvous].sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999") || (a.time || "").localeCompare(b.time || ""));
+  const upcoming = sorted.filter((r) => (r.date || "9999") >= today);
+  const past = sorted.filter((r) => (r.date || "0") < today).reverse();
+  const card = (r) => {
+    const who = r.withName || (r.contactId ? contactName(state.contacts.find((c) => c.id === r.contactId) || {}) : "");
+    const sub = [who, r.location ? `📍 ${esc(r.location)}` : null, r.missionId ? esc(missionTitle(r.missionId)) : null].filter(Boolean).join(" · ");
+    return `<div class="row" data-open-rdv="${r.id}" style="border-left-color:var(--primary)">
+      <div class="grow"><div class="r-title">${esc(r.title || "Rendez-vous")}</div>
+        <div class="r-sub">${esc(rdvWhen(r))}${sub ? ` · ${sub}` : ""}</div></div>
+      <span class="muted">›</span></div>`;
+  };
+  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Rendez-vous</div>
+      <button class="btn" data-add-rdv>+ Nouveau rendez-vous</button></div>
+    <div class="section-h">À venir <span class="muted">(${upcoming.length})</span></div>
+    <div class="list">${upcoming.length ? upcoming.map(card).join("") : '<div class="muted" style="padding:4px 2px">Aucun rendez-vous à venir.</div>'}</div>
+    ${past.length ? `<div class="section-h">Passés <span class="muted">(${past.length})</span></div><div class="list">${past.map(card).join("")}</div>` : ""}
+    <button class="btn fab" data-add-rdv>+</button>`;
+}
+function renderRendezvousDetail(id) {
+  const r = state.rendezvous.find((x) => x.id === id);
+  if (!r) { view.detailId = null; return renderRendezvous(); }
+  const ctOpts = ['<option value="">— Saisie libre —</option>'].concat(
+    state.contacts.map((c) => `<option value="${c.id}" ${c.id === r.contactId ? "selected" : ""}>${esc(contactName(c))}</option>`)
+  ).join("");
+  return `<button class="back" data-back-rdv>‹ Rendez-vous</button>
+    <div class="page-title">${esc(r.title || "Rendez-vous")}</div>
+    <div class="card">
+      <label class="field"><span>Objet</span><input data-bind="rendezvous|${r.id}|title" value="${esc(r.title)}" placeholder="Ex. Point mensuel"/></label>
+      <label class="field"><span>Date</span><input type="date" data-bind="rendezvous|${r.id}|date" value="${esc(r.date || "")}"/></label>
+      <label class="field"><span>Heure</span><input type="time" data-bind="rendezvous|${r.id}|time" value="${esc(r.time || "")}"/></label>
+      <label class="field"><span>Lieu / lien</span><input data-bind="rendezvous|${r.id}|location" value="${esc(r.location)}" placeholder="Adresse, visio…"/></label>
+      <label class="field"><span>Avec (contact)</span><select data-rdv-contact="${r.id}" data-rerender>${ctOpts}</select></label>
+      <label class="field"><span>Avec (libre)</span><input data-bind="rendezvous|${r.id}|withName" value="${esc(r.withName)}"/></label>
+      <label class="field"><span>Mission / projet</span>${missionSelect(`rendezvous|${r.id}|missionId`, r.missionId)}</label>
+      <label class="field"><span>Notes</span><textarea data-bind="rendezvous|${r.id}|notes">${esc(r.notes)}</textarea></label>
+    </div>
+    <div style="margin-top:18px"><button class="btn danger small" data-del-rdv="${r.id}">Supprimer le rendez-vous</button></div>`;
+}
+
+// ----------------------------- Planning (agenda consolidé) -----------------------------
+function planningEvents() {
+  const ev = [];
+  state.tasks.forEach((t) => {
+    if (!t.dueDate || (t.status || "aFaire") === "termine") return;
+    ev.push({ date: t.dueDate, time: "", kind: "Tâche", ic: "✅", title: t.title || "Tâche", color: deadlineColor(daysUntil(t.dueDate)), section: "tasks", detailId: null });
+  });
+  state.actions.forEach((a) => {
+    if (!a.dueDate || a.closed) return;
+    ev.push({ date: a.dueDate, time: "", kind: "Action", ic: "🎫", title: a.title || "Action", color: deadlineColor(daysUntil(a.dueDate)), section: "actions", detailId: a.id });
+  });
+  state.rendezvous.forEach((r) => {
+    if (!r.date) return;
+    ev.push({ date: r.date, time: r.time || "", kind: "RDV", ic: "📅", title: r.title || "Rendez-vous", color: "var(--primary)", section: "rendezvous", detailId: r.id });
+  });
+  return ev.sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));
+}
+function renderPlanning() {
+  const today = todayISO();
+  const all = planningEvents();
+  const overdue = all.filter((e) => e.date < today);
+  const upcoming = all.filter((e) => e.date >= today);
+  const evRow = (e) => {
+    const extra = [e.time || null, e.kind].filter(Boolean).join(" · ");
+    return `<div class="row" data-plan-open="${e.section}" data-plan-id="${e.detailId || ""}" style="border-left-color:${e.color}">
+      <span class="ic">${e.ic}</span>
+      <div class="grow"><div class="r-title">${esc(e.title)}</div><div class="r-sub">${esc(extra)}</div></div></div>`;
+  };
+  // Regroupement des à-venir par date
+  let groupsHtml = "";
+  let curDate = null, buf = [];
+  const flush = () => { if (buf.length) { groupsHtml += `<div class="plan-day">${esc(fmtDate(curDate))}${curDate === today ? " · aujourd'hui" : ""}</div><div class="list">${buf.join("")}</div>`; buf = []; } };
+  upcoming.forEach((e) => { if (e.date !== curDate) { flush(); curDate = e.date; } buf.push(evRow(e)); });
+  flush();
+  const overdueHtml = overdue.length
+    ? `<div class="section-h" style="color:#d23c3c">En retard <span class="muted">(${overdue.length})</span></div><div class="list">${overdue.map(evRow).join("")}</div>`
+    : "";
+  const empty = !all.length ? '<div class="center-empty">Rien de planifié.<br>Ajoute des échéances aux tâches/actions ou crée des rendez-vous.</div>' : "";
+  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Planning</div>
+      <button class="btn" data-add-rdv>+ Rendez-vous</button></div>
+    <div class="muted" style="font-size:12px;margin-bottom:12px">Échéances des tâches et des actions ouvertes, et rendez-vous — par ordre chronologique.</div>
+    ${empty}${overdueHtml}
+    ${upcoming.length ? `<div class="section-h">À venir <span class="muted">(${upcoming.length})</span></div>${groupsHtml}` : ""}`;
+}
+
 // ----------------------------- Interactions -----------------------------
 function findMission(id) { return state.missions.find((m) => m.id === id); }
 function findEntry(m, id) { return (m.entries || []).find((e) => e.id === id); }
@@ -601,6 +694,16 @@ function wire() {
   c.querySelectorAll("[data-close-action]").forEach((b) => b.onclick = () => { const a = state.actions.find((x) => x.id === b.dataset.closeAction); if (a) { a.closed = true; a.closedAt = Date.now(); save(); render(); } });
   c.querySelectorAll("[data-reopen-action]").forEach((b) => b.onclick = () => { const a = state.actions.find((x) => x.id === b.dataset.reopenAction); if (a) { a.closed = false; a.closedAt = null; save(); render(); } });
   c.querySelectorAll("[data-del-action]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette action ?")) { state.actions = state.actions.filter((x) => x.id !== b.dataset.delAction); save(); view.detailId = null; go("actions"); } });
+
+  // Rendez-vous
+  c.querySelectorAll("[data-open-rdv]").forEach((r) => r.onclick = () => openDetail("rendezvous", r.dataset.openRdv));
+  const backRdv = c.querySelector("[data-back-rdv]"); if (backRdv) backRdv.onclick = () => { view.detailId = null; render(); };
+  c.querySelectorAll("[data-add-rdv]").forEach((b) => b.onclick = () => { const x = { id: uid(), title: "", date: todayISO(), time: "", location: "", contactId: null, withName: "", missionId: null, notes: "", createdAt: Date.now() }; state.rendezvous.push(x); save(); openDetail("rendezvous", x.id); });
+  c.querySelectorAll("[data-rdv-contact]").forEach((sel) => sel.onchange = () => { const r = state.rendezvous.find((x) => x.id === sel.dataset.rdvContact); if (!r) return; r.contactId = sel.value || null; const ct = state.contacts.find((x) => x.id === r.contactId); if (ct) r.withName = contactName(ct); save(); render(); });
+  c.querySelectorAll("[data-del-rdv]").forEach((b) => b.onclick = () => { if (confirm("Supprimer ce rendez-vous ?")) { state.rendezvous = state.rendezvous.filter((x) => x.id !== b.dataset.delRdv); save(); view.detailId = null; go("rendezvous"); } });
+
+  // Planning : ouvrir l'élément dans sa section
+  c.querySelectorAll("[data-plan-open]").forEach((r) => r.onclick = () => { const sec = r.dataset.planOpen, id = r.dataset.planId; if (id) openDetail(sec, id); else go(sec); });
 }
 
 // ----------------------------- Import / Export -----------------------------
@@ -632,6 +735,7 @@ function importJSON(text) {
   (data.missions || []).forEach((m) => { const nm = { id: uid(), title: m.title || "", statusCode: normStatus(m.statusCode || m.status), companyId: compByName[m.companyName] || null, createdAt: Date.now(), entries: (m.entries || []).map((e) => ({ id: uid(), kind: normKind(e.kind), title: e.title || "", content: e.content || "", date: (e.date || "").slice(0, 10) || todayISO(), url: e.url || e.urlString || "", accumulatedSeconds: Number(e.accumulatedSeconds) || 0, timerStartedAt: null, createdAt: Date.now() })) }; state.missions.push(nm); if (nm.title) missionByTitle[nm.title] = nm.id; });
   (data.tasks || []).forEach((t) => state.tasks.push({ id: uid(), title: t.title || "", status: (TASK_STATUSES.some((s) => s.code === t.status) ? t.status : "aFaire"), missionId: missionByTitle[t.missionTitle] || null, dueDate: (t.dueDate || "").slice(0, 10), createdAt: Date.now() }));
   (data.actions || []).forEach((a) => state.actions.push({ id: uid(), title: a.title || "", projectName: a.projectName || "", missionId: missionByTitle[a.missionTitle] || null, request: a.request || "", contactId: null, recipientName: a.recipientName || "", recipientEmail: a.recipientEmail || "", dueDate: (a.dueDate || "").slice(0, 10), reminderDaily: a.reminderDaily !== false, closed: !!a.closed, closedAt: a.closedAt || null, createdAt: Date.now() }));
+  (data.rendezvous || []).forEach((r) => state.rendezvous.push({ id: uid(), title: r.title || "", date: (r.date || "").slice(0, 10), time: r.time || "", location: r.location || "", contactId: null, withName: r.withName || "", missionId: missionByTitle[r.missionTitle] || null, notes: r.notes || "", createdAt: Date.now() }));
 
   save();
   alert(`Import terminé : ${state.companies.length} société(s), ${state.contacts.length} contact(s), ${state.invoices.length} facture(s), ${state.missions.length} mission(s).`);
