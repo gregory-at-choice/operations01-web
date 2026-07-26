@@ -40,7 +40,7 @@ const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], updatedAt: 0 };
 }
 function load() {
   try {
@@ -902,7 +902,14 @@ function planningEvents() {
   });
   return ev.sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));
 }
+let planningTab = "grille", planningDate = todayISO();
 function renderPlanning() {
+  const tabs = [["grille", "Emploi du temps"], ["agenda", "Agenda"]]
+    .map(([id, lbl]) => `<button class="chip ${planningTab === id ? "active" : ""}" data-ptab="${id}">${lbl}</button>`).join("");
+  const body = planningTab === "grille" ? renderTimetable() : renderAgenda();
+  return `<div class="page-title">Planning</div><div class="chip-row" style="margin-bottom:14px">${tabs}</div>${body}`;
+}
+function renderAgenda() {
   const today = todayISO();
   const all = planningEvents();
   const overdue = all.filter((e) => e.date < today);
@@ -923,11 +930,142 @@ function renderPlanning() {
     ? `<div class="section-h" style="color:#d23c3c">En retard <span class="muted">(${overdue.length})</span></div><div class="list">${overdue.map(evRow).join("")}</div>`
     : "";
   const empty = !all.length ? '<div class="center-empty">Rien de planifié.<br>Ajoute des échéances aux tâches/actions ou crée des rendez-vous.</div>' : "";
-  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Planning</div>
+  return `<div class="toolbar"><span class="grow"></span>
       <button class="btn" data-add-rdv>+ Rendez-vous</button></div>
     <div class="muted" style="font-size:12px;margin-bottom:12px">Échéances des tâches et des actions ouvertes, et rendez-vous — par ordre chronologique.</div>
     ${empty}${overdueHtml}
     ${upcoming.length ? `<div class="section-h">À venir <span class="muted">(${upcoming.length})</span></div>${groupsHtml}` : ""}`;
+}
+
+// ----------------------------- Emploi du temps (grille + glisser-déposer) -----------------------------
+const DAY_START = 390;      // 6h30 en minutes
+const DAY_END = 1350;       // 22h30
+const SNAP = 5;             // pas de 5 minutes
+const DEFAULT_DUR = 45;     // durée par défaut d'un créneau
+const MIN_DUR = 5;          // durée minimale
+const PX_PER_MIN = 1.05;    // échelle verticale
+const snap = (m) => Math.round(m / SNAP) * SNAP;
+const clampStart = (m) => Math.max(DAY_START, Math.min(DAY_END - MIN_DUR, m));
+function fmtMin(m) { const h = Math.floor(m / 60), mn = m % 60; return `${h}:${String(mn).padStart(2, "0")}`; }
+function slotEnd(s) { return (s.start || DAY_START) + (s.duration || DEFAULT_DUR); }
+function daySlots(date) { return state.slots.filter((s) => s.date === date).sort((a, b) => (a.start || 0) - (b.start || 0)); }
+// Répartition en colonnes des créneaux qui se chevauchent.
+function layoutSlots(slots) {
+  const out = []; let cluster = [], clusterEnd = -1;
+  const flush = () => {
+    if (!cluster.length) return;
+    const cols = [];
+    cluster.forEach((s) => {
+      let ci = cols.findIndex((col) => col.every((o) => slotEnd(o) <= s.start || o.start >= slotEnd(s)));
+      if (ci === -1) { cols.push([s]); ci = cols.length - 1; } else cols[ci].push(s);
+      s._col = ci;
+    });
+    cluster.forEach((s) => out.push({ s, col: s._col, cols: cols.length }));
+    cluster = []; clusterEnd = -1;
+  };
+  slots.forEach((s) => {
+    if (cluster.length && s.start >= clusterEnd) flush();
+    cluster.push(s); clusterEnd = Math.max(clusterEnd, slotEnd(s));
+  });
+  flush();
+  return out;
+}
+function unscheduledTasks() {
+  const planned = new Set(state.slots.filter((s) => s.taskId).map((s) => s.taskId));
+  return state.tasks.filter((t) => (t.status || "aFaire") !== "termine" && !planned.has(t.id))
+    .sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999"));
+}
+function renderTimetable() {
+  const date = planningDate, today = todayISO();
+  const slots = daySlots(date);
+  const laid = layoutSlots(slots);
+  const height = Math.round((DAY_END - DAY_START) * PX_PER_MIN);
+  // lignes et libellés horaires
+  let lines = "", labels = "";
+  for (let m = DAY_START; m <= DAY_END; m += 30) {
+    const y = Math.round((m - DAY_START) * PX_PER_MIN);
+    const full = m % 60 === 0;
+    lines += `<div class="tt-line ${full ? "full" : ""}" style="top:${y}px"></div>`;
+    if (full) labels += `<div class="tt-label" style="top:${y}px">${fmtMin(m)}</div>`;
+  }
+  // créneaux
+  const blocks = laid.map(({ s, col, cols }) => {
+    const top = Math.round(((s.start || DAY_START) - DAY_START) * PX_PER_MIN);
+    const h = Math.max(Math.round((s.duration || DEFAULT_DUR) * PX_PER_MIN), 12);
+    const w = 100 / cols, left = col * w;
+    const color = s.taskId ? "var(--primary)" : "var(--activity)";
+    return `<div class="tt-slot" data-slot="${s.id}" style="top:${top}px;height:${h}px;left:calc(${left}% + 2px);width:calc(${w}% - 4px);border-left-color:${color}">
+      <div class="tt-slot-t">${esc(s.title || "Créneau")}</div>
+      <div class="tt-slot-h">${fmtMin(s.start)} – ${fmtMin(slotEnd(s))} · ${s.duration} min</div>
+      <div class="tt-resize" data-resize="${s.id}"></div></div>`;
+  }).join("");
+  // trait de l'heure courante
+  let nowLine = "";
+  if (date === today) {
+    const n = new Date(); const cur = n.getHours() * 60 + n.getMinutes();
+    if (cur >= DAY_START && cur <= DAY_END) nowLine = `<div class="tt-now" style="top:${Math.round((cur - DAY_START) * PX_PER_MIN)}px"></div>`;
+  }
+  // tâches à planifier
+  const chips = unscheduledTasks().map((t) => {
+    const c = t.dueDate ? deadlineColor(daysUntil(t.dueDate)) : "var(--line)";
+    return `<div class="tt-chip" data-drag-task="${t.id}" style="border-left-color:${c}">${esc(t.title || "Tâche")}${t.dueDate ? `<span class="muted"> · ${fmtDate(t.dueDate)}</span>` : ""}</div>`;
+  }).join("");
+  const total = slots.reduce((t, s) => t + (s.duration || 0), 0);
+  const d = new Date(date + "T12:00:00");
+  const dLabel = d.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "long" });
+  return `<div class="toolbar">
+      <button class="btn ghost small" data-day="-1">‹</button>
+      <div class="grow" style="text-align:center"><strong style="text-transform:capitalize">${esc(dLabel)}</strong>
+        <div class="muted" style="font-size:11px">${slots.length} créneau(x) · ${fmtDuration(total * 60)}</div></div>
+      <button class="btn ghost small" data-day="1">›</button>
+      <button class="btn secondary small" data-day-today>Aujourd'hui</button>
+      <button class="btn small" data-add-slot>+ Créneau</button></div>
+    <div class="tt-help muted">Glisse une tâche dans la grille pour la planifier · clique un créneau vide pour en créer un (45 min) · glisse un créneau pour le déplacer, sa base pour le redimensionner (pas de 5 min).</div>
+    <div class="tt-layout">
+      <div class="tt-side">
+        <div class="section-h" style="margin-top:0">À planifier <span class="muted">(${unscheduledTasks().length})</span></div>
+        <div class="tt-chips">${chips || '<div class="muted" style="font-size:12px">Aucune tâche en attente.</div>'}</div>
+      </div>
+      <div class="tt-wrap">
+        <div class="tt-gutter" style="height:${height}px">${labels}</div>
+        <div class="tt-grid" id="ttGrid" style="height:${height}px">${lines}${nowLine}${blocks}</div>
+      </div>
+    </div>`;
+}
+function slotEditor(id) {
+  const s = state.slots.find((x) => x.id === id); if (!s) return;
+  const task = s.taskId ? state.tasks.find((t) => t.id === s.taskId) : null;
+  const misOpts = ['<option value="">Aucune mission</option>'].concat(sortedMissions().map((m) => `<option value="${m.id}" ${m.id === s.missionId ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`)).join("");
+  showModal(`<div class="modal-head"><strong class="grow">Créneau</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <label class="field"><span>Intitulé</span><input id="slTitle" value="${esc(s.title)}"/></label>
+    <label class="field"><span>Date</span><input type="date" id="slDate" value="${esc(s.date)}"/></label>
+    <div class="inline">
+      <label class="field grow"><span>Début</span><input type="time" id="slStart" step="300" value="${String(Math.floor(s.start / 60)).padStart(2, "0")}:${String(s.start % 60).padStart(2, "0")}"/></label>
+      <label class="field grow"><span>Durée (min)</span><input type="number" id="slDur" min="${MIN_DUR}" step="${SNAP}" value="${s.duration}"/></label>
+    </div>
+    <label class="field"><span>Mission</span><select id="slMission">${misOpts}</select></label>
+    <label class="field"><span>Notes</span><textarea id="slNotes">${esc(s.notes)}</textarea></label>
+    ${task ? `<div class="muted" style="font-size:12px">Lié à la tâche « ${esc(task.title || "")} ».</div>` : ""}
+    <div class="inline" style="margin-top:12px">
+      <button class="btn" id="slSave">Enregistrer</button>
+      ${task ? `<button class="btn secondary small" id="slDone">Marquer la tâche terminée</button>` : ""}
+      <span class="grow"></span>
+      <button class="btn danger small" id="slDel">Supprimer</button></div>`);
+  document.querySelector("[data-modal-close]").onclick = closeModal;
+  document.getElementById("slSave").onclick = () => {
+    s.title = document.getElementById("slTitle").value;
+    s.date = document.getElementById("slDate").value || s.date;
+    const tv = document.getElementById("slStart").value;
+    if (tv) { const [h, mn] = tv.split(":").map(Number); s.start = clampStart(snap(h * 60 + mn)); }
+    s.duration = Math.max(MIN_DUR, snap(parseInt(document.getElementById("slDur").value, 10) || DEFAULT_DUR));
+    if (s.start + s.duration > DAY_END) s.duration = DAY_END - s.start;
+    s.missionId = document.getElementById("slMission").value || null;
+    s.notes = document.getElementById("slNotes").value;
+    save(); closeModal(); render();
+  };
+  const done = document.getElementById("slDone");
+  if (done) done.onclick = () => { const t = state.tasks.find((x) => x.id === s.taskId); if (t) { t.status = "termine"; save(); } closeModal(); render(); };
+  document.getElementById("slDel").onclick = () => { state.slots = state.slots.filter((x) => x.id !== id); save(); closeModal(); render(); };
 }
 
 // ----------------------------- Interactions -----------------------------
@@ -1083,6 +1221,103 @@ function wire() {
 
   // Planning : ouvrir l'élément dans sa section
   c.querySelectorAll("[data-plan-open]").forEach((r) => r.onclick = () => { const sec = r.dataset.planOpen, id = r.dataset.planId; if (id) openDetail(sec, id); else go(sec); });
+  c.querySelectorAll("[data-ptab]").forEach((b) => b.onclick = () => { planningTab = b.dataset.ptab; render(); });
+  wireTimetable(c);
+}
+
+// ---- Emploi du temps : glisser-déposer, redimensionnement, création ----
+function wireTimetable(c) {
+  const grid = c.querySelector("#ttGrid");
+  c.querySelectorAll("[data-day]").forEach((b) => b.onclick = () => { const d = new Date(planningDate + "T12:00:00"); d.setDate(d.getDate() + Number(b.dataset.day)); planningDate = d.toISOString().slice(0, 10); render(); });
+  const todayBtn = c.querySelector("[data-day-today]"); if (todayBtn) todayBtn.onclick = () => { planningDate = todayISO(); render(); };
+  const addSlot = c.querySelector("[data-add-slot]");
+  if (addSlot) addSlot.onclick = () => { const s = newSlot(planningDate, defaultFreeStart(planningDate), DEFAULT_DUR, "Créneau"); save(); render(); slotEditor(s.id); };
+  if (!grid) return;
+
+  const minFromY = (clientY) => {
+    const r = grid.getBoundingClientRect();
+    return clampStart(snap(DAY_START + (clientY - r.top) / PX_PER_MIN));
+  };
+
+  // Déplacer / redimensionner un créneau existant
+  grid.querySelectorAll("[data-slot]").forEach((el) => {
+    const id = el.dataset.slot;
+    el.addEventListener("pointerdown", (ev) => {
+      const s = state.slots.find((x) => x.id === id); if (!s) return;
+      const resizing = ev.target.hasAttribute("data-resize");
+      ev.preventDefault(); el.setPointerCapture(ev.pointerId);
+      const y0 = ev.clientY, start0 = s.start, dur0 = s.duration;
+      let moved = false;
+      const onMove = (e) => {
+        const dm = snap((e.clientY - y0) / PX_PER_MIN);
+        if (Math.abs(e.clientY - y0) > 3) moved = true;
+        if (resizing) {
+          const dur = Math.max(MIN_DUR, Math.min(dur0 + dm, DAY_END - start0));
+          el.style.height = Math.max(Math.round(dur * PX_PER_MIN), 12) + "px";
+          el.dataset.tmpDur = dur;
+        } else {
+          const st = Math.max(DAY_START, Math.min(start0 + dm, DAY_END - dur0));
+          el.style.top = Math.round((st - DAY_START) * PX_PER_MIN) + "px";
+          el.dataset.tmpStart = st;
+        }
+      };
+      const onUp = () => {
+        el.removeEventListener("pointermove", onMove); el.removeEventListener("pointerup", onUp); el.removeEventListener("pointercancel", onUp);
+        if (!moved) { slotEditor(id); return; }
+        if (resizing && el.dataset.tmpDur) s.duration = Number(el.dataset.tmpDur);
+        else if (!resizing && el.dataset.tmpStart) s.start = Number(el.dataset.tmpStart);
+        save(); render();
+      };
+      el.addEventListener("pointermove", onMove); el.addEventListener("pointerup", onUp); el.addEventListener("pointercancel", onUp);
+    });
+  });
+
+  // Cliquer une zone vide → nouveau créneau de 45 min
+  grid.addEventListener("click", (ev) => {
+    if (ev.target.closest("[data-slot]")) return;
+    const st = minFromY(ev.clientY);
+    const s = newSlot(planningDate, Math.min(st, DAY_END - DEFAULT_DUR), DEFAULT_DUR, "Créneau");
+    save(); render(); slotEditor(s.id);
+  });
+
+  // Glisser une tâche depuis le panneau vers la grille
+  c.querySelectorAll("[data-drag-task]").forEach((chip) => {
+    chip.addEventListener("pointerdown", (ev) => {
+      const t = state.tasks.find((x) => x.id === chip.dataset.dragTask); if (!t) return;
+      ev.preventDefault(); chip.setPointerCapture(ev.pointerId);
+      const ghost = document.createElement("div");
+      ghost.className = "tt-ghost"; ghost.textContent = t.title || "Tâche";
+      ghost.style.left = ev.clientX + 8 + "px"; ghost.style.top = ev.clientY + 8 + "px";
+      document.body.appendChild(ghost);
+      let moved = false;
+      const onMove = (e) => { moved = true; ghost.style.left = e.clientX + 8 + "px"; ghost.style.top = e.clientY + 8 + "px"; };
+      const onUp = (e) => {
+        chip.removeEventListener("pointermove", onMove); chip.removeEventListener("pointerup", onUp); chip.removeEventListener("pointercancel", onUp);
+        ghost.remove();
+        const r = grid.getBoundingClientRect();
+        if (moved && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+          const st = Math.min(minFromY(e.clientY), DAY_END - DEFAULT_DUR);
+          newSlot(planningDate, st, DEFAULT_DUR, t.title || "Tâche", t.id, t.missionId || null);
+          if ((t.status || "aFaire") === "aFaire") t.status = "enCours";
+          save(); render();
+        }
+      };
+      chip.addEventListener("pointermove", onMove); chip.addEventListener("pointerup", onUp); chip.addEventListener("pointercancel", onUp);
+    });
+  });
+}
+function newSlot(date, start, duration, title, taskId, missionId) {
+  const s = { id: uid(), date, start: clampStart(snap(start)), duration: Math.max(MIN_DUR, snap(duration)), title: title || "Créneau", taskId: taskId || null, missionId: missionId || null, notes: "", createdAt: Date.now() };
+  if (s.start + s.duration > DAY_END) s.duration = DAY_END - s.start;
+  state.slots.push(s);
+  return s;
+}
+// Premier créneau libre de la journée (sinon 9h).
+function defaultFreeStart(date) {
+  const slots = daySlots(date);
+  let t = Math.max(DAY_START, 540);
+  for (const s of slots) { if (t + DEFAULT_DUR <= s.start) break; t = Math.max(t, slotEnd(s)); }
+  return Math.min(t, DAY_END - DEFAULT_DUR);
 }
 
 // ----------------------------- Import / Export -----------------------------
@@ -1115,6 +1350,7 @@ function importJSON(text) {
   (data.tasks || []).forEach((t) => state.tasks.push({ id: uid(), title: t.title || "", status: (TASK_STATUSES.some((s) => s.code === t.status) ? t.status : "aFaire"), missionId: missionByTitle[t.missionTitle] || null, dueDate: (t.dueDate || "").slice(0, 10), createdAt: Date.now() }));
   (data.actions || []).forEach((a) => state.actions.push({ id: uid(), title: a.title || "", projectName: a.projectName || "", missionId: missionByTitle[a.missionTitle] || null, request: a.request || "", contactId: null, recipientName: a.recipientName || "", recipientEmail: a.recipientEmail || "", dueDate: (a.dueDate || "").slice(0, 10), reminderDaily: a.reminderDaily !== false, closed: !!a.closed, closedAt: a.closedAt || null, createdAt: Date.now() }));
   (data.rendezvous || []).forEach((r) => state.rendezvous.push({ id: uid(), title: r.title || "", date: (r.date || "").slice(0, 10), time: r.time || "", location: r.location || "", contactId: null, withName: r.withName || "", missionId: missionByTitle[r.missionTitle] || null, notes: r.notes || "", createdAt: Date.now() }));
+  (data.slots || []).forEach((s) => state.slots.push({ id: uid(), date: (s.date || "").slice(0, 10) || todayISO(), start: clampStart(snap(Number(s.start) || DAY_START)), duration: Math.max(MIN_DUR, snap(Number(s.duration) || DEFAULT_DUR)), title: s.title || "Créneau", taskId: null, missionId: missionByTitle[s.missionTitle] || null, notes: s.notes || "", createdAt: Date.now() }));
   (data.recurrences || []).forEach((r) => state.recurrences.push({ id: uid(), kind: r.kind === "task" ? "task" : "invoice", active: r.active !== false, title: r.title || "", frequency: (FREQS.some((f) => f.code === r.frequency) ? r.frequency : "mensuelle"), anchorDate: (r.anchorDate || "").slice(0, 10) || todayISO(), lastGenerated: (r.lastGenerated || "").slice(0, 10) || null, direction: r.direction === "recette" ? "recette" : "depense", amount: Number(r.amount) || 0, vatRate: r.vatRate == null ? 20 : Number(r.vatRate), categoryName: r.categoryName || "", companyId: compByName[r.companyName] || null, missionId: missionByTitle[r.missionTitle] || null }));
 
   save();
