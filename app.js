@@ -970,6 +970,23 @@ function layoutSlots(slots) {
   flush();
   return out;
 }
+function slotTask(s) { return s && s.taskId ? state.tasks.find((t) => t.id === s.taskId) : null; }
+function toggleSlotTask(slotId) {
+  const s = state.slots.find((x) => x.id === slotId); const t = slotTask(s);
+  if (!t) return;
+  const done = (t.status || "aFaire") === "termine";
+  t.status = done ? "enCours" : "termine";
+  save(); render();
+  toast(done ? "Tâche rouverte." : "Tâche marquée terminée ✓");
+}
+// Petit message de confirmation éphémère.
+function toast(msg) {
+  const old = document.getElementById("toast"); if (old) old.remove();
+  const el = document.createElement("div");
+  el.id = "toast"; el.className = "toast"; el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => { if (el.parentNode) el.remove(); }, 2600);
+}
 function unscheduledTasks() {
   const planned = new Set(state.slots.filter((s) => s.taskId).map((s) => s.taskId));
   return state.tasks.filter((t) => (t.status || "aFaire") !== "termine" && !planned.has(t.id))
@@ -993,10 +1010,12 @@ function renderTimetable() {
     const top = Math.round(((s.start || DAY_START) - DAY_START) * PX_PER_MIN);
     const h = Math.max(Math.round((s.duration || DEFAULT_DUR) * PX_PER_MIN), 12);
     const w = 100 / cols, left = col * w;
-    const color = s.taskId ? "var(--primary)" : "var(--activity)";
-    return `<div class="tt-slot" data-slot="${s.id}" style="top:${top}px;height:${h}px;left:calc(${left}% + 2px);width:calc(${w}% - 4px);border-left-color:${color}">
-      <div class="tt-slot-t">${esc(s.title || "Créneau")}</div>
-      <div class="tt-slot-h">${fmtMin(s.start)} – ${fmtMin(slotEnd(s))} · ${s.duration} min</div>
+    const t = slotTask(s), done = !!t && (t.status || "aFaire") === "termine";
+    const color = done ? "var(--positive)" : (s.taskId ? "var(--primary)" : "var(--activity)");
+    const tick = t ? `<button class="tt-done" data-slot-done="${s.id}" title="${done ? "Rouvrir la tâche" : "Marquer la tâche terminée"}">${done ? "✓" : "○"}</button>` : "";
+    return `<div class="tt-slot${done ? " done" : ""}" data-slot="${s.id}" style="top:${top}px;height:${h}px;left:calc(${left}% + 2px);width:calc(${w}% - 4px);border-left-color:${color}">
+      ${tick}<div class="tt-slot-t">${esc(s.title || "Créneau")}</div>
+      <div class="tt-slot-h">${fmtMin(s.start)} – ${fmtMin(slotEnd(s))} · ${s.duration} min${done ? " · terminée" : ""}</div>
       <div class="tt-resize" data-resize="${s.id}"></div></div>`;
   }).join("");
   // trait de l'heure courante
@@ -1045,10 +1064,10 @@ function slotEditor(id) {
     </div>
     <label class="field"><span>Mission</span><select id="slMission">${misOpts}</select></label>
     <label class="field"><span>Notes</span><textarea id="slNotes">${esc(s.notes)}</textarea></label>
-    ${task ? `<div class="muted" style="font-size:12px">Lié à la tâche « ${esc(task.title || "")} ».</div>` : ""}
+    ${task ? `<div class="muted" style="font-size:12px">Lié à la tâche « ${esc(task.title || "")} » · statut : <strong>${esc(taskStatusLabel(task.status))}</strong>.</div>` : ""}
     <div class="inline" style="margin-top:12px">
       <button class="btn" id="slSave">Enregistrer</button>
-      ${task ? `<button class="btn secondary small" id="slDone">Marquer la tâche terminée</button>` : ""}
+      ${task ? `<button class="btn secondary small" id="slDone">${(task.status || "aFaire") === "termine" ? "↺ Rouvrir la tâche" : "✓ Marquer la tâche terminée"}</button>` : ""}
       <span class="grow"></span>
       <button class="btn danger small" id="slDel">Supprimer</button></div>`);
   document.querySelector("[data-modal-close]").onclick = closeModal;
@@ -1064,7 +1083,7 @@ function slotEditor(id) {
     save(); closeModal(); render();
   };
   const done = document.getElementById("slDone");
-  if (done) done.onclick = () => { const t = state.tasks.find((x) => x.id === s.taskId); if (t) { t.status = "termine"; save(); } closeModal(); render(); };
+  if (done) done.onclick = () => { closeModal(); toggleSlotTask(id); };
   document.getElementById("slDel").onclick = () => { state.slots = state.slots.filter((x) => x.id !== id); save(); closeModal(); render(); };
 }
 
@@ -1239,10 +1258,17 @@ function wireTimetable(c) {
     return clampStart(snap(DAY_START + (clientY - r.top) / PX_PER_MIN));
   };
 
+  // Cocher / décocher la tâche liée directement sur le créneau
+  grid.querySelectorAll("[data-slot-done]").forEach((b) => {
+    b.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    b.addEventListener("click", (ev) => { ev.stopPropagation(); toggleSlotTask(b.dataset.slotDone); });
+  });
+
   // Déplacer / redimensionner un créneau existant
   grid.querySelectorAll("[data-slot]").forEach((el) => {
     const id = el.dataset.slot;
     el.addEventListener("pointerdown", (ev) => {
+      if (ev.target.hasAttribute("data-slot-done")) return;   // clic sur la pastille ✓
       const s = state.slots.find((x) => x.id === id); if (!s) return;
       const resizing = ev.target.hasAttribute("data-resize");
       ev.preventDefault(); el.setPointerCapture(ev.pointerId);
