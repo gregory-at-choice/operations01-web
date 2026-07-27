@@ -40,7 +40,7 @@ const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], updatedAt: 0 };
 }
 function load() {
   try {
@@ -85,19 +85,54 @@ function invCashDate(v) {
   return parseDate(v.startDate) || new Date();
 }
 const invSigned = (v) => (v.direction === "recette" ? 1 : -1) * invTTC(v);
+// Une facture réglée par un associé ne fait pas bouger la trésorerie de la société :
+// elle alimente le compte courant d'associé.
+const paidByAssociate = (v) => v.payMode === "associe";
+const companyAccounts = (cid) => state.accounts.filter((a) => a.companyId === cid);
+function accountBalance(a, now) {
+  const d0 = parseDate(a.balanceDate) || new Date(0);
+  let s = a.initialBalance || 0;
+  state.invoices.filter((v) => v.accountId === a.id && !paidByAssociate(v)).forEach((v) => { const d = invCashDate(v); if (d > d0 && d <= now) s += invSigned(v); });
+  return s;
+}
 function companyBalance(c, now) {
   const cb = parseDate(c.cashBalanceDate) || new Date(0);
   let s = c.initialCashBalance || 0;
-  state.invoices.filter((v) => v.companyId === c.id).forEach((v) => { const d = invCashDate(v); if (d > cb && d <= now) s += invSigned(v); });
+  // factures de la société non rattachées à un compte précis (et non payées par un associé)
+  state.invoices.filter((v) => v.companyId === c.id && !paidByAssociate(v) && !v.accountId)
+    .forEach((v) => { const d = invCashDate(v); if (d > cb && d <= now) s += invSigned(v); });
+  companyAccounts(c.id).forEach((a) => { s += accountBalance(a, now); });
   return s;
 }
-function treasuryEntities() { return state.companies.filter((c) => (c.initialCashBalance || 0) !== 0 || state.invoices.some((v) => v.companyId === c.id)); }
+function treasuryEntities() { return state.companies.filter((c) => (c.initialCashBalance || 0) !== 0 || companyAccounts(c.id).length || state.invoices.some((v) => v.companyId === c.id)); }
 function treasuryNow(now) { return treasuryEntities().reduce((t, c) => t + companyBalance(c, now), 0); }
 function treasuryProjected(now, days) {
   const limit = new Date(now.getTime() + days * 86400000);
   let base = treasuryNow(now);
-  state.invoices.filter((v) => v.companyId).forEach((v) => { const d = invCashDate(v); if (d > now && d <= limit) base += invSigned(v); });
+  state.invoices.filter((v) => v.companyId && !paidByAssociate(v)).forEach((v) => { const d = invCashDate(v); if (d > now && d <= limit) base += invSigned(v); });
   return base;
+}
+// ---- Compte courant d'associé ----
+// Solde positif = la société doit de l'argent à l'associé.
+function associates() {
+  const asso = state.contacts.filter((c) => c.category === "associe");
+  return asso.length ? asso : state.contacts;
+}
+function ccaBalance(associateId, companyId) {
+  let s = 0;
+  state.invoices.filter((v) => paidByAssociate(v) && v.associateId === associateId && (!companyId || v.companyId === companyId))
+    .forEach((v) => { s += (v.direction === "depense" ? 1 : -1) * invTTC(v); });
+  state.ccaMovements.filter((m) => m.associateId === associateId && (!companyId || m.companyId === companyId))
+    .forEach((m) => { s += (m.kind === "remboursement" ? -1 : 1) * (m.amount || 0); });
+  return s;
+}
+function ccaLines(associateId, companyId) {
+  const lines = [];
+  state.invoices.filter((v) => paidByAssociate(v) && v.associateId === associateId && (!companyId || v.companyId === companyId))
+    .forEach((v) => lines.push({ date: v.startDate || "", label: v.title || "Facture", detail: companyName(v.companyId), amount: (v.direction === "depense" ? 1 : -1) * invTTC(v), kind: v.direction === "depense" ? "Avance (facture)" : "Encaissement", invoiceId: v.id }));
+  state.ccaMovements.filter((m) => m.associateId === associateId && (!companyId || m.companyId === companyId))
+    .forEach((m) => lines.push({ date: m.date || "", label: m.notes || (m.kind === "apport" ? "Apport" : m.kind === "remboursement" ? "Remboursement" : "Mouvement"), detail: companyName(m.companyId), amount: (m.kind === "remboursement" ? -1 : 1) * (m.amount || 0), kind: m.kind === "apport" ? "Apport" : m.kind === "remboursement" ? "Remboursement" : "Autre", movementId: m.id }));
+  return lines.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 const recettes = () => state.invoices.filter((v) => v.direction === "recette");
 const depenses = () => state.invoices.filter((v) => v.direction === "depense");
@@ -381,6 +416,15 @@ function renderCompanyDetail(id) {
     </div>
     <div class="section-h">Activités</div>
     <div class="card">${acts || '<div class="muted">Aucune activité.</div>'}<div style="margin-top:8px"><button class="btn secondary small" data-add-act="${c.id}">+ Ajouter une activité</button></div></div>
+    <div class="section-h">Comptes bancaires</div>
+    <div class="card">${companyAccounts(c.id).map((a) => `<div class="inline" style="margin:6px 0;flex-wrap:wrap">
+        <input class="grow" style="min-width:130px" data-accfield="name" data-acc="${a.id}" value="${esc(a.name)}" placeholder="Nom du compte (ex. BNP courant)"/>
+        <input type="number" style="width:120px" data-accfield="initialBalance" data-acc="${a.id}" value="${a.initialBalance || 0}" title="Solde initial (€)"/>
+        <input type="date" style="width:150px" data-accfield="balanceDate" data-acc="${a.id}" value="${esc((a.balanceDate || "").slice(0, 10) || todayISO())}" title="À la date du"/>
+        <span class="muted" style="font-size:12px;white-space:nowrap">${euros(accountBalance(a, new Date()))}</span>
+        <button class="btn ghost small" data-del-acc="${a.id}">✕</button></div>`).join("") || '<div class="muted">Aucun compte bancaire.</div>'}
+      <div style="margin-top:8px"><button class="btn secondary small" data-add-acc="${c.id}">+ Ajouter un compte</button></div>
+      <div class="muted" style="font-size:11px;margin-top:6px">Ces comptes sont proposés dans le bloc « Règlement » de chaque facture.</div></div>
     <div style="margin-top:18px"><button class="btn danger small" data-del-company="${c.id}">Supprimer la société</button></div>`;
 }
 
@@ -388,7 +432,7 @@ function renderCompanyDetail(id) {
 let financeTab = "factures";
 function renderFinances() {
   if (view.detailId) return renderInvoiceDetail(view.detailId);
-  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"], ["categories", "Catégories"], ["recurrences", "Récurrences"], ["import", "Import bancaire"]]
+  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"], ["cca", "Compte courant d'associé"], ["salaires", "Salaires"], ["categories", "Catégories"], ["recurrences", "Récurrences"], ["import", "Import bancaire"]]
     .map(([id, lbl]) => `<button class="chip ${financeTab === id ? "active" : ""}" data-ftab="${id}">${lbl}</button>`).join("");
   let body = "";
   if (financeTab === "factures") body = financeFactures();
@@ -396,6 +440,8 @@ function renderFinances() {
   else if (financeTab === "import") body = financeImport();
   else if (financeTab === "categories") body = financeCategories();
   else if (financeTab === "recurrences") body = financeRecurrences();
+  else if (financeTab === "cca") body = financeCCA();
+  else if (financeTab === "salaires") body = financeSalaires();
   else body = financeTresorerie();
   return `<div class="page-title">Finances</div><div class="chip-row" style="margin-bottom:16px">${tabs}</div>${body}`;
 }
@@ -459,7 +505,9 @@ function financeTresorerie() {
       <div class="inline" style="padding:4px 0"><span class="grow">À 30 jours</span><span class="timer">${euros(treasuryProjected(now, 30))}</span></div>
       <div class="inline" style="padding:4px 0"><span class="grow">À 60 jours</span><span class="timer">${euros(treasuryProjected(now, 60))}</span></div>
       <div class="inline" style="padding:4px 0"><span class="grow">À 90 jours</span><span class="timer">${euros(treasuryProjected(now, 90))}</span></div></div>
-    <div class="section-h">Par société</div><div class="card">${perEnt || '<div class="muted">—</div>'}</div>`;
+    <div class="section-h">Par société</div><div class="card">${perEnt || '<div class="muted">—</div>'}</div>
+    ${state.accounts.length ? `<div class="section-h">Par compte bancaire</div><div class="card">${state.accounts.map((a) => `<div class="inline" style="padding:5px 0"><span class="grow">${esc(a.name || "Compte")}<span class="muted" style="font-size:11px"> · ${esc(companyName(a.companyId))}</span></span><span class="timer">${euros(accountBalance(a, now))}</span></div>`).join("")}</div>` : ""}
+    ${(() => { const t = associates().reduce((s, c) => s + ccaBalance(c.id), 0); return Math.abs(t) > 0.005 ? `<div class="section-h">Comptes courants d'associés</div><div class="card"><div class="inline"><span class="grow">Total dû aux associés</span><span class="timer" style="color:${t >= 0 ? "var(--positive)" : "#d23c3c"}">${euros(t)}</span></div><div class="muted" style="font-size:11px;margin-top:4px">Hors trésorerie : ces sommes n'ont pas transité par les comptes de l'entreprise.</div></div>` : ""; })()}`;
 }
 function renderInvoiceDetail(id) {
   const v = state.invoices.find((x) => x.id === id);
@@ -484,6 +532,8 @@ function renderInvoiceDetail(id) {
       <label class="field"><span>Échéance</span><input type="date" data-bind="invoices|${v.id}|dueDate" value="${esc((v.dueDate || "").slice(0, 10))}"/></label>
       <label class="field"><span>Payée le</span><input type="date" data-bind="invoices|${v.id}|paymentDate" value="${esc((v.paymentDate || "").slice(0, 10))}"/></label>
     </div>
+    <div class="section-h">Règlement</div>
+    <div class="card">${invoicePaymentFields(v)}</div>
     <div style="margin-top:18px"><button class="btn danger small" data-del-invoice="${v.id}">Supprimer la facture</button></div>`;
 }
 
@@ -698,6 +748,189 @@ function doBankImport() {
   bankImport.rows = []; bankImport.fileName = "";
   alert(`Import terminé : ${added} opération(s) ajoutée(s)${skipped ? `, ${skipped} déjà présente(s) ignorée(s)` : ""}.`);
   financeTab = "factures"; render();
+}
+
+// Bloc « Règlement » d'une facture : compte de l'entreprise ou associé.
+function invoicePaymentFields(v) {
+  const mode = v.payMode === "associe" ? "associe" : "compte";
+  const accs = companyAccounts(v.companyId);
+  const accOpts = ['<option value="">— Compte non précisé —</option>'].concat(
+    accs.map((a) => `<option value="${a.id}" ${a.id === v.accountId ? "selected" : ""}>${esc(a.name || "Compte")}</option>`)
+  ).join("");
+  const asso = associates();
+  const assoOpts = ['<option value="">— Associé à préciser —</option>'].concat(
+    asso.map((c) => `<option value="${c.id}" ${c.id === v.associateId ? "selected" : ""}>${esc(contactName(c))}</option>`)
+  ).join("");
+  const second = mode === "associe"
+    ? `<label class="field"><span>Payée par l'associé</span><select data-pay-assoc="${v.id}" data-rerender>${assoOpts}</select></label>
+       ${asso.length ? "" : '<div class="muted" style="font-size:12px">Aucun contact. Crée un contact de catégorie « Associé » dans Contacts.</div>'}
+       <div class="muted" style="font-size:12px;margin-top:6px">Cette facture n'impacte pas la trésorerie de la société : elle ${v.direction === "depense" ? "crédite" : "débite"} le compte courant de l'associé.</div>`
+    : `<label class="field"><span>Compte de l'entreprise</span><select data-pay-account="${v.id}" data-rerender>${accOpts}</select></label>
+       ${accs.length ? "" : '<div class="muted" style="font-size:12px">Aucun compte bancaire pour cette société. Ajoute-les dans Groupe → la société → Comptes bancaires.</div>'}`;
+  return `<label class="field"><span>Réglée depuis / vers</span>
+      <select data-pay-mode="${v.id}" data-rerender>
+        <option value="compte" ${mode === "compte" ? "selected" : ""}>Un compte de l'entreprise</option>
+        <option value="associe" ${mode === "associe" ? "selected" : ""}>Un associé (compte courant)</option>
+      </select></label>${second}`;
+}
+
+// ----------------------------- Compte courant d'associé -----------------------------
+function financeCCA() {
+  const asso = associates();
+  const actifs = asso.filter((c) => Math.abs(ccaBalance(c.id)) > 0.005 || state.ccaMovements.some((m) => m.associateId === c.id) || state.invoices.some((v) => paidByAssociate(v) && v.associateId === c.id));
+  const total = actifs.reduce((t, c) => t + ccaBalance(c.id), 0);
+  const cards = actifs.map((c) => {
+    const solde = ccaBalance(c.id);
+    const parSociete = state.companies.map((co) => ({ co, s: ccaBalance(c.id, co.id) })).filter((x) => Math.abs(x.s) > 0.005);
+    const lines = ccaLines(c.id).slice(0, 40).map((l) => `<tr>
+      <td style="white-space:nowrap">${esc(fmtDate(l.date))}</td>
+      <td>${esc(l.label)}<div class="muted" style="font-size:11px">${esc(l.kind)}${l.detail ? " · " + esc(l.detail) : ""}</div></td>
+      <td class="num" style="color:${l.amount >= 0 ? "var(--positive)" : "#d23c3c"}">${euros(l.amount)}</td></tr>`).join("");
+    return `<div class="card" style="margin-bottom:12px">
+      <div class="inline"><strong class="grow">${esc(contactName(c))}</strong>
+        <strong style="color:${solde >= 0 ? "var(--positive)" : "#d23c3c"};font-size:17px">${euros(solde)}</strong></div>
+      <div class="muted" style="font-size:11px">${solde >= 0 ? "La société doit cette somme à l'associé." : "L'associé doit cette somme à la société."}</div>
+      ${parSociete.length > 1 ? `<div style="margin-top:8px">${parSociete.map((x) => `<div class="inline" style="padding:2px 0"><span class="grow muted" style="font-size:12px">${esc(x.co.name || "Société")}</span><span style="font-size:12px">${euros(x.s)}</span></div>`).join("")}</div>` : ""}
+      ${lines ? `<div style="overflow-x:auto;margin-top:10px"><table class="bank-table"><thead><tr><th>Date</th><th>Libellé</th><th class="num">Montant</th></tr></thead><tbody>${lines}</tbody></table></div>` : '<div class="muted" style="font-size:12px;margin-top:8px">Aucun mouvement.</div>'}
+      <div class="inline" style="margin-top:8px"><button class="btn secondary small" data-add-cca="${c.id}">+ Mouvement</button></div>
+    </div>`;
+  }).join("");
+  return `<div class="toolbar"><span class="grow muted" style="font-size:12px">Avances faites par les associés, apports et remboursements.</span></div>
+    <div class="card" style="margin-bottom:14px"><div class="inline"><strong class="grow">Total dû aux associés</strong>
+      <strong style="color:${total >= 0 ? "var(--positive)" : "#d23c3c"};font-size:18px">${euros(total)}</strong></div>
+      <div class="muted" style="font-size:11px;margin-top:4px">Une facture réglée par un associé alimente automatiquement son compte courant (champ « Règlement » de la facture).</div></div>
+    ${actifs.length ? cards : '<div class="center-empty">Aucun mouvement de compte courant.<br>Indique « Un associé » dans le règlement d\'une facture, ou ajoute un mouvement à un associé.</div>'}
+    ${!actifs.length && asso.length ? `<div class="inline" style="margin-top:10px">${asso.slice(0, 6).map((c) => `<button class="btn secondary small" data-add-cca="${c.id}">+ Mouvement · ${esc(contactName(c))}</button>`).join(" ")}</div>` : ""}`;
+}
+function ccaEditor(movementId, associateId) {
+  const m = movementId ? state.ccaMovements.find((x) => x.id === movementId) : null;
+  const cur = m || { id: null, date: todayISO(), associateId, companyId: (state.companies[0] || {}).id || null, kind: "apport", amount: 0, notes: "" };
+  const comOpts = ['<option value="">Aucune société</option>'].concat(state.companies.map((c) => `<option value="${c.id}" ${c.id === cur.companyId ? "selected" : ""}>${esc(c.name || "Sans nom")}</option>`)).join("");
+  const kinds = [["apport", "Apport / avance de l'associé (+)"], ["remboursement", "Remboursement à l'associé (−)"], ["autre", "Autre (+)"]];
+  showModal(`<div class="modal-head"><strong class="grow">Mouvement de compte courant</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <label class="field"><span>Date</span><input type="date" id="ccaDate" value="${esc(cur.date)}"/></label>
+    <label class="field"><span>Nature</span><select id="ccaKind">${kinds.map(([k, l]) => `<option value="${k}" ${k === cur.kind ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+    <label class="field"><span>Montant (€)</span><input type="number" id="ccaAmount" value="${cur.amount || 0}"/></label>
+    <label class="field"><span>Société</span><select id="ccaCompany">${comOpts}</select></label>
+    <label class="field"><span>Libellé</span><input id="ccaNotes" value="${esc(cur.notes)}"/></label>
+    <div class="inline" style="margin-top:12px"><button class="btn" id="ccaSave">Enregistrer</button><span class="grow"></span>
+      ${m ? '<button class="btn danger small" id="ccaDel">Supprimer</button>' : ""}</div>`);
+  document.querySelector("[data-modal-close]").onclick = closeModal;
+  document.getElementById("ccaSave").onclick = () => {
+    const o = {
+      id: cur.id || uid(), date: document.getElementById("ccaDate").value || todayISO(),
+      associateId: cur.associateId || associateId, companyId: document.getElementById("ccaCompany").value || null,
+      kind: document.getElementById("ccaKind").value, amount: Math.abs(parseFloat(document.getElementById("ccaAmount").value) || 0),
+      notes: document.getElementById("ccaNotes").value
+    };
+    if (m) Object.assign(m, o); else state.ccaMovements.push(o);
+    save(); closeModal(); render();
+  };
+  const del = document.getElementById("ccaDel");
+  if (del) del.onclick = () => { state.ccaMovements = state.ccaMovements.filter((x) => x.id !== movementId); save(); closeModal(); render(); };
+}
+
+// ----------------------------- Salaires -----------------------------
+const SAL_STATUSES = [{ code: "aPayer", label: "À payer" }, { code: "paye", label: "Payé" }];
+const salName = (s) => { const c = s.contactId ? state.contacts.find((x) => x.id === s.contactId) : null; return c ? contactName(c) : (s.name || "Salarié"); };
+const salTotal = (s) => (Number(s.gross) || 0) + (Number(s.charges) || 0);
+let salaryMonth = "";
+function monthLabel(m) { if (!m) return "—"; const d = new Date(m + "-01T12:00:00"); return d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" }); }
+function financeSalaires() {
+  const months = Array.from(new Set(state.salaries.map((s) => s.month).filter(Boolean))).sort().reverse();
+  const cur = salaryMonth || months[0] || new Date().toISOString().slice(0, 7);
+  const items = state.salaries.filter((s) => s.month === cur).sort((a, b) => salName(a).localeCompare(salName(b), "fr"));
+  const gross = items.reduce((t, s) => t + (Number(s.gross) || 0), 0);
+  const charges = items.reduce((t, s) => t + (Number(s.charges) || 0), 0);
+  const net = items.reduce((t, s) => t + (Number(s.net) || 0), 0);
+  const monthOpts = Array.from(new Set(months.concat([cur]))).sort().reverse()
+    .map((m) => `<option value="${m}" ${m === cur ? "selected" : ""}>${monthLabel(m)}</option>`).join("");
+  const rows = items.map((s) => {
+    const inv = s.invoiceId && state.invoices.some((v) => v.id === s.invoiceId);
+    return `<div class="row" style="cursor:default;border-left-color:${s.status === "paye" ? "var(--positive)" : "var(--alert)"}">
+      <div class="grow"><div class="r-title">${esc(salName(s))}</div>
+        <div class="r-sub">${esc(companyName(s.companyId))} · brut ${euros(s.gross)} · charges ${euros(s.charges)} · net ${euros(s.net)}${inv ? " · écriture générée" : ""}</div></div>
+      <div style="text-align:right"><div>${euros(salTotal(s))}</div>
+        <span class="badge ${s.status === "paye" ? "terminee" : "aDemarrer"}" style="font-size:10px">${s.status === "paye" ? "Payé" : "À payer"}</span></div>
+      <button class="btn ghost small" data-edit-sal="${s.id}">✎</button></div>`;
+  }).join("");
+  const annee = cur.slice(0, 4);
+  const anneeItems = state.salaries.filter((s) => (s.month || "").slice(0, 4) === annee);
+  const anneeTotal = anneeItems.reduce((t, s) => t + salTotal(s), 0);
+  const nonGen = items.filter((s) => !(s.invoiceId && state.invoices.some((v) => v.id === s.invoiceId))).length;
+  return `<div class="toolbar">
+      <select id="salMonth" style="width:auto">${monthOpts}</select>
+      <span class="grow"></span>
+      <button class="btn secondary small" data-sal-month-prev>‹</button>
+      <button class="btn secondary small" data-sal-month-next>›</button>
+      <button class="btn" data-add-sal>+ Salaire</button></div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="inline" style="padding:3px 0"><span class="grow">Brut</span><strong>${euros(gross)}</strong></div>
+      <div class="inline" style="padding:3px 0"><span class="grow">Charges patronales</span><strong>${euros(charges)}</strong></div>
+      <div class="inline" style="padding:3px 0"><span class="grow">Net versé</span><strong>${euros(net)}</strong></div>
+      <div class="inline" style="padding:6px 0;border-top:1px solid var(--line);margin-top:4px"><strong class="grow">Coût total employeur</strong>
+        <strong style="color:var(--primary);font-size:17px">${euros(gross + charges)}</strong></div>
+      <div class="muted" style="font-size:11px;margin-top:4px">Cumul ${annee} : ${euros(anneeTotal)} sur ${anneeItems.length} bulletin(s).</div></div>
+    <div class="list">${items.length ? rows : '<div class="center-empty">Aucun salaire pour ce mois.</div>'}</div>
+    ${nonGen ? `<div class="inline" style="margin-top:12px"><button class="btn secondary small" data-sal-generate>Générer les ${nonGen} écriture(s) comptable(s) du mois</button></div>
+      <div class="muted" style="font-size:11px;margin-top:6px">Crée une facture de charge « Salaires » par bulletin, pour alimenter le compte de résultat et la trésorerie (sans double comptage : un bulletin déjà généré est ignoré).</div>` : ""}`;
+}
+function salaryEditor(id) {
+  const s = id ? state.salaries.find((x) => x.id === id) : null;
+  const cur = s || { id: null, contactId: null, name: "", companyId: (state.companies[0] || {}).id || null, month: salaryMonth || new Date().toISOString().slice(0, 7), gross: 0, charges: 0, net: 0, status: "aPayer", paymentDate: "", accountId: null, notes: "" };
+  const comOpts = ['<option value="">Aucune société</option>'].concat(state.companies.map((c) => `<option value="${c.id}" ${c.id === cur.companyId ? "selected" : ""}>${esc(c.name || "Sans nom")}</option>`)).join("");
+  const ctOpts = ['<option value="">— Saisie libre —</option>'].concat(state.contacts.map((c) => `<option value="${c.id}" ${c.id === cur.contactId ? "selected" : ""}>${esc(contactName(c))}</option>`)).join("");
+  const stOpts = SAL_STATUSES.map((x) => `<option value="${x.code}" ${x.code === cur.status ? "selected" : ""}>${x.label}</option>`).join("");
+  showModal(`<div class="modal-head"><strong class="grow">Bulletin de salaire</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <label class="field"><span>Salarié (contact)</span><select id="salContact">${ctOpts}</select></label>
+    <label class="field"><span>Nom (si hors contacts)</span><input id="salName" value="${esc(cur.name)}"/></label>
+    <label class="field"><span>Société</span><select id="salCompany">${comOpts}</select></label>
+    <label class="field"><span>Mois</span><input type="month" id="salMonthField" value="${esc(cur.month)}"/></label>
+    <div class="inline">
+      <label class="field grow"><span>Brut (€)</span><input type="number" id="salGross" value="${cur.gross || 0}"/></label>
+      <label class="field grow"><span>Charges (€)</span><input type="number" id="salCharges" value="${cur.charges || 0}"/></label>
+    </div>
+    <label class="field"><span>Net versé (€)</span><input type="number" id="salNet" value="${cur.net || 0}"/></label>
+    <label class="field"><span>Statut</span><select id="salStatus">${stOpts}</select></label>
+    <label class="field"><span>Payé le</span><input type="date" id="salPayDate" value="${esc((cur.paymentDate || "").slice(0, 10))}"/></label>
+    <label class="field"><span>Notes</span><input id="salNotes" value="${esc(cur.notes)}"/></label>
+    <div class="inline" style="margin-top:12px"><button class="btn" id="salSave">Enregistrer</button><span class="grow"></span>
+      ${s ? '<button class="btn danger small" id="salDel">Supprimer</button>' : ""}</div>`);
+  document.querySelector("[data-modal-close]").onclick = closeModal;
+  document.getElementById("salSave").onclick = () => {
+    const o = {
+      id: cur.id || uid(), contactId: document.getElementById("salContact").value || null,
+      name: document.getElementById("salName").value, companyId: document.getElementById("salCompany").value || null,
+      month: document.getElementById("salMonthField").value || cur.month,
+      gross: parseFloat(document.getElementById("salGross").value) || 0,
+      charges: parseFloat(document.getElementById("salCharges").value) || 0,
+      net: parseFloat(document.getElementById("salNet").value) || 0,
+      status: document.getElementById("salStatus").value,
+      paymentDate: document.getElementById("salPayDate").value,
+      accountId: cur.accountId || null, notes: document.getElementById("salNotes").value,
+      invoiceId: cur.invoiceId || null
+    };
+    if (s) Object.assign(s, o); else state.salaries.push(o);
+    salaryMonth = o.month;
+    save(); closeModal(); render();
+  };
+  const del = document.getElementById("salDel");
+  if (del) del.onclick = () => { state.salaries = state.salaries.filter((x) => x.id !== id); save(); closeModal(); render(); };
+}
+// Crée la facture de charge correspondant à un bulletin (une seule fois).
+function salaryGenerate(sal) {
+  if (sal.invoiceId && state.invoices.some((v) => v.id === sal.invoiceId)) return false;
+  if (!state.categories.some((c) => c.name === "Salaires")) state.categories.push({ id: uid(), name: "Salaires", nature: "charge", sortIndex: state.categories.length });
+  const inv = {
+    id: uid(), title: `Salaire ${monthLabel(sal.month)} — ${salName(sal)}`, reference: "", direction: "depense",
+    status: sal.status === "paye" ? "payee" : "aPayer", amount: salTotal(sal), vatRate: 0,
+    startDate: (sal.month || new Date().toISOString().slice(0, 7)) + "-01", hasDueDate: false, dueDate: "",
+    paymentDate: sal.status === "paye" ? (sal.paymentDate || (sal.month + "-01")) : "",
+    companyId: sal.companyId || null, contactId: sal.contactId || null, categoryName: "Salaires",
+    payMode: "compte", accountId: sal.accountId || null, associateId: null, salaryId: sal.id
+  };
+  state.invoices.push(inv); sal.invoiceId = inv.id;
+  return true;
 }
 
 // ----------------------------- Tableau de bord -----------------------------
@@ -1144,7 +1377,7 @@ function wire() {
   c.querySelectorAll("[data-add-mission]").forEach((b) => b.onclick = () => { const m = { id: uid(), title: "", statusCode: "aDemarrer", companyId: null, createdAt: Date.now(), entries: [] }; state.missions.push(m); save(); openDetail("missions", m.id); });
   c.querySelectorAll("[data-add-contact]").forEach((b) => b.onclick = () => { const x = { id: uid(), firstName: "", lastName: "", organization: "", jobTitle: "", email: "", phone: "", address: "", linkedIn: "", category: "client", notes: "", companyId: null }; state.contacts.push(x); save(); openDetail("contacts", x.id); });
   c.querySelectorAll("[data-add-company]").forEach((b) => b.onclick = () => { const x = { id: uid(), name: "", legalForm: "", role: "filiale", notes: "", initialCashBalance: 0, cashBalanceDate: todayISO(), activities: [] }; state.companies.push(x); save(); openDetail("groupe", x.id); });
-  c.querySelectorAll("[data-add-invoice]").forEach((b) => b.onclick = () => { const x = { id: uid(), title: "", reference: "", direction: "recette", status: "aEmettre", amount: 0, vatRate: 20, startDate: todayISO(), hasDueDate: false, dueDate: "", paymentDate: "", companyId: null, contactId: null, categoryName: "" }; state.invoices.push(x); save(); openDetail("finances", x.id); });
+  c.querySelectorAll("[data-add-invoice]").forEach((b) => b.onclick = () => { const x = { id: uid(), title: "", reference: "", direction: "recette", status: "aEmettre", amount: 0, vatRate: 20, startDate: todayISO(), hasDueDate: false, dueDate: "", paymentDate: "", companyId: null, contactId: null, categoryName: "", payMode: "compte", accountId: null, associateId: null }; state.invoices.push(x); save(); openDetail("finances", x.id); });
 
   // suppressions
   c.querySelectorAll("[data-del-mission]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette mission ?")) { state.missions = state.missions.filter((m) => m.id !== b.dataset.delMission); save(); go("missions"); } });
@@ -1159,6 +1392,38 @@ function wire() {
 
   // onglets Finances
   c.querySelectorAll("[data-ftab]").forEach((b) => b.onclick = () => { financeTab = b.dataset.ftab; render(); });
+
+  // comptes bancaires (fiche société)
+  c.querySelectorAll("[data-add-acc]").forEach((b) => b.onclick = () => { state.accounts.push({ id: uid(), companyId: b.dataset.addAcc, name: "", initialBalance: 0, balanceDate: todayISO() }); save(); render(); });
+  c.querySelectorAll("[data-del-acc]").forEach((b) => b.onclick = () => {
+    const id = b.dataset.delAcc, used = state.invoices.filter((v) => v.accountId === id).length;
+    if (!confirm(`Supprimer ce compte ?${used ? `\n${used} facture(s) y sont rattachées : elles repasseront « compte non précisé ».` : ""}`)) return;
+    if (used) state.invoices.forEach((v) => { if (v.accountId === id) v.accountId = null; });
+    state.accounts = state.accounts.filter((a) => a.id !== id); save(); render();
+  });
+  c.querySelectorAll("[data-accfield]").forEach((el) => { const h = () => { const a = state.accounts.find((x) => x.id === el.dataset.acc); if (!a) return; a[el.dataset.accfield] = el.type === "number" ? (parseFloat(el.value) || 0) : el.value; save(); if (el.type === "number") render(); }; el.addEventListener("change", h); el.addEventListener("blur", h); });
+
+  // règlement d'une facture
+  c.querySelectorAll("[data-pay-mode]").forEach((sel) => sel.onchange = () => { const v = state.invoices.find((x) => x.id === sel.dataset.payMode); if (!v) return; v.payMode = sel.value; if (v.payMode === "associe") v.accountId = null; else v.associateId = null; save(); render(); });
+  c.querySelectorAll("[data-pay-account]").forEach((sel) => sel.onchange = () => { const v = state.invoices.find((x) => x.id === sel.dataset.payAccount); if (v) { v.accountId = sel.value || null; save(); render(); } });
+  c.querySelectorAll("[data-pay-assoc]").forEach((sel) => sel.onchange = () => { const v = state.invoices.find((x) => x.id === sel.dataset.payAssoc); if (v) { v.associateId = sel.value || null; save(); render(); } });
+
+  // compte courant d'associé
+  c.querySelectorAll("[data-add-cca]").forEach((b) => b.onclick = () => ccaEditor(null, b.dataset.addCca));
+
+  // salaires
+  const salMonth = c.querySelector("#salMonth"); if (salMonth) salMonth.onchange = () => { salaryMonth = salMonth.value; render(); };
+  const shiftMonth = (delta) => { const cur = salaryMonth || (state.salaries.map((s) => s.month).sort().reverse()[0]) || new Date().toISOString().slice(0, 7); const d = new Date(cur + "-01T12:00:00"); d.setMonth(d.getMonth() + delta); salaryMonth = d.toISOString().slice(0, 7); render(); };
+  const sp = c.querySelector("[data-sal-month-prev]"); if (sp) sp.onclick = () => shiftMonth(-1);
+  const sn = c.querySelector("[data-sal-month-next]"); if (sn) sn.onclick = () => shiftMonth(1);
+  const addSal = c.querySelector("[data-add-sal]"); if (addSal) addSal.onclick = () => salaryEditor(null);
+  c.querySelectorAll("[data-edit-sal]").forEach((b) => b.onclick = () => salaryEditor(b.dataset.editSal));
+  const genSal = c.querySelector("[data-sal-generate]");
+  if (genSal) genSal.onclick = () => {
+    const month = salaryMonth || (state.salaries.map((s) => s.month).sort().reverse()[0]);
+    let n = 0; state.salaries.filter((s) => s.month === month).forEach((s) => { if (salaryGenerate(s)) n++; });
+    save(); render(); toast(n ? `${n} écriture(s) générée(s).` : "Rien à générer.");
+  };
 
   // catégories
   c.querySelectorAll("[data-add-cat]").forEach((b) => b.onclick = () => { ensureCatIds(); state.categories.push({ id: uid(), name: "", nature: b.dataset.addCat, sortIndex: state.categories.length }); save(); render(); });
@@ -1401,12 +1666,17 @@ function importJSON(text) {
   (data.categories || []).forEach((c) => { if (c.name && !state.categories.some((x) => x.name === c.name)) state.categories.push({ name: c.name, nature: c.nature === "produit" ? "produit" : "charge", sortIndex: Number(c.sortIndex) || 0 }); });
   (data.contacts || []).forEach((c) => state.contacts.push({ id: uid(), firstName: c.firstName || "", lastName: c.lastName || "", organization: c.organization || "", jobTitle: c.jobTitle || "", email: c.email || "", phone: c.phone || "", address: c.address || "", linkedIn: c.linkedIn || "", category: (CONTACT_CATS.some((x) => x.code === c.category) ? c.category : "client"), notes: c.notes || "", companyId: compByName[c.companyName] || null }));
   const contactByName = {}; state.contacts.forEach((c) => { contactByName[contactName(c)] = c.id; });
-  (data.invoices || []).forEach((v) => state.invoices.push({ id: uid(), title: v.title || "", reference: v.reference || "", direction: v.direction === "depense" ? "depense" : "recette", status: (INV_STATUSES.some((x) => x.code === v.status) ? v.status : "aEmettre"), amount: Number(v.amount) || 0, vatRate: v.vatRate == null ? 20 : Number(v.vatRate), startDate: (v.startDate || "").slice(0, 10) || todayISO(), hasDueDate: !!v.hasDueDate, dueDate: (v.dueDate || "").slice(0, 10), paymentDate: (v.paymentDate || "").slice(0, 10), companyId: compByName[v.companyName] || null, contactId: contactByName[v.contactName] || null, categoryName: v.categoryName || "" }));
+  (data.invoices || []).forEach((v) => state.invoices.push({ id: uid(), title: v.title || "", reference: v.reference || "", direction: v.direction === "depense" ? "depense" : "recette", status: (INV_STATUSES.some((x) => x.code === v.status) ? v.status : "aEmettre"), amount: Number(v.amount) || 0, vatRate: v.vatRate == null ? 20 : Number(v.vatRate), startDate: (v.startDate || "").slice(0, 10) || todayISO(), hasDueDate: !!v.hasDueDate, dueDate: (v.dueDate || "").slice(0, 10), paymentDate: (v.paymentDate || "").slice(0, 10), companyId: compByName[v.companyName] || null, contactId: contactByName[v.contactName] || null, categoryName: v.categoryName || "", payMode: v.payMode === "associe" ? "associe" : "compte", accountId: null, associateId: contactByName[v.associateName] || null }));
   const missionByTitle = {};
   (data.missions || []).forEach((m) => { const nm = { id: uid(), title: m.title || "", statusCode: normStatus(m.statusCode || m.status), companyId: compByName[m.companyName] || null, createdAt: Date.now(), entries: (m.entries || []).map((e) => ({ id: uid(), kind: normKind(e.kind), title: e.title || "", content: e.content || "", date: (e.date || "").slice(0, 10) || todayISO(), url: e.url || e.urlString || "", accumulatedSeconds: Number(e.accumulatedSeconds) || 0, timerStartedAt: null, createdAt: Date.now() })) }; state.missions.push(nm); if (nm.title) missionByTitle[nm.title] = nm.id; });
   (data.tasks || []).forEach((t) => state.tasks.push({ id: uid(), title: t.title || "", status: (TASK_STATUSES.some((s) => s.code === t.status) ? t.status : "aFaire"), missionId: missionByTitle[t.missionTitle] || null, dueDate: (t.dueDate || "").slice(0, 10), createdAt: Date.now() }));
   (data.actions || []).forEach((a) => state.actions.push({ id: uid(), title: a.title || "", projectName: a.projectName || "", missionId: missionByTitle[a.missionTitle] || null, request: a.request || "", contactId: null, recipientName: a.recipientName || "", recipientEmail: a.recipientEmail || "", dueDate: (a.dueDate || "").slice(0, 10), reminderDaily: a.reminderDaily !== false, closed: !!a.closed, closedAt: a.closedAt || null, createdAt: Date.now() }));
   (data.rendezvous || []).forEach((r) => state.rendezvous.push({ id: uid(), title: r.title || "", date: (r.date || "").slice(0, 10), time: r.time || "", location: r.location || "", contactId: null, withName: r.withName || "", missionId: missionByTitle[r.missionTitle] || null, notes: r.notes || "", createdAt: Date.now() }));
+  const accByKey = {};
+  (data.accounts || []).forEach((a) => { const na = { id: uid(), companyId: compByName[a.companyName] || null, name: a.name || "", initialBalance: Number(a.initialBalance) || 0, balanceDate: (a.balanceDate || "").slice(0, 10) || todayISO() }; state.accounts.push(na); if (na.name) accByKey[(a.companyName || "") + "|" + na.name] = na.id; });
+  const assoByName = {}; state.contacts.forEach((c) => { assoByName[contactName(c)] = c.id; });
+  (data.ccaMovements || []).forEach((m) => state.ccaMovements.push({ id: uid(), date: (m.date || "").slice(0, 10) || todayISO(), associateId: assoByName[m.associateName] || null, companyId: compByName[m.companyName] || null, kind: ["apport", "remboursement", "autre"].indexOf(m.kind) > -1 ? m.kind : "apport", amount: Math.abs(Number(m.amount) || 0), notes: m.notes || "" }));
+  (data.salaries || []).forEach((s) => state.salaries.push({ id: uid(), contactId: assoByName[s.contactName] || null, name: s.name || "", companyId: compByName[s.companyName] || null, month: (s.month || "").slice(0, 7) || new Date().toISOString().slice(0, 7), gross: Number(s.gross) || 0, charges: Number(s.charges) || 0, net: Number(s.net) || 0, status: s.status === "paye" ? "paye" : "aPayer", paymentDate: (s.paymentDate || "").slice(0, 10), accountId: null, notes: s.notes || "", invoiceId: null }));
   (data.slots || []).forEach((s) => state.slots.push({ id: uid(), date: (s.date || "").slice(0, 10) || todayISO(), start: clampStart(snap(Number(s.start) || DAY_START)), duration: Math.max(MIN_DUR, snap(Number(s.duration) || DEFAULT_DUR)), title: s.title || "Créneau", taskId: null, missionId: missionByTitle[s.missionTitle] || null, notes: s.notes || "", createdAt: Date.now() }));
   (data.recurrences || []).forEach((r) => state.recurrences.push({ id: uid(), kind: r.kind === "task" ? "task" : "invoice", active: r.active !== false, title: r.title || "", frequency: (FREQS.some((f) => f.code === r.frequency) ? r.frequency : "mensuelle"), anchorDate: (r.anchorDate || "").slice(0, 10) || todayISO(), lastGenerated: (r.lastGenerated || "").slice(0, 10) || null, direction: r.direction === "recette" ? "recette" : "depense", amount: Number(r.amount) || 0, vatRate: r.vatRate == null ? 20 : Number(r.vatRate), categoryName: r.categoryName || "", companyId: compByName[r.companyName] || null, missionId: missionByTitle[r.missionTitle] || null }));
 
