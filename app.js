@@ -130,6 +130,35 @@ function render() {
   content.innerHTML = sec.fn();
   wire();
 }
+// Compteur affiché à droite de chaque entrée du menu (null = rien).
+function navCount(id) {
+  const today = todayISO();
+  if (id === "relances") {
+    if (!mailData) return null;
+    const n = (mailData.unread || []).length + (mailData.relance || []).length + (mailData.nouveau || []).length + (mailData.rdvPrep || []).length;
+    return n || null;
+  }
+  if (id === "missions") return state.missions.filter((m) => (m.statusCode || "aDemarrer") !== "terminee").length || null;
+  if (id === "tasks") return state.tasks.filter((t) => (t.status || "aFaire") !== "termine").length || null;
+  if (id === "actions") return state.actions.filter((a) => !a.closed).length || null;
+  if (id === "rendezvous") return state.rendezvous.filter((r) => (r.date || "9999") >= today).length || null;
+  if (id === "planning") return state.slots.filter((s) => s.date === today).length || null;
+  if (id === "time") { const t = weekWorkedSeconds(); return t > 0 ? fmtDurationShort(t) : null; }
+  return null;
+}
+function weekWorkedSeconds() {
+  const { start, end } = weekInterval(new Date());
+  let total = 0;
+  state.missions.forEach((m) => (m.entries || []).forEach((e) => {
+    const d = e.date ? new Date(e.date + "T12:00:00") : null;
+    if (d && d >= start && d < end) total += entryElapsed(e);
+  }));
+  return total;
+}
+function fmtDurationShort(sec) {
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return h > 0 ? `${h}h${m > 0 ? String(m).padStart(2, "0") : ""}` : `${m}min`;
+}
 function renderNav() {
   const sidebar = document.getElementById("sidebar");
   sidebar.querySelectorAll(".nav-item").forEach((n) => n.remove());
@@ -137,7 +166,8 @@ function renderNav() {
   SECTIONS.forEach((s) => {
     const b = document.createElement("button");
     b.className = "nav-item" + (s.id === view.section ? " active" : "");
-    b.innerHTML = `<span class="ic">${s.ic}</span> ${esc(s.label)}`;
+    const n = navCount(s.id);
+    b.innerHTML = `<span class="ic">${s.ic}</span> <span class="nav-lbl">${esc(s.label)}</span>${n != null ? `<span class="nav-count" id="navCount-${s.id}">${esc(String(n))}</span>` : ""}`;
     b.onclick = () => go(s.id);
     sidebar.insertBefore(b, driveBar);
   });
@@ -146,7 +176,8 @@ function renderNav() {
   SECTIONS.forEach((s) => {
     const b = document.createElement("button");
     b.className = s.id === view.section ? "active" : "";
-    b.innerHTML = `<span class="ic">${s.ic}</span>${esc(s.label)}`;
+    const n = navCount(s.id);
+    b.innerHTML = `<span class="ic">${s.ic}${n != null ? `<span class="tab-count">${esc(String(n))}</span>` : ""}</span>${esc(s.label)}`;
     b.onclick = () => go(s.id);
     tabbar.appendChild(b);
   });
@@ -1610,6 +1641,11 @@ setInterval(() => {
     for (const m of state.missions) { const e = (m.entries || []).find((x) => x.id === id); if (e && e.timerStartedAt) span.textContent = fmtDuration(entryElapsed(e)); }
   });
   document.querySelectorAll("[data-total]").forEach((span) => { const m = findMission(span.dataset.total); if (m && (m.entries || []).some((e) => e.timerStartedAt)) span.textContent = fmtDuration(missionTotal(m)); });
+  // compteur « Temps » du menu : suit le chrono en cours
+  if (state.missions.some((m) => (m.entries || []).some((e) => e.timerStartedAt))) {
+    const el = document.getElementById("navCount-time");
+    if (el) el.textContent = fmtDurationShort(weekWorkedSeconds());
+  }
 }, 1000);
 
 // ----------------------------- Installation (PWA) -----------------------------
