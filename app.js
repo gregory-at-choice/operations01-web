@@ -169,8 +169,8 @@ function render() {
 function navCount(id) {
   const today = todayISO();
   if (id === "relances") {
-    if (!mailData) return null;
-    const n = (mailData.unread || []).length + (mailData.relance || []).length + (mailData.nouveau || []).length + (mailData.rdvPrep || []).length;
+    let n = missingReceipts().length;
+    if (mailData) n += (mailData.unread || []).length + (mailData.relance || []).length + (mailData.nouveau || []).length + (mailData.rdvPrep || []).length;
     return n || null;
   }
   if (id === "missions") return state.missions.filter((m) => (m.statusCode || "aDemarrer") !== "terminee").length || null;
@@ -264,19 +264,34 @@ function mailRow(it, extra) {
     <div class="grow"><div class="r-title">${esc(it.subject || "(sans objet)")}</div>
       <div class="r-sub">${esc(it.name || it.from || "")}${info ? ` · ${esc(info)}` : ""}</div></div>${link}</div>`;
 }
+// Bloc « Justificatifs manquants » (données locales, toujours à jour).
+function receiptsBlock() {
+  const miss = missingReceipts();
+  if (!miss.length) return `<div class="section-h">🧾 Justificatifs manquants <span class="muted">(0)</span></div>
+    <div class="muted" style="padding:4px 2px;font-size:13px">Toutes les écritures ont un justificatif. 👌</div>`;
+  const rows = miss.slice(0, 60).map((v) => `<div class="row" data-open-invoice="${v.id}" style="border-left-color:#d23c3c">
+    <div class="grow"><div class="r-title">${esc(v.title || "Écriture sans intitulé")}</div>
+      <div class="r-sub">${[fmtDate(v.startDate), euros(v.amount), esc(companyName(v.companyId)), v.direction === "recette" ? "Recette" : "Dépense"].filter(Boolean).join(" · ")}</div></div>
+    <span class="muted">›</span></div>`).join("");
+  return `<div class="section-h">🧾 Justificatifs manquants <span class="muted">(${miss.length})</span></div>
+    <div class="muted" style="font-size:12px;margin-bottom:6px">Ouvre l'écriture pour coller le lien du justificatif, ou coche « Aucun justificatif nécessaire ».</div>
+    <div class="list">${rows}</div>
+    ${miss.length > 60 ? `<div class="muted" style="font-size:12px;margin-top:6px">… et ${miss.length - 60} autre(s).</div>` : ""}`;
+}
 function renderRelances() {
-  if (!(window.DriveSync && DriveSync.isConnected()))
-    return `<div class="page-title">Relances</div><div class="center-empty">Connecte-toi à Google Drive (menu de gauche) pour activer le suivi des mails.</div>`;
   const head = `<div class="toolbar"><div class="page-title grow" style="margin:0">Relances</div>
       <button class="btn secondary small" data-mail-refresh>${mailLoading ? "…" : "↻ Rafraîchir"}</button></div>`;
+  const receipts = receiptsBlock();
+  if (!(window.DriveSync && DriveSync.isConnected()))
+    return head + receipts + `<div class="section-h">✉️ Suivi des mails</div><div class="center-empty">Connecte-toi à Google Drive (menu de gauche) pour activer le suivi des mails.</div>`;
   const m = mailData;
-  if (!m) return head + (mailLoading
+  if (!m) return head + receipts + `<div class="section-h">✉️ Suivi des mails</div>` + (mailLoading
     ? '<div class="center-empty">Chargement…</div>'
     : `<div class="center-empty">Aucune analyse disponible.<br>Installe le script « Mails » (voir la marche à suivre) : il analysera ta boîte Gmail chaque heure et remplira cet onglet.</div>`);
   const grp = (title, ic, arr, extra) => `<div class="section-h">${ic} ${title} <span class="muted">(${(arr || []).length})</span></div>
     <div class="list">${(arr || []).length ? arr.map((x) => mailRow(x, extra)).join("") : '<div class="muted" style="padding:4px 2px">—</div>'}</div>`;
   const when = m.generatedAt ? `Dernière analyse : ${new Date(m.generatedAt).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })}` : "";
-  return head + `<div class="muted" style="font-size:12px;margin-bottom:8px">${esc(when)}</div>`
+  return head + receipts + `<div class="muted" style="font-size:12px;margin:14px 0 8px">${esc(when)}</div>`
     + grp("Non lus de contacts", "📩", m.unread)
     + grp("À relancer", "⏰", m.relance, (it) => `sans réponse depuis ${it.jours != null ? it.jours : "?"} j`)
     + grp("Nouveaux expéditeurs", "🆕", m.nouveau)
@@ -445,7 +460,13 @@ function renderFinances() {
   else body = financeTresorerie();
   return `<div class="page-title">Finances</div><div class="chip-row" style="margin-bottom:16px">${tabs}</div>${body}`;
 }
-let factureFilter = { q: "", companyId: "", status: "", from: "", to: "" };
+// Écriture dont le justificatif manque (et qui n'est pas marquée « sans justificatif »).
+const receiptMissing = (v) => !v.receiptUrl && !v.noReceipt;
+function missingReceipts() {
+  return state.invoices.filter(receiptMissing)
+    .sort((a, b) => (a.startDate || "").localeCompare(b.startDate || ""));
+}
+let factureFilter = { q: "", companyId: "", status: "", from: "", to: "", noReceipt: false };
 function financeFactures() {
   const f = factureFilter;
   let items = [...state.invoices];
@@ -454,15 +475,21 @@ function financeFactures() {
   if (f.status) items = items.filter((v) => v.status === f.status);
   if (f.from) items = items.filter((v) => (v.startDate || "") >= f.from);
   if (f.to) items = items.filter((v) => (v.startDate || "") <= f.to);
+  if (f.noReceipt) items = items.filter(receiptMissing);
   items.sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
   const totalHT = items.reduce((t, v) => t + (v.amount || 0), 0);
   const compOpts = ['<option value="">Toutes sociétés</option>'].concat(state.companies.map((c) => `<option value="${c.id}" ${c.id === f.companyId ? "selected" : ""}>${esc(c.name || "Sans nom")}</option>`)).join("");
   const stOpts = ['<option value="">Tous statuts</option>'].concat(INV_STATUSES.map((s) => `<option value="${s.code}" ${s.code === f.status ? "selected" : ""}>${s.label}</option>`)).join("");
-  const active = f.q || f.companyId || f.status || f.from || f.to;
-  const rows = items.map((v) => `<div class="row" data-open-invoice="${v.id}" style="border-left-color:${v.direction === "recette" ? "var(--finance)" : "var(--alert)"}">
-    <div class="grow"><div class="r-title">${esc(v.title || "Nouvelle facture")}</div>
+  const active = f.q || f.companyId || f.status || f.from || f.to || f.noReceipt;
+  const nbMissing = missingReceipts().length;
+  const rows = items.map((v) => {
+    const miss = receiptMissing(v);
+    const mark = miss ? '<span title="Justificatif manquant" style="color:#d23c3c">⚠️</span>' : (v.receiptUrl ? '<span title="Justificatif présent" style="color:var(--positive)">📎</span>' : "");
+    return `<div class="row" data-open-invoice="${v.id}" style="border-left-color:${v.direction === "recette" ? "var(--finance)" : "var(--alert)"}">
+    <div class="grow"><div class="r-title">${mark} ${esc(v.title || "Nouvelle facture")}</div>
       <div class="r-sub">${[fmtDate(v.startDate), esc(companyName(v.companyId)), v.categoryName ? esc(v.categoryName) : null].filter(Boolean).join(" · ")}</div></div>
-    <div style="text-align:right"><div>${euros(v.amount)}</div><span class="badge aDemarrer" style="font-size:10px">${invStatusLabel(v.status)}</span></div></div>`).join("");
+    <div style="text-align:right"><div>${euros(v.amount)}</div><span class="badge aDemarrer" style="font-size:10px">${invStatusLabel(v.status)}</span></div></div>`;
+  }).join("");
   return `<div class="toolbar"><span class="grow"></span>
       <button class="btn secondary small" data-export-factures>⬇ CSV</button>
       <button class="btn" data-add-invoice>+ Nouvelle facture</button></div>
@@ -472,6 +499,7 @@ function financeFactures() {
       <select id="factureStatus">${stOpts}</select>
       <input type="date" id="factureFrom" value="${esc(f.from)}" title="Depuis"/>
       <input type="date" id="factureTo" value="${esc(f.to)}" title="Jusqu'à"/>
+      <button class="chip ${f.noReceipt ? "active" : ""}" data-facture-noreceipt>⚠️ Sans justificatif${nbMissing ? ` (${nbMissing})` : ""}</button>
       ${active ? '<button class="btn ghost small" data-facture-reset>✕</button>' : ""}
     </div>
     <div class="muted" style="font-size:12px;margin:2px 0 8px">${items.length} facture(s) · Total HT ${euros(totalHT)}</div>
@@ -534,6 +562,17 @@ function renderInvoiceDetail(id) {
     </div>
     <div class="section-h">Règlement</div>
     <div class="card">${invoicePaymentFields(v)}</div>
+    <div class="section-h">Justificatif</div>
+    <div class="card">
+      <label class="field"><span>Lien vers le justificatif (Google Drive, facture PDF…)</span>
+        <input data-bind="invoices|${v.id}|receiptUrl" value="${esc(v.receiptUrl)}" inputmode="url" placeholder="https://drive.google.com/…"/></label>
+      <div class="inline">
+        ${validURL(v.receiptUrl) ? `<a class="btn secondary small" href="${esc(v.receiptUrl)}" target="_blank" rel="noopener">↗ Ouvrir le justificatif</a>` : (v.receiptUrl ? '<span class="muted" style="font-size:12px">Lien invalide.</span>' : "")}
+        <span class="grow"></span>
+        <label class="inline-check" style="margin:0"><input type="checkbox" data-no-receipt="${v.id}" ${v.noReceipt ? "checked" : ""}/> <span style="font-size:12px">Aucun justificatif nécessaire</span></label>
+      </div>
+      ${!v.receiptUrl && !v.noReceipt ? '<div class="muted" style="font-size:12px;margin-top:8px">⚠️ Justificatif manquant : cette écriture apparaît dans les rappels tant que le lien n\'est pas renseigné.</div>' : ""}
+    </div>
     <div style="margin-top:18px"><button class="btn danger small" data-del-invoice="${v.id}">Supprimer la facture</button></div>`;
 }
 
@@ -1377,7 +1416,7 @@ function wire() {
   c.querySelectorAll("[data-add-mission]").forEach((b) => b.onclick = () => { const m = { id: uid(), title: "", statusCode: "aDemarrer", companyId: null, createdAt: Date.now(), entries: [] }; state.missions.push(m); save(); openDetail("missions", m.id); });
   c.querySelectorAll("[data-add-contact]").forEach((b) => b.onclick = () => { const x = { id: uid(), firstName: "", lastName: "", organization: "", jobTitle: "", email: "", phone: "", address: "", linkedIn: "", category: "client", notes: "", companyId: null }; state.contacts.push(x); save(); openDetail("contacts", x.id); });
   c.querySelectorAll("[data-add-company]").forEach((b) => b.onclick = () => { const x = { id: uid(), name: "", legalForm: "", role: "filiale", notes: "", initialCashBalance: 0, cashBalanceDate: todayISO(), activities: [] }; state.companies.push(x); save(); openDetail("groupe", x.id); });
-  c.querySelectorAll("[data-add-invoice]").forEach((b) => b.onclick = () => { const x = { id: uid(), title: "", reference: "", direction: "recette", status: "aEmettre", amount: 0, vatRate: 20, startDate: todayISO(), hasDueDate: false, dueDate: "", paymentDate: "", companyId: null, contactId: null, categoryName: "", payMode: "compte", accountId: null, associateId: null }; state.invoices.push(x); save(); openDetail("finances", x.id); });
+  c.querySelectorAll("[data-add-invoice]").forEach((b) => b.onclick = () => { const x = { id: uid(), title: "", reference: "", direction: "recette", status: "aEmettre", amount: 0, vatRate: 20, startDate: todayISO(), hasDueDate: false, dueDate: "", paymentDate: "", companyId: null, contactId: null, categoryName: "", payMode: "compte", accountId: null, associateId: null, receiptUrl: "", noReceipt: false }; state.invoices.push(x); save(); openDetail("finances", x.id); });
 
   // suppressions
   c.querySelectorAll("[data-del-mission]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette mission ?")) { state.missions = state.missions.filter((m) => m.id !== b.dataset.delMission); save(); go("missions"); } });
@@ -1472,7 +1511,9 @@ function wire() {
   const fSt = c.querySelector("#factureStatus"); if (fSt) fSt.onchange = () => { factureFilter.status = fSt.value; render(); };
   const fFr = c.querySelector("#factureFrom"); if (fFr) fFr.onchange = () => { factureFilter.from = fFr.value; render(); };
   const fTo = c.querySelector("#factureTo"); if (fTo) fTo.onchange = () => { factureFilter.to = fTo.value; render(); };
-  const fRe = c.querySelector("[data-facture-reset]"); if (fRe) fRe.onclick = () => { factureFilter = { q: "", companyId: "", status: "", from: "", to: "" }; render(); };
+  const fNr = c.querySelector("[data-facture-noreceipt]"); if (fNr) fNr.onclick = () => { factureFilter.noReceipt = !factureFilter.noReceipt; render(); };
+  const fRe = c.querySelector("[data-facture-reset]"); if (fRe) fRe.onclick = () => { factureFilter = { q: "", companyId: "", status: "", from: "", to: "", noReceipt: false }; render(); };
+  c.querySelectorAll("[data-no-receipt]").forEach((cb) => cb.onchange = () => { const v = state.invoices.find((x) => x.id === cb.dataset.noReceipt); if (v) { v.noReceipt = cb.checked; save(); render(); } });
 
   // récurrences
   c.querySelectorAll("[data-add-rec]").forEach((b) => b.onclick = () => { state.recurrences.push({ id: uid(), kind: b.dataset.addRec, active: true, title: "", frequency: "mensuelle", anchorDate: todayISO(), lastGenerated: null, direction: "depense", amount: 0, vatRate: 20, categoryName: "", companyId: null, missionId: null }); save(); render(); });
@@ -1666,7 +1707,7 @@ function importJSON(text) {
   (data.categories || []).forEach((c) => { if (c.name && !state.categories.some((x) => x.name === c.name)) state.categories.push({ name: c.name, nature: c.nature === "produit" ? "produit" : "charge", sortIndex: Number(c.sortIndex) || 0 }); });
   (data.contacts || []).forEach((c) => state.contacts.push({ id: uid(), firstName: c.firstName || "", lastName: c.lastName || "", organization: c.organization || "", jobTitle: c.jobTitle || "", email: c.email || "", phone: c.phone || "", address: c.address || "", linkedIn: c.linkedIn || "", category: (CONTACT_CATS.some((x) => x.code === c.category) ? c.category : "client"), notes: c.notes || "", companyId: compByName[c.companyName] || null }));
   const contactByName = {}; state.contacts.forEach((c) => { contactByName[contactName(c)] = c.id; });
-  (data.invoices || []).forEach((v) => state.invoices.push({ id: uid(), title: v.title || "", reference: v.reference || "", direction: v.direction === "depense" ? "depense" : "recette", status: (INV_STATUSES.some((x) => x.code === v.status) ? v.status : "aEmettre"), amount: Number(v.amount) || 0, vatRate: v.vatRate == null ? 20 : Number(v.vatRate), startDate: (v.startDate || "").slice(0, 10) || todayISO(), hasDueDate: !!v.hasDueDate, dueDate: (v.dueDate || "").slice(0, 10), paymentDate: (v.paymentDate || "").slice(0, 10), companyId: compByName[v.companyName] || null, contactId: contactByName[v.contactName] || null, categoryName: v.categoryName || "", payMode: v.payMode === "associe" ? "associe" : "compte", accountId: null, associateId: contactByName[v.associateName] || null }));
+  (data.invoices || []).forEach((v) => state.invoices.push({ id: uid(), title: v.title || "", reference: v.reference || "", direction: v.direction === "depense" ? "depense" : "recette", status: (INV_STATUSES.some((x) => x.code === v.status) ? v.status : "aEmettre"), amount: Number(v.amount) || 0, vatRate: v.vatRate == null ? 20 : Number(v.vatRate), startDate: (v.startDate || "").slice(0, 10) || todayISO(), hasDueDate: !!v.hasDueDate, dueDate: (v.dueDate || "").slice(0, 10), paymentDate: (v.paymentDate || "").slice(0, 10), companyId: compByName[v.companyName] || null, contactId: contactByName[v.contactName] || null, categoryName: v.categoryName || "", payMode: v.payMode === "associe" ? "associe" : "compte", accountId: null, associateId: contactByName[v.associateName] || null, receiptUrl: v.receiptUrl || "", noReceipt: !!v.noReceipt }));
   const missionByTitle = {};
   (data.missions || []).forEach((m) => { const nm = { id: uid(), title: m.title || "", statusCode: normStatus(m.statusCode || m.status), companyId: compByName[m.companyName] || null, createdAt: Date.now(), entries: (m.entries || []).map((e) => ({ id: uid(), kind: normKind(e.kind), title: e.title || "", content: e.content || "", date: (e.date || "").slice(0, 10) || todayISO(), url: e.url || e.urlString || "", accumulatedSeconds: Number(e.accumulatedSeconds) || 0, timerStartedAt: null, createdAt: Date.now() })) }; state.missions.push(nm); if (nm.title) missionByTitle[nm.title] = nm.id; });
   (data.tasks || []).forEach((t) => state.tasks.push({ id: uid(), title: t.title || "", status: (TASK_STATUSES.some((s) => s.code === t.status) ? t.status : "aFaire"), missionId: missionByTitle[t.missionTitle] || null, dueDate: (t.dueDate || "").slice(0, 10), createdAt: Date.now() }));
@@ -1888,10 +1929,10 @@ const csvNum = (v) => (+v || 0).toFixed(2).replace(".", ",");
 function downloadFile(name, content, type) { const blob = new Blob([content], { type }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href); }
 function contactNameById(id) { const c = state.contacts.find((x) => x.id === id); return c ? contactName(c) : ""; }
 function exportFacturesCSV() {
-  const H = ["Date", "Intitulé", "Société", "Catégorie", "Nature", "Sens", "Statut", "Montant HT", "TVA %", "Montant TTC", "Échéance", "Payée le", "Tiers"];
+  const H = ["Date", "Intitulé", "Société", "Catégorie", "Nature", "Sens", "Statut", "Montant HT", "TVA %", "Montant TTC", "Échéance", "Payée le", "Tiers", "Justificatif"];
   const rows = [...state.invoices].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || "")).map((v) => [
     v.startDate || "", v.title || "", companyName(v.companyId), v.categoryName || "", invNature(v), v.direction === "recette" ? "Recette" : "Dépense", invStatusLabel(v.status),
-    csvNum(v.amount), v.vatRate == null ? "" : v.vatRate, csvNum(invTTC(v)), v.dueDate || "", v.paymentDate || "", contactNameById(v.contactId)]);
+    csvNum(v.amount), v.vatRate == null ? "" : v.vatRate, csvNum(invTTC(v)), v.dueDate || "", v.paymentDate || "", contactNameById(v.contactId), v.receiptUrl || (v.noReceipt ? "(non requis)" : "MANQUANT")]);
   const csv = "﻿" + [H, ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
   downloadFile("operations01-factures.csv", csv, "text/csv;charset=utf-8");
 }

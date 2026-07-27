@@ -51,6 +51,67 @@ function envoyerRappelsQuotidiens() {
   }
   envoyerRappelsActions(data);
   envoyerRappelsRendezvous(data);
+  envoyerRappelJustificatifs(data);
+}
+
+/**
+ * Vous envoie la liste des écritures dont le justificatif manque.
+ * Rappel récurrent : tous les JOURS_JUSTIFICATIFS jours (0 = tous les jours).
+ * @param {Object=} data  Données déjà chargées (sinon lues depuis le Drive).
+ */
+var JOURS_JUSTIFICATIFS = 7;   // périodicité du rappel, en jours
+var MAX_JUSTIFICATIFS = 40;    // nombre de lignes détaillées dans l'e-mail
+
+function envoyerRappelJustificatifs(data) {
+  data = data || lireDonnees();
+  if (!data) return;
+
+  var manquants = (data.invoices || []).filter(function (v) {
+    return v && !v.receiptUrl && !v.noReceipt;
+  });
+  if (!manquants.length) { Logger.log("Aucun justificatif manquant."); return; }
+
+  // n'envoyer qu'une fois tous les N jours
+  var props = PropertiesService.getUserProperties();
+  var dernier = props.getProperty("dernierRappelJustificatifs");
+  if (JOURS_JUSTIFICATIFS > 0 && dernier) {
+    var ecart = (Date.now() - Number(dernier)) / 86400000;
+    if (ecart < JOURS_JUSTIFICATIFS) { Logger.log("Rappel justificatifs déjà envoyé il y a " + Math.round(ecart) + " j."); return; }
+  }
+
+  var moi = Session.getActiveUser().getEmail();
+  if (!validerEmail(moi)) return;
+
+  manquants.sort(function (a, b) { return String(a.startDate || "").localeCompare(String(b.startDate || "")); });
+  var total = manquants.reduce(function (t, v) { return t + (Number(v.amount) || 0); }, 0);
+
+  var l = [];
+  l.push("Bonjour,", "");
+  l.push(manquants.length + " écriture(s) n'ont pas de justificatif (total HT : " + total.toFixed(2) + " €).", "");
+  manquants.slice(0, MAX_JUSTIFICATIFS).forEach(function (v) {
+    var soc = nomSociete(data, v.companyId);
+    l.push("• " + (v.startDate || "date ?") + " — " + (v.title || "sans intitulé")
+      + " — " + (Number(v.amount) || 0).toFixed(2) + " €"
+      + (soc ? " — " + soc : "")
+      + " (" + (v.direction === "recette" ? "recette" : "dépense") + ")");
+  });
+  if (manquants.length > MAX_JUSTIFICATIFS) l.push("… et " + (manquants.length - MAX_JUSTIFICATIFS) + " autre(s).");
+  l.push("");
+  l.push("Ajoutez le lien du justificatif dans Operations01 (Finances → la facture → Justificatif),");
+  l.push("ou cochez « Aucun justificatif nécessaire » pour retirer l'écriture de cette liste.");
+  l.push("");
+  l.push("— Rappel automatique Operations01");
+
+  MailApp.sendEmail(moi, "Justificatifs manquants (" + manquants.length + ")", l.join("\n"));
+  props.setProperty("dernierRappelJustificatifs", String(Date.now()));
+  Logger.log(manquants.length + " justificatif(s) manquant(s) signalé(s).");
+}
+
+/** Retrouve le nom d'une société à partir de son identifiant. */
+function nomSociete(data, companyId) {
+  if (!companyId) return "";
+  var c = (data.companies || []).filter(function (x) { return x.id === companyId; })[0];
+  return c ? (c.name || "") : "";
 }
 
 /**
