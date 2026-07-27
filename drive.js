@@ -17,39 +17,75 @@
   const KEEP_BACKUPS = 14;
   const LAST_BACKUP_KEY = "op01_lastBackupDate";
 
+  const SESSION_KEY = "op01_driveSession"; // mémorise qu'on a déjà autorisé l'app
+
   let tokenClient = null;
   let accessToken = null;
+  let tokenExpiry = 0;         // date (ms) d'expiration du jeton, avec marge
+  let tokenPromise = null;     // demande de jeton en cours (évite les doublons)
+  let needsAuth = false;       // vrai si seule une action de l'utilisateur peut débloquer
   let fileId = null;
   let lastModifiedTime = null; // modifiedTime Drive connu après notre dernière lecture/écriture
   let pushTimer = null;
+  let pending = null;          // dernier état à écrire (conservé tant que non écrit)
+  let retries = 0;
   const listeners = [];
   const setStatus = (s) => listeners.forEach((fn) => fn(s));
 
   function ready() {
     return !!cfg.googleClientId && window.google && google.accounts && google.accounts.oauth2;
   }
+  const hasSession = () => { try { return localStorage.getItem(SESSION_KEY) === "1"; } catch (e) { return false; } }
+  const rememberSession = () => { try { localStorage.setItem(SESSION_KEY, "1"); } catch (e) {} };
 
-  function getToken() {
-    return new Promise((resolve, reject) => {
-      if (!ready()) { reject(new Error("Google Drive indisponible (identifiant manquant ou script Google bloqué).")); return; }
+  // Demande un jeton. interactive = true autorise l'ouverture d'une fenêtre Google.
+  // En mode silencieux (prompt vide), Google renouvelle sans rien afficher si
+  // l'utilisateur a déjà autorisé l'app et qu'une session Google est active.
+  function getToken(interactive) {
+    if (tokenPromise) return tokenPromise;
+    tokenPromise = new Promise((resolve, reject) => {
+      if (!ready()) { tokenPromise = null; reject(new Error("Google Drive indisponible (identifiant manquant ou script Google bloqué).")); return; }
       if (!tokenClient) {
         tokenClient = google.accounts.oauth2.initTokenClient({
           client_id: cfg.googleClientId, scope: SCOPE, callback: () => {}
         });
       }
+      const done = (err, tok) => { tokenPromise = null; if (err) reject(err); else resolve(tok); };
       tokenClient.callback = (resp) => {
-        if (resp && resp.access_token) { accessToken = resp.access_token; resolve(accessToken); }
-        else reject(new Error("Autorisation Google refusée."));
+        if (resp && resp.access_token) {
+          accessToken = resp.access_token;
+          // marge de 2 min pour renouveler avant l'expiration réelle
+          tokenExpiry = Date.now() + Math.max(60, (Number(resp.expires_in) || 3600) - 120) * 1000;
+          needsAuth = false; rememberSession();
+          done(null, accessToken);
+        } else { if (interactive) needsAuth = true; done(new Error("Autorisation Google refusée.")); }
       };
-      tokenClient.requestAccessToken({ prompt: accessToken ? "" : "consent" });
+      tokenClient.error_callback = () => { if (!interactive) needsAuth = true; done(new Error("Renouvellement silencieux impossible.")); };
+      try { tokenClient.requestAccessToken({ prompt: interactive && !hasSession() ? "consent" : "" }); }
+      catch (e) { done(e); }
     });
+    return tokenPromise;
   }
 
-  async function api(url, opts) {
+  // Garantit un jeton valide (renouvellement silencieux si expiré/proche de l'expiration).
+  async function ensureToken(interactive) {
+    if (accessToken && Date.now() < tokenExpiry) return accessToken;
+    if (!interactive && !hasSession()) throw new Error("Non connecté.");
+    return await getToken(!!interactive);
+  }
+
+  async function api(url, opts, retried) {
     const o = opts || {};
+    await ensureToken(false);
     const r = await fetch(url, Object.assign({}, o, {
       headers: Object.assign({ Authorization: "Bearer " + accessToken }, o.headers || {})
     }));
+    if ((r.status === 401 || r.status === 403) && !retried) {
+      // jeton révoqué ou expiré côté Google : on en redemande un et on rejoue une fois
+      accessToken = null; tokenExpiry = 0;
+      await getToken(false);
+      return api(url, opts, true);
+    }
     if (!r.ok) throw new Error("Drive API " + r.status);
     return r;
   }
@@ -167,9 +203,9 @@
   }
 
   // Se connecter : demande le jeton, trouve (ou pas) le fichier et renvoie l'état distant (ou null).
-  async function connect() {
-    setStatus("connexion…");
-    await getToken();
+  async function connect(silent) {
+    setStatus(silent ? "reconnexion…" : "connexion…");
+    await ensureToken(!silent);
     const f = await findFile();
     fileId = f ? f.id : null;
     lastModifiedTime = f ? f.modifiedTime : null;
@@ -179,42 +215,81 @@
     return remote;
   }
 
-  // Enregistrer l'état sur Drive (différé de 0,8 s pour regrouper les saisies).
-  function push(state) {
-    if (!accessToken) return;
-    clearTimeout(pushTimer);
-    pushTimer = setTimeout(async () => {
-      try {
-        setStatus("sauvegarde…");
-        const content = JSON.stringify(state);
-        if (!fileId) {
-          const f = await createNamed(FILE_NAME, content);
-          fileId = f.id; lastModifiedTime = f.modifiedTime;
-        } else {
-          // Détection de conflit : le fichier distant a-t-il changé depuis notre dernière synchro ?
-          try {
-            const meta = await getMeta(fileId);
-            if (lastModifiedTime && meta.modifiedTime && meta.modifiedTime !== lastModifiedTime) {
-              // Un autre appareil a écrit : on sauvegarde la version distante avant d'écraser.
-              setStatus("conflit détecté — sauvegarde du distant…");
-              try { const remoteContent = await download(fileId); await createNamed(CONFLICT_PREFIX + stampStr() + ".json", remoteContent); } catch (e) {}
-            }
-          } catch (e) {}
-          const res = await updateFile(fileId, content);
-          lastModifiedTime = res && res.modifiedTime ? res.modifiedTime : lastModifiedTime;
-        }
-        dailyBackup(content);
-        setStatus("synchronisé");
-      } catch (e) { setStatus("erreur de synchronisation"); }
-    }, 800);
+  // Reconnexion automatique au démarrage : silencieuse, sans fenêtre Google.
+  // Renvoie l'état distant, ou null si l'utilisateur ne s'est jamais connecté.
+  async function autoConnect() {
+    if (!hasSession() || !ready()) return null;
+    try { return await connect(true); }
+    catch (e) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
   }
+
+  // Enregistrer l'état sur Drive. L'état est mis en file : en cas d'échec
+  // (jeton expiré, réseau coupé), on retente automatiquement avec un délai
+  // croissant — rien n'est perdu, plus besoin de relancer l'application.
+  function push(state) {
+    pending = state;
+    schedule(800);
+  }
+  function schedule(delay) {
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(flush, delay);
+  }
+  async function flush() {
+    if (!pending) return;
+    if (!hasSession()) return;
+    const content = JSON.stringify(pending);
+    try {
+      setStatus("sauvegarde…");
+      if (!fileId) {
+        const f = await findFile();                       // le fichier existe peut-être déjà
+        if (f) { fileId = f.id; lastModifiedTime = f.modifiedTime; }
+      }
+      if (!fileId) {
+        const f = await createNamed(FILE_NAME, content);
+        fileId = f.id; lastModifiedTime = f.modifiedTime;
+      } else {
+        // Détection de conflit : le fichier distant a-t-il changé depuis notre dernière synchro ?
+        try {
+          const meta = await getMeta(fileId);
+          if (lastModifiedTime && meta.modifiedTime && meta.modifiedTime !== lastModifiedTime) {
+            // Un autre appareil a écrit : on sauvegarde la version distante avant d'écraser.
+            setStatus("conflit détecté — sauvegarde du distant…");
+            try { const remoteContent = await download(fileId); await createNamed(CONFLICT_PREFIX + stampStr() + ".json", remoteContent); } catch (e) {}
+          }
+        } catch (e) {}
+        const res = await updateFile(fileId, content);
+        lastModifiedTime = res && res.modifiedTime ? res.modifiedTime : lastModifiedTime;
+      }
+      if (pending && JSON.stringify(pending) === content) pending = null; // rien de neuf entre-temps
+      retries = 0;
+      dailyBackup(content);
+      setStatus(pending ? "sauvegarde…" : "synchronisé");
+      if (pending) schedule(300);
+    } catch (e) {
+      retries++;
+      const delay = Math.min(60000, 2000 * Math.pow(2, Math.min(retries, 5)));
+      setStatus(needsAuth ? "reconnexion nécessaire" : (navigator.onLine === false ? "hors ligne — reprise auto" : "reprise dans " + Math.round(delay / 1000) + " s"));
+      schedule(delay);
+    }
+  }
+  // Reprise immédiate quand la connexion revient ou quand on rouvre l'app.
+  window.addEventListener("online", () => { retries = 0; if (pending) schedule(200); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !hasSession()) return;
+    ensureToken(false).then(() => { if (pending) { retries = 0; schedule(200); } }).catch(() => {});
+  });
 
   window.DriveSync = {
     ready,
     onStatus: (fn) => listeners.push(fn),
     connect,
     push,
-    isConnected: () => !!accessToken,
+    // « connecté » au sens de l'app : une session existe, même si le jeton
+    // est momentanément expiré (il sera renouvelé silencieusement).
+    isConnected: () => !!accessToken || hasSession(),
+    needsAuth: () => needsAuth,
+    hasPending: () => !!pending,
+    autoConnect,
     listBackups,
     restore,
     backupNow,

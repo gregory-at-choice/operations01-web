@@ -1368,9 +1368,12 @@ function renderDriveBar() {
   const cfgOk = window.OPERATIONS01_CONFIG && OPERATIONS01_CONFIG.googleClientId;
   if (!cfgOk) { el.innerHTML = `<div class="muted" style="font-size:11px;line-height:1.4">Google Drive non configuré.<br>Voir README → « Google Drive ».</div>`; return; }
   if (window.DriveSync && DriveSync.isConnected()) {
-    el.innerHTML = `<div style="font-size:12px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">synchronisé</span></div>
+    const reauth = DriveSync.needsAuth();
+    el.innerHTML = `<div style="font-size:12px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">${reauth ? "reconnexion nécessaire" : "synchronisé"}</span></div>
+      ${reauth ? '<button class="btn small" id="driveReconnect" style="width:100%;margin-top:6px">Reconnecter</button>' : ""}
       <button class="btn ghost small" id="driveBackups" style="width:100%;margin-top:6px">🛟 Sauvegardes</button>`;
     const b = document.getElementById("driveBackups"); if (b) b.onclick = openBackups;
+    const rb = document.getElementById("driveReconnect"); if (rb) rb.onclick = connectDrive;
   }
   else { el.innerHTML = `<button class="btn secondary small" id="driveConnect" style="width:100%">Se connecter à Google Drive</button>`; const b = document.getElementById("driveConnect"); if (b) b.onclick = connectDrive; }
 }
@@ -1593,4 +1596,25 @@ document.getElementById("installClose").onclick = () => { document.getElementByI
 if (generateRecurrences() > 0) save();
 render();
 renderDriveBar();
-if (window.DriveSync) DriveSync.onStatus((s) => { const el = document.getElementById("driveStatus"); if (el) el.textContent = s; });
+if (window.DriveSync) DriveSync.onStatus((s) => {
+  const el = document.getElementById("driveStatus");
+  if (el) el.textContent = s;
+  // le bouton « Reconnecter » apparaît/disparaît selon l'état
+  if (s === "reconnexion nécessaire" || s === "connecté") renderDriveBar();
+});
+
+// Reconnexion automatique à Google Drive (silencieuse) au lancement.
+// Le script Google est chargé en différé : on attend qu'il soit prêt.
+(function autoReconnect(tries) {
+  tries = tries || 0;
+  if (!window.DriveSync) return;
+  if (!DriveSync.ready()) { if (tries < 25) setTimeout(() => autoReconnect(tries + 1), 400); return; }
+  DriveSync.autoConnect().then((remote) => {
+    if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) {
+      state = Object.assign(blankState(), remote);
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    }
+    if (generateRecurrences() > 0) save();
+    renderDriveBar(); render(); loadMails();
+  }).catch(() => { renderDriveBar(); });
+})();
