@@ -202,7 +202,8 @@ function renderNav() {
     const b = document.createElement("button");
     b.className = "nav-item" + (s.id === view.section ? " active" : "");
     const n = navCount(s.id);
-    b.innerHTML = `<span class="ic">${s.ic}</span> <span class="nav-lbl">${esc(s.label)}</span>${n != null ? `<span class="nav-count" id="navCount-${s.id}">${esc(String(n))}</span>` : ""}`;
+    const dot = (s.id === "missions" || s.id === "time") && anyTimerRunning() ? '<span class="run-dot" title="Chronomètre en cours"></span>' : "";
+    b.innerHTML = `<span class="ic">${s.ic}</span> <span class="nav-lbl">${esc(s.label)}</span>${dot}${n != null ? `<span class="nav-count" id="navCount-${s.id}">${esc(String(n))}</span>` : ""}`;
     b.onclick = () => go(s.id);
     sidebar.insertBefore(b, driveBar);
   });
@@ -307,21 +308,34 @@ function sortedMissions() {
     return r !== 0 ? r : (a.title || "").localeCompare(b.title || "", "fr", { sensitivity: "base" });
   });
 }
+const missionRunning = (m) => (m.entries || []).some((e) => e.timerStartedAt);
+const anyTimerRunning = () => state.missions.some(missionRunning);
 function renderMissions() {
   if (view.detailId) return renderMissionDetail(view.detailId);
   const items = sortedMissions();
+  const nbRunning = items.filter(missionRunning).length;
   const rows = items.map((m) => {
     const total = missionTotal(m);
-    const sub = [`${(m.entries || []).length} élément(s)`, total > 0 ? `⏱ ${fmtDuration(total)}` : null, m.companyId ? esc(companyName(m.companyId)) : null].filter(Boolean).join(" · ");
-    return `<div class="row" data-open-mission="${m.id}" style="border-left-color:var(--primary)">
-      <div class="grow"><div class="r-title">${esc(m.title || "Nouvelle mission")}</div><div class="r-sub">${sub}</div></div>
+    const run = missionRunning(m);
+    const parts = [`${(m.entries || []).length} élément(s)`];
+    if (total > 0) parts.push(`⏱ <span class="timer${run ? " running" : ""}" data-total="${m.id}">${fmtDuration(total)}</span>`);
+    if (m.companyId) parts.push(esc(companyName(m.companyId)));
+    return `<div class="row" data-open-mission="${m.id}" style="border-left-color:${run ? "#d23c3c" : "var(--primary)"}">
+      <div class="grow"><div class="r-title">${esc(m.title || "Nouvelle mission")}</div><div class="r-sub">${parts.join(" · ")}</div></div>
+      ${run ? '<span class="run-dot" title="Chronomètre en cours"></span>' : ""}
       <span class="badge ${m.statusCode}">${statusLabel(m.statusCode)}</span></div>`;
   }).join("");
+  const banner = nbRunning
+    ? `<div class="run-banner"><span class="run-dot"></span>
+        <span class="grow">${nbRunning} chronomètre(s) en cours</span>
+        <button class="btn danger small" data-stop-all>■ Tout arrêter</button></div>`
+    : "";
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Missions</div>
       <button class="btn danger small" data-reset>Réinitialiser</button>
       <button class="btn secondary small" data-import>Importer</button>
       <button class="btn secondary small" data-export>Exporter</button>
       <button class="btn" data-add-mission>+ Nouvelle mission</button></div>
+    ${banner}
     <div class="list">${items.length ? rows : '<div class="center-empty">Aucune mission.</div>'}</div>
     <button class="btn fab" data-add-mission>+</button>`;
 }
@@ -1550,6 +1564,14 @@ function wire() {
   c.querySelectorAll("[data-efield]").forEach((el) => { const h = () => { const m = findMission(el.dataset.m); const e = findEntry(m, el.dataset.e); if (!e) return; e[el.dataset.efield] = el.value; save(); if (el.dataset.efield === "kind") render(); }; el.addEventListener("change", h); el.addEventListener("blur", h); });
   c.querySelectorAll("[data-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.timer); if (!e) return; if (e.timerStartedAt) { e.accumulatedSeconds = (e.accumulatedSeconds || 0) + (Date.now() - e.timerStartedAt) / 1000; e.timerStartedAt = null; } else { e.timerStartedAt = Date.now(); } save(); render(); });
   c.querySelectorAll("[data-del-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); if (!m) return; m.entries = m.entries.filter((e) => e.id !== b.dataset.delEntry); save(); render(); });
+  const stopAll = c.querySelector("[data-stop-all]");
+  if (stopAll) stopAll.onclick = () => {
+    let n = 0;
+    state.missions.forEach((m) => (m.entries || []).forEach((e) => {
+      if (e.timerStartedAt) { e.accumulatedSeconds = (e.accumulatedSeconds || 0) + (Date.now() - e.timerStartedAt) / 1000; e.timerStartedAt = null; n++; }
+    }));
+    save(); render(); toast(`${n} chronomètre(s) arrêté(s).`);
+  };
 
   // Tâches
   c.querySelectorAll("[data-add-task]").forEach((b) => b.onclick = () => { state.tasks.push({ id: uid(), title: "", status: "aFaire", missionId: null, dueDate: "", createdAt: Date.now() }); save(); render(); });
