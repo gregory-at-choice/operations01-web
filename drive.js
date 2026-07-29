@@ -38,19 +38,31 @@
   const hasSession = () => { try { return localStorage.getItem(SESSION_KEY) === "1"; } catch (e) { return false; } }
   const rememberSession = () => { try { localStorage.setItem(SESSION_KEY, "1"); } catch (e) {} };
 
-  // Demande un jeton. interactive = true autorise l'ouverture d'une fenêtre Google.
-  // En mode silencieux (prompt vide), Google renouvelle sans rien afficher si
-  // l'utilisateur a déjà autorisé l'app et qu'une session Google est active.
+  // Demande un jeton.
+  //   interactive = false → renouvellement silencieux (aucune fenêtre).
+  //   interactive = true  → fenêtre Google (doit partir d'un clic de l'utilisateur).
+  // Sur iOS/Safari, la demande silencieuse peut rester sans réponse (protection
+  // anti-traçage) : on la borne dans le temps et une demande interactive n'attend
+  // JAMAIS une demande silencieuse en cours — sinon le bouton « Reconnecter »
+  // resterait bloqué sur une promesse qui ne se résout pas.
+  const SILENT_TIMEOUT = 8000;
   function getToken(interactive) {
-    if (tokenPromise) return tokenPromise;
-    tokenPromise = new Promise((resolve, reject) => {
-      if (!ready()) { tokenPromise = null; reject(new Error("Google Drive indisponible (identifiant manquant ou script Google bloqué).")); return; }
+    if (!interactive && tokenPromise) return tokenPromise;
+    if (interactive) tokenPromise = null;   // on abandonne toute demande silencieuse en cours
+    const p = new Promise((resolve, reject) => {
+      if (!ready()) { reject(new Error("Google Drive indisponible (identifiant manquant ou script Google bloqué).")); return; }
       if (!tokenClient) {
         tokenClient = google.accounts.oauth2.initTokenClient({
           client_id: cfg.googleClientId, scope: SCOPE, callback: () => {}
         });
       }
-      const done = (err, tok) => { tokenPromise = null; if (err) reject(err); else resolve(tok); };
+      let settled = false;
+      const done = (err, tok) => {
+        if (settled) return;
+        settled = true;
+        if (!interactive && tokenPromise === p) tokenPromise = null;
+        if (err) reject(err); else resolve(tok);
+      };
       tokenClient.callback = (resp) => {
         if (resp && resp.access_token) {
           accessToken = resp.access_token;
@@ -58,13 +70,19 @@
           tokenExpiry = Date.now() + Math.max(60, (Number(resp.expires_in) || 3600) - 120) * 1000;
           needsAuth = false; rememberSession();
           done(null, accessToken);
-        } else { if (interactive) needsAuth = true; done(new Error("Autorisation Google refusée.")); }
+        } else { needsAuth = true; done(new Error("Autorisation Google refusée.")); }
       };
-      tokenClient.error_callback = () => { if (!interactive) needsAuth = true; done(new Error("Renouvellement silencieux impossible.")); };
-      try { tokenClient.requestAccessToken({ prompt: interactive && !hasSession() ? "consent" : "" }); }
-      catch (e) { done(e); }
+      tokenClient.error_callback = () => { needsAuth = true; done(new Error(interactive ? "Fenêtre Google fermée ou bloquée." : "Renouvellement silencieux impossible.")); };
+      // Une demande silencieuse sans réponse (Safari) ne doit pas rester en suspens.
+      if (!interactive) setTimeout(() => { if (!settled) { needsAuth = true; done(new Error("Renouvellement silencieux sans réponse.")); } }, SILENT_TIMEOUT);
+      try {
+        // Un clic explicite force l'affichage de la fenêtre Google : c'est le seul
+        // moyen fiable de se ré-autoriser sur Safari.
+        tokenClient.requestAccessToken({ prompt: interactive ? "consent" : "" });
+      } catch (e) { needsAuth = true; done(e); }
     });
-    return tokenPromise;
+    if (!interactive) tokenPromise = p;
+    return p;
   }
 
   // Garantit un jeton valide (renouvellement silencieux si expiré/proche de l'expiration).
@@ -72,6 +90,21 @@
     if (accessToken && Date.now() < tokenExpiry) return accessToken;
     if (!interactive && !hasSession()) throw new Error("Non connecté.");
     return await getToken(!!interactive);
+  }
+
+  // Reconnexion déclenchée par un clic : on repart d'un état propre.
+  async function reconnect() {
+    accessToken = null; tokenExpiry = 0; tokenPromise = null;
+    await getToken(true);
+    needsAuth = false;
+    const f = await findFile();
+    fileId = f ? f.id : null;
+    lastModifiedTime = f ? f.modifiedTime : null;
+    let remote = null;
+    if (fileId) { try { remote = JSON.parse(await download(fileId)); } catch (e) { remote = null; } }
+    setStatus("connecté");
+    if (pending) { retries = 0; schedule(200); }
+    return remote;
   }
 
   async function api(url, opts, retried) {
@@ -290,6 +323,7 @@
     needsAuth: () => needsAuth,
     hasPending: () => !!pending,
     autoConnect,
+    reconnect,
     listBackups,
     restore,
     backupNow,

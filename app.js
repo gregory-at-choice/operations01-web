@@ -1763,7 +1763,7 @@ function renderDriveBar() {
       ${reauth ? '<button class="btn small" id="driveReconnect" style="width:100%;margin-top:6px">Reconnecter</button>' : ""}
       <button class="btn ghost small" id="driveBackups" style="width:100%;margin-top:6px">🛟 Sauvegardes</button>`;
     const b = document.getElementById("driveBackups"); if (b) b.onclick = openBackups;
-    const rb = document.getElementById("driveReconnect"); if (rb) rb.onclick = connectDrive;
+    const rb = document.getElementById("driveReconnect"); if (rb) rb.onclick = reconnectDrive;
   }
   else { el.innerHTML = `<button class="btn secondary small" id="driveConnect" style="width:100%">Se connecter à Google Drive</button>`; const b = document.getElementById("driveConnect"); if (b) b.onclick = connectDrive; }
 }
@@ -1813,6 +1813,24 @@ async function refreshBackupList() {
       } catch (e) { alert("Restauration impossible : " + e.message); }
     });
   } catch (e) { box.innerHTML = "Impossible de charger les sauvegardes : " + esc(e.message); }
+}
+// Reconnexion depuis le bouton : ouvre la fenêtre Google (obligatoire sur Safari,
+// qui bloque le renouvellement silencieux). L'appel part directement du clic.
+function reconnectDrive() {
+  if (!(window.DriveSync && DriveSync.ready())) { alert("Google Drive n'est pas disponible (identifiant manquant, ou script Google bloqué par le navigateur)."); return; }
+  const p = DriveSync.reconnect();
+  p.then((remote) => {
+    if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) {
+      state = Object.assign(blankState(), remote);
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    } else DriveSync.push(state);
+    renderDriveBar(); render(); loadMails();
+    toast("Google Drive reconnecté ✓");
+  }).catch((e) => {
+    renderDriveBar();
+    alert("Reconnexion impossible : " + e.message
+      + "\n\nSur iPhone (Safari) :\n• autorise les fenêtres surgissantes pour ce site (Réglages → Safari → Bloquer les pop-up : désactivé) ;\n• puis appuie de nouveau sur « Reconnecter ».\n\nTes données restent enregistrées sur l'appareil : rien n'est perdu.");
+  });
 }
 async function connectDrive() {
   if (!(window.DriveSync && DriveSync.ready())) { alert("Google Drive n'est pas disponible (identifiant manquant ou app non hébergée en HTTPS)."); return; }
