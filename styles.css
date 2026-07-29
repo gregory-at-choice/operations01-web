@@ -68,6 +68,11 @@ body {
   100% { box-shadow: 0 0 0 0 rgba(210,60,60,0); }
 }
 @media (prefers-reduced-motion: reduce) { .run-dot { animation: none; } }
+.app-version {
+  display: flex; align-items: center; gap: 6px; margin-top: 8px;
+  font-size: 10px; color: var(--muted);
+}
+.app-version .btn { padding: 3px 7px; font-size: 10px; }
 .run-banner {
   display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 10px 14px;
   border-radius: var(--radius); background: rgba(210,60,60,.10); border: 1px solid rgba(210,60,60,.28);

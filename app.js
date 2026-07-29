@@ -35,6 +35,10 @@ const INV_STATUSES = [
 const invStatusLabel = (c) => (INV_STATUSES.find((x) => x.code === c) || INV_STATUSES[0]).label;
 const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours", label: "En cours" }, { code: "termine", label: "Terminée" }];
 
+// Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
+// que l'appareil exécute bien la dernière version publiée.
+const APP_VERSION = "v21";
+
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
@@ -1766,6 +1770,20 @@ function renderDriveBar() {
     const rb = document.getElementById("driveReconnect"); if (rb) rb.onclick = reconnectDrive;
   }
   else { el.innerHTML = `<button class="btn secondary small" id="driveConnect" style="width:100%">Se connecter à Google Drive</button>`; const b = document.getElementById("driveConnect"); if (b) b.onclick = connectDrive; }
+  el.innerHTML += `<div class="app-version"><span>Version ${APP_VERSION}</span><button class="btn ghost small" id="appUpdate">↻ Mettre à jour</button></div>`;
+  const up = document.getElementById("appUpdate"); if (up) up.onclick = forceUpdate;
+}
+// Vide le cache local du navigateur et recharge la dernière version publiée.
+async function forceUpdate() {
+  try {
+    if (window.caches && caches.keys) { const keys = await caches.keys(); await Promise.all(keys.map((k) => caches.delete(k))); }
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+  } catch (e) {}
+  // paramètre unique pour contourner le cache HTTP de Safari
+  location.replace(location.pathname + "?maj=" + Date.now());
 }
 // ---- Panneau Sauvegardes ----
 function closeModal() { const m = document.getElementById("modalOverlay"); if (m) m.remove(); }
