@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v21";
+const APP_VERSION = "v22";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1835,9 +1835,10 @@ async function refreshBackupList() {
 // Reconnexion depuis le bouton : ouvre la fenêtre Google (obligatoire sur Safari,
 // qui bloque le renouvellement silencieux). L'appel part directement du clic.
 function reconnectDrive() {
-  if (!(window.DriveSync && DriveSync.ready())) { alert("Google Drive n'est pas disponible (identifiant manquant, ou script Google bloqué par le navigateur)."); return; }
+  if (!(window.DriveSync && DriveSync.configured())) { alert("Google Drive n'est pas configuré (identifiant client manquant dans config.js)."); return; }
   const p = DriveSync.reconnect();
   p.then((remote) => {
+    if (remote === null && DriveSync.needsAuth() === false) return; // redirection en cours
     if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) {
       state = Object.assign(blankState(), remote);
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
@@ -1851,9 +1852,10 @@ function reconnectDrive() {
   });
 }
 async function connectDrive() {
-  if (!(window.DriveSync && DriveSync.ready())) { alert("Google Drive n'est pas disponible (identifiant manquant ou app non hébergée en HTTPS)."); return; }
+  if (!(window.DriveSync && DriveSync.configured())) { alert("Google Drive n'est pas configuré (identifiant client manquant dans config.js)."); return; }
   try {
     const remote = await DriveSync.connect();
+    if (remote === null && !DriveSync.isConnected()) return; // redirection vers Google en cours
     if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) { state = Object.assign(blankState(), remote); localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
     if (generateRecurrences() > 0) save(); else DriveSync.push(state);
     renderDriveBar(); render();

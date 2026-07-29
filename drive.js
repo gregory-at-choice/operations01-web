@@ -38,6 +38,48 @@
   const hasSession = () => { try { return localStorage.getItem(SESSION_KEY) === "1"; } catch (e) { return false; } }
   const rememberSession = () => { try { localStorage.setItem(SESSION_KEY, "1"); } catch (e) {} };
 
+  // --- Autorisation par redirection pleine page (indispensable sur iOS/Safari) ---
+  // Safari isole le stockage tiers : la fenêtre surgissante de Google s'ouvre mais
+  // ne rend jamais la main. On quitte donc l'app vers Google, qui nous renvoie
+  // ensuite avec le jeton dans le fragment d'URL. Aucune pop-up n'est impliquée.
+  const STATE_KEY = "op01_oauth_state";
+  const isIOS = () => typeof navigator !== "undefined" && (/iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+  function redirectURI() {
+    if (typeof location === "undefined") return "";
+    return location.origin + location.pathname.replace(/index\.html$/, "");
+  }
+  function startRedirectAuth() {
+    const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try { localStorage.setItem(STATE_KEY, nonce); } catch (e) {}
+    const p = new URLSearchParams({
+      client_id: cfg.googleClientId,
+      redirect_uri: redirectURI(),
+      response_type: "token",
+      scope: SCOPE,
+      include_granted_scopes: "true",
+      state: nonce,
+      prompt: "consent"
+    });
+    location.assign("https://accounts.google.com/o/oauth2/v2/auth?" + p.toString());
+  }
+  // Au chargement : récupère le jeton renvoyé par Google, s'il y en a un.
+  function consumeRedirectToken() {
+    if (typeof location === "undefined") return false;
+    if (!location.hash || location.hash.indexOf("access_token=") === -1) return false;
+    const p = new URLSearchParams(location.hash.replace(/^#/, ""));
+    const tok = p.get("access_token");
+    let saved = null;
+    try { saved = localStorage.getItem(STATE_KEY); localStorage.removeItem(STATE_KEY); } catch (e) {}
+    if (!tok || (saved && p.get("state") !== saved)) return false;
+    accessToken = tok;
+    tokenExpiry = Date.now() + Math.max(60, (Number(p.get("expires_in")) || 3600) - 120) * 1000;
+    needsAuth = false; rememberSession();
+    try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { location.hash = ""; }
+    return true;
+  }
+  const cameBackFromGoogle = consumeRedirectToken();
+
   // Demande un jeton.
   //   interactive = false → renouvellement silencieux (aucune fenêtre).
   //   interactive = true  → fenêtre Google (doit partir d'un clic de l'utilisateur).
@@ -46,6 +88,7 @@
   // JAMAIS une demande silencieuse en cours — sinon le bouton « Reconnecter »
   // resterait bloqué sur une promesse qui ne se résout pas.
   const SILENT_TIMEOUT = 8000;
+  const POPUP_TIMEOUT = 25000;
   function getToken(interactive) {
     if (!interactive && tokenPromise) return tokenPromise;
     if (interactive) tokenPromise = null;   // on abandonne toute demande silencieuse en cours
@@ -73,8 +116,10 @@
         } else { needsAuth = true; done(new Error("Autorisation Google refusée.")); }
       };
       tokenClient.error_callback = () => { needsAuth = true; done(new Error(interactive ? "Fenêtre Google fermée ou bloquée." : "Renouvellement silencieux impossible.")); };
-      // Une demande silencieuse sans réponse (Safari) ne doit pas rester en suspens.
-      if (!interactive) setTimeout(() => { if (!settled) { needsAuth = true; done(new Error("Renouvellement silencieux sans réponse.")); } }, SILENT_TIMEOUT);
+      // Aucune demande ne doit rester en suspens : la fenêtre Google peut ne jamais
+      // rendre la main (Safari), auquel cas on bascule sur la redirection.
+      setTimeout(() => { if (!settled) { needsAuth = true; done(new Error(interactive ? "La fenêtre Google n'a pas répondu." : "Renouvellement silencieux sans réponse.")); } },
+        interactive ? POPUP_TIMEOUT : SILENT_TIMEOUT);
       try {
         // Un clic explicite force l'affichage de la fenêtre Google : c'est le seul
         // moyen fiable de se ré-autoriser sur Safari.
@@ -93,9 +138,18 @@
   }
 
   // Reconnexion déclenchée par un clic : on repart d'un état propre.
+  // Sur iOS/Safari on passe directement par la redirection (la pop-up n'aboutit pas).
   async function reconnect() {
     accessToken = null; tokenExpiry = 0; tokenPromise = null;
-    await getToken(true);
+    if (isIOS()) { setStatus("redirection vers Google…"); startRedirectAuth(); return null; }
+    try {
+      await getToken(true);
+    } catch (e) {
+      // la fenêtre n'a pas abouti : on bascule sur la redirection pleine page
+      setStatus("redirection vers Google…");
+      startRedirectAuth();
+      return null;
+    }
     needsAuth = false;
     const f = await findFile();
     fileId = f ? f.id : null;
@@ -237,6 +291,8 @@
 
   // Se connecter : demande le jeton, trouve (ou pas) le fichier et renvoie l'état distant (ou null).
   async function connect(silent) {
+    // Première connexion sur iOS : redirection pleine page (pas de pop-up).
+    if (!silent && isIOS() && !accessToken) { setStatus("redirection vers Google…"); startRedirectAuth(); return null; }
     setStatus(silent ? "reconnexion…" : "connexion…");
     await ensureToken(!silent);
     const f = await findFile();
@@ -251,7 +307,20 @@
   // Reconnexion automatique au démarrage : silencieuse, sans fenêtre Google.
   // Renvoie l'état distant, ou null si l'utilisateur ne s'est jamais connecté.
   async function autoConnect() {
-    if (!hasSession() || !ready()) return null;
+    if (!hasSession()) return null;
+    // Retour de Google par redirection : le jeton est déjà en main, pas besoin de GIS.
+    if (cameBackFromGoogle) {
+      try {
+        setStatus("connexion…");
+        const f = await findFile();
+        fileId = f ? f.id : null; lastModifiedTime = f ? f.modifiedTime : null;
+        let remote = null;
+        if (fileId) { try { remote = JSON.parse(await download(fileId)); } catch (e) { remote = null; } }
+        setStatus("connecté");
+        return remote;
+      } catch (e) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
+    }
+    if (!ready()) return null;
     try { return await connect(true); }
     catch (e) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
   }
@@ -314,6 +383,10 @@
 
   window.DriveSync = {
     ready,
+    // La redirection ne dépend pas du script Google : un identifiant client suffit.
+    configured: () => !!cfg.googleClientId,
+    redirectAuth: startRedirectAuth,
+    redirectURI,
     onStatus: (fn) => listeners.push(fn),
     connect,
     push,
