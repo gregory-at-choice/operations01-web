@@ -161,12 +161,21 @@
     return remote;
   }
 
+  // Tout appel réseau est borné dans le temps : une requête qui reste en suspens
+  // (réseau mobile capricieux) ne doit pas figer la synchronisation.
+  const FETCH_TIMEOUT = 15000;
   async function api(url, opts, retried) {
     const o = opts || {};
     await ensureToken(false);
-    const r = await fetch(url, Object.assign({}, o, {
-      headers: Object.assign({ Authorization: "Bearer " + accessToken }, o.headers || {})
-    }));
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, FETCH_TIMEOUT) : null;
+    let r;
+    try {
+      r = await fetch(url, Object.assign({}, o, {
+        signal: ctrl ? ctrl.signal : undefined,
+        headers: Object.assign({ Authorization: "Bearer " + accessToken }, o.headers || {})
+      }));
+    } finally { if (timer) clearTimeout(timer); }
     if ((r.status === 401 || r.status === 403) && !retried) {
       // jeton révoqué ou expiré côté Google : on en redemande un et on rejoue une fois
       accessToken = null; tokenExpiry = 0;
@@ -306,7 +315,16 @@
 
   // Reconnexion automatique au démarrage : silencieuse, sans fenêtre Google.
   // Renvoie l'état distant, ou null si l'utilisateur ne s'est jamais connecté.
+  // Garde-fou global : quoi qu'il arrive, la reconnexion automatique se termine
+  // et laisse l'utilisateur reprendre la main (statut + bouton « Reconnecter »).
+  const AUTOCONNECT_TIMEOUT = 12000;
   async function autoConnect() {
+    if (!hasSession()) return null;
+    const guard = new Promise((_, rej) => setTimeout(() => rej(new Error("délai dépassé")), AUTOCONNECT_TIMEOUT));
+    try { return await Promise.race([doAutoConnect(), guard]); }
+    catch (e) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
+  }
+  async function doAutoConnect() {
     if (!hasSession()) return null;
     // Retour de Google par redirection : le jeton est déjà en main, pas besoin de GIS.
     if (cameBackFromGoogle) {
@@ -320,7 +338,9 @@
         return remote;
       } catch (e) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
     }
-    if (!ready()) return null;
+    // Script Google absent (bloqué par Safari, hors ligne…) : la redirection reste
+    // possible, on demande donc simplement à l'utilisateur de se reconnecter.
+    if (!ready()) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
     try { return await connect(true); }
     catch (e) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
   }

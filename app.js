@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v23";
+const APP_VERSION = "v24";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1807,8 +1807,10 @@ function renderDriveBar() {
   if (!cfgOk) { el.innerHTML = `<div class="muted" style="font-size:11px;line-height:1.4">Google Drive non configuré.<br>Voir README → « Google Drive ».</div>`; return; }
   if (window.DriveSync && DriveSync.isConnected()) {
     const reauth = DriveSync.needsAuth();
+    // Le bouton « Reconnecter » est TOUJOURS disponible : quel que soit l'état de la
+    // synchronisation, l'utilisateur doit pouvoir reprendre la main.
     el.innerHTML = `<div style="font-size:12px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">${reauth ? "reconnexion nécessaire" : "synchronisé"}</span></div>
-      ${reauth ? '<button class="btn small" id="driveReconnect" style="width:100%;margin-top:6px">Reconnecter</button>' : ""}
+      <button class="btn ${reauth ? "" : "ghost"} small" id="driveReconnect" style="width:100%;margin-top:6px">Reconnecter</button>
       <button class="btn ghost small" id="driveBackups" style="width:100%;margin-top:6px">🛟 Sauvegardes</button>`;
     const b = document.getElementById("driveBackups"); if (b) b.onclick = openBackups;
     const rb = document.getElementById("driveReconnect"); if (rb) rb.onclick = reconnectDrive;
@@ -2085,7 +2087,9 @@ if (window.DriveSync) DriveSync.onStatus((s) => {
 (function autoReconnect(tries) {
   tries = tries || 0;
   if (!window.DriveSync) return;
-  if (!DriveSync.ready()) { if (tries < 25) setTimeout(() => autoReconnect(tries + 1), 400); return; }
+  // On attend le script Google, mais sans jamais rester bloqué : au-delà de ~10 s
+  // on lance quand même autoConnect, qui basculera sur « reconnexion nécessaire ».
+  if (!DriveSync.ready() && tries < 25) { setTimeout(() => autoReconnect(tries + 1), 400); return; }
   DriveSync.autoConnect().then((remote) => {
     if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) {
       state = Object.assign(blankState(), remote);
