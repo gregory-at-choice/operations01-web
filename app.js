@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v22";
+const APP_VERSION = "v23";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -306,6 +306,12 @@ function renderRelances() {
 // ----------------------------- Missions -----------------------------
 function missionTotal(m) { return (m.entries || []).reduce((t, e) => t + entryElapsed(e), 0); }
 function entryElapsed(e) { const run = e.timerStartedAt ? (Date.now() - e.timerStartedAt) / 1000 : 0; return (e.accumulatedSeconds || 0) + run; }
+// Fixe le temps d'un élément (saisie ou correction manuelle).
+// Si un chrono tourne, il repart de la valeur corrigée au lieu de s'y ajouter.
+function setEntryDuration(e, seconds) {
+  e.accumulatedSeconds = Math.max(0, seconds || 0);
+  if (e.timerStartedAt) e.timerStartedAt = Date.now();
+}
 function sortedMissions() {
   return [...state.missions].sort((a, b) => {
     const r = statusRank(a.statusCode) - statusRank(b.statusCode);
@@ -380,6 +386,16 @@ function renderEntry(mid, e) {
       <label class="field"><span>Date</span><input type="date" data-efield="date" data-m="${mid}" data-e="${e.id}" value="${esc(e.date || todayISO())}"/></label>
       <label class="field"><span>Détails</span><textarea data-efield="content" data-m="${mid}" data-e="${e.id}">${esc(e.content)}</textarea></label>
       <label class="field"><span>Lien (Gmail, Drive, Meet…)</span><input data-efield="url" data-m="${mid}" data-e="${e.id}" value="${esc(e.url)}" inputmode="url"/></label>
+      <div class="field-b"><span>Temps passé ${running ? '<span style="color:#d23c3c">· chrono en cours</span>' : "(saisie manuelle possible)"}</span>
+        <div class="inline" style="flex-wrap:wrap">
+          <input type="number" min="0" step="1" style="width:74px" data-dur-h data-m="${mid}" data-e="${e.id}" value="${Math.floor(entryElapsed(e) / 3600)}"/><span class="muted">h</span>
+          <input type="number" min="0" max="59" step="1" style="width:74px" data-dur-m data-m="${mid}" data-e="${e.id}" value="${Math.floor((entryElapsed(e) % 3600) / 60)}"/><span class="muted">min</span>
+          <button class="btn ghost small" data-dur-add="-15" data-m="${mid}" data-e="${e.id}">−15</button>
+          <button class="btn ghost small" data-dur-add="15" data-m="${mid}" data-e="${e.id}">+15</button>
+          <button class="btn ghost small" data-dur-zero data-m="${mid}" data-e="${e.id}">Remettre à 0</button>
+        </div>
+        ${running && entryElapsed(e) > 8 * 3600 ? `<div style="color:#d23c3c;font-size:12px;margin-top:6px">⚠️ Chrono lancé depuis ${fmtDuration(entryElapsed(e))} — chrono probablement oublié : arrête-le puis corrige la durée ci-dessus.</div>` : ""}
+      </div>
       <div class="inline" style="margin-top:6px">
         <button class="btn ${running ? "danger" : "secondary"} small" data-timer="${e.id}" data-m="${mid}">${running ? "■ Arrêter le chrono" : "▶ Démarrer le chrono"}</button>
         ${urlLink}<span class="grow"></span>
@@ -1567,6 +1583,34 @@ function wire() {
   c.querySelectorAll("[data-toggle]").forEach((h) => h.onclick = (ev) => { if (ev.target.closest("a,button,input,select,textarea")) return; const m = findMission(h.dataset.m); const e = findEntry(m, h.dataset.toggle); if (e) { e._open = !e._open; render(); } });
   c.querySelectorAll("[data-efield]").forEach((el) => { const h = () => { const m = findMission(el.dataset.m); const e = findEntry(m, el.dataset.e); if (!e) return; e[el.dataset.efield] = el.value; save(); if (el.dataset.efield === "kind") render(); }; el.addEventListener("change", h); el.addEventListener("blur", h); });
   c.querySelectorAll("[data-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.timer); if (!e) return; if (e.timerStartedAt) { e.accumulatedSeconds = (e.accumulatedSeconds || 0) + (Date.now() - e.timerStartedAt) / 1000; e.timerStartedAt = null; } else { e.timerStartedAt = Date.now(); } save(); render(); });
+
+  // Saisie / correction manuelle du temps d'un élément d'historique
+  const durInputs = (el) => {
+    const body = el.closest(".entry-body") || document;
+    const h = body.querySelector(`[data-dur-h][data-e="${el.dataset.e}"]`);
+    const mn = body.querySelector(`[data-dur-m][data-e="${el.dataset.e}"]`);
+    return { h, mn };
+  };
+  const applyDuration = (el, seconds) => {
+    const m = findMission(el.dataset.m), e = findEntry(m, el.dataset.e);
+    if (!e) return;
+    setEntryDuration(e, seconds);
+    save(); render();
+  };
+  c.querySelectorAll("[data-dur-h],[data-dur-m]").forEach((el) => {
+    const h = () => {
+      const { h: hi, mn } = durInputs(el);
+      const secs = (parseInt(hi && hi.value, 10) || 0) * 3600 + (parseInt(mn && mn.value, 10) || 0) * 60;
+      applyDuration(el, secs);
+    };
+    el.addEventListener("change", h);
+  });
+  c.querySelectorAll("[data-dur-add]").forEach((b) => b.onclick = () => {
+    const m = findMission(b.dataset.m), e = findEntry(m, b.dataset.e);
+    if (!e) return;
+    applyDuration(b, entryElapsed(e) + Number(b.dataset.durAdd) * 60);
+  });
+  c.querySelectorAll("[data-dur-zero]").forEach((b) => b.onclick = () => applyDuration(b, 0));
   c.querySelectorAll("[data-del-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); if (!m) return; m.entries = m.entries.filter((e) => e.id !== b.dataset.delEntry); save(); render(); });
   const stopAll = c.querySelector("[data-stop-all]");
   if (stopAll) stopAll.onclick = () => {
