@@ -1805,19 +1805,22 @@ function renderDriveBar() {
   const el = document.getElementById("driveBar"); if (!el) return;
   const cfgOk = window.OPERATIONS01_CONFIG && OPERATIONS01_CONFIG.googleClientId;
   if (!cfgOk) { el.innerHTML = `<div class="muted" style="font-size:11px;line-height:1.4">Google Drive non configuré.<br>Voir README → « Google Drive ».</div>`; return; }
-  if (window.DriveSync && DriveSync.isConnected()) {
-    const reauth = DriveSync.needsAuth();
-    // Le bouton « Reconnecter » est TOUJOURS disponible : quel que soit l'état de la
-    // synchronisation, l'utilisateur doit pouvoir reprendre la main.
-    el.innerHTML = `<div style="font-size:12px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">${reauth ? "reconnexion nécessaire" : "synchronisé"}</span></div>
-      <button class="btn ${reauth ? "" : "ghost"} small" id="driveReconnect" style="width:100%;margin-top:6px">Reconnecter</button>
-      <button class="btn ghost small" id="driveBackups" style="width:100%;margin-top:6px">🛟 Sauvegardes</button>`;
-    const b = document.getElementById("driveBackups"); if (b) b.onclick = openBackups;
-    const rb = document.getElementById("driveReconnect"); if (rb) rb.onclick = reconnectDrive;
-  }
-  else { el.innerHTML = `<button class="btn secondary small" id="driveConnect" style="width:100%">Se connecter à Google Drive</button>`; const b = document.getElementById("driveConnect"); if (b) b.onclick = connectDrive; }
-  el.innerHTML += `<div class="app-version"><span>Version ${APP_VERSION}</span><button class="btn ghost small" id="appUpdate">↻ Mettre à jour</button></div>`;
-  const up = document.getElementById("appUpdate"); if (up) up.onclick = forceUpdate;
+  // IMPORTANT : tout le HTML est écrit en UNE fois. Un « innerHTML += » ultérieur
+  // reconstruirait les nœuds et supprimerait les gestionnaires de clic déjà posés.
+  const connected = window.DriveSync && DriveSync.isConnected();
+  const reauth = connected && DriveSync.needsAuth();
+  const main = connected
+    ? `<div style="font-size:12px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">${reauth ? "reconnexion nécessaire" : "synchronisé"}</span></div>
+       <button class="btn ${reauth ? "" : "ghost"} small" id="driveReconnect" style="width:100%;margin-top:6px">Reconnecter</button>
+       <button class="btn ghost small" id="driveBackups" style="width:100%;margin-top:6px">🛟 Sauvegardes</button>`
+    : `<button class="btn secondary small" id="driveConnect" style="width:100%">Se connecter à Google Drive</button>`;
+  el.innerHTML = main
+    + `<div class="app-version"><span>Version ${APP_VERSION}</span><button class="btn ghost small" id="appUpdate">↻ Mettre à jour</button></div>`;
+  // Les gestionnaires sont attachés APRÈS l'écriture complète du HTML.
+  const bk = el.querySelector("#driveBackups"); if (bk) bk.onclick = openBackups;
+  const rb = el.querySelector("#driveReconnect"); if (rb) rb.onclick = reconnectDrive;
+  const cn = el.querySelector("#driveConnect"); if (cn) cn.onclick = connectDrive;
+  const up = el.querySelector("#appUpdate"); if (up) up.onclick = forceUpdate;
 }
 // Vide le cache local du navigateur et recharge la dernière version publiée.
 async function forceUpdate() {
