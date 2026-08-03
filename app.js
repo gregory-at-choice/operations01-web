@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v25";
+const APP_VERSION = "v26";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -312,11 +312,25 @@ function setEntryDuration(e, seconds) {
   e.accumulatedSeconds = Math.max(0, seconds || 0);
   if (e.timerStartedAt) e.timerStartedAt = Date.now();
 }
+// Dates repères d'une mission.
+// Démarrage : date saisie si renseignée, sinon 1er événement, sinon création.
+function missionStart(m) {
+  if (m.startDate) return m.startDate;
+  const d = (m.entries || []).map((e) => e.date).filter(Boolean).sort();
+  if (d.length) return d[0];
+  return m.createdAt ? new Date(m.createdAt).toISOString().slice(0, 10) : "";
+}
+// Dernier événement : date la plus récente de l'historique.
+function missionLast(m) {
+  const d = (m.entries || []).map((e) => e.date).filter(Boolean).sort();
+  return d.length ? d[d.length - 1] : "";
+}
+const missionCreated = (m) => m.createdAt || (m.startDate ? new Date(m.startDate + "T12:00:00").getTime() : 0);
+// Classement par ordre chronologique de création (la plus ancienne en premier).
+// Le tri est stable : à date identique (données importées en bloc), l'ordre
+// d'origine du fichier est conservé.
 function sortedMissions() {
-  return [...state.missions].sort((a, b) => {
-    const r = statusRank(a.statusCode) - statusRank(b.statusCode);
-    return r !== 0 ? r : (a.title || "").localeCompare(b.title || "", "fr", { sensitivity: "base" });
-  });
+  return [...state.missions].sort((a, b) => missionCreated(a) - missionCreated(b));
 }
 const missionRunning = (m) => (m.entries || []).some((e) => e.timerStartedAt);
 const anyTimerRunning = () => state.missions.some(missionRunning);
@@ -328,10 +342,14 @@ function renderMissions() {
     const total = missionTotal(m);
     const run = missionRunning(m);
     const parts = [`${(m.entries || []).length} élément(s)`];
-    if (total > 0) parts.push(`⏱ <span class="timer${run ? " running" : ""}" data-total="${m.id}">${fmtDuration(total)}</span>`);
+    parts.push(`⏱ <span class="timer${run ? " running" : ""}" data-total="${m.id}">${fmtDuration(total)}</span>`);
     if (m.companyId) parts.push(esc(companyName(m.companyId)));
+    const start = missionStart(m), last = missionLast(m);
+    const dates = `Début ${start ? esc(fmtDate(start)) : "—"} · Dernier événement ${last ? esc(fmtDate(last)) : "—"}`;
     return `<div class="row" data-open-mission="${m.id}" style="border-left-color:${run ? "#d23c3c" : "var(--primary)"}">
-      <div class="grow"><div class="r-title">${esc(m.title || "Nouvelle mission")}</div><div class="r-sub">${parts.join(" · ")}</div></div>
+      <div class="grow"><div class="r-title">${esc(m.title || "Nouvelle mission")}</div>
+        <div class="r-sub">${parts.join(" · ")}</div>
+        <div class="r-sub">${dates}</div></div>
       ${run ? '<span class="run-dot" title="Chronomètre en cours"></span>' : ""}
       <span class="badge ${m.statusCode}">${statusLabel(m.statusCode)}</span></div>`;
   }).join("");
@@ -362,6 +380,8 @@ function renderMissionDetail(id) {
       <select data-bind="missions|${m.id}|statusCode" style="width:auto">${statusOpts}</select>
     </div>
     <label class="field"><span>Société</span>${companySelect(`missions|${m.id}|companyId`, m.companyId)}</label>
+    <label class="field"><span>Date de démarrage</span><input type="date" data-bind="missions|${m.id}|startDate" data-rerender value="${esc(missionStart(m))}"/></label>
+    <div class="muted" style="font-size:12px;margin-top:-6px">Dernier événement : ${missionLast(m) ? esc(fmtDate(missionLast(m))) : "—"}</div>
     <div class="section-h">Historique de la mission</div>
     <div class="list">${entriesHtml}</div>
     <div class="chip-row" style="margin-top:12px">${kindButtons}</div>
@@ -1447,7 +1467,7 @@ function wire() {
   const backInv = c.querySelector("[data-back-invoice]"); if (backInv) backInv.onclick = () => { view.detailId = null; render(); };
 
   // ajouts
-  c.querySelectorAll("[data-add-mission]").forEach((b) => b.onclick = () => { const m = { id: uid(), title: "", statusCode: "aDemarrer", companyId: null, createdAt: Date.now(), entries: [] }; state.missions.push(m); save(); openDetail("missions", m.id); });
+  c.querySelectorAll("[data-add-mission]").forEach((b) => b.onclick = () => { const m = { id: uid(), title: "", statusCode: "aDemarrer", companyId: null, startDate: todayISO(), createdAt: Date.now(), entries: [] }; state.missions.push(m); save(); openDetail("missions", m.id); });
   c.querySelectorAll("[data-add-contact]").forEach((b) => b.onclick = () => { const x = { id: uid(), firstName: "", lastName: "", organization: "", jobTitle: "", email: "", phone: "", address: "", linkedIn: "", category: "client", notes: "", companyId: null }; state.contacts.push(x); save(); openDetail("contacts", x.id); });
   c.querySelectorAll("[data-add-company]").forEach((b) => b.onclick = () => { const x = { id: uid(), name: "", legalForm: "", role: "filiale", notes: "", initialCashBalance: 0, cashBalanceDate: todayISO(), activities: [] }; state.companies.push(x); save(); openDetail("groupe", x.id); });
   c.querySelectorAll("[data-add-invoice]").forEach((b) => b.onclick = () => { const x = { id: uid(), title: "", reference: "", direction: "recette", status: "aEmettre", amount: 0, vatRate: 20, startDate: todayISO(), hasDueDate: false, dueDate: "", paymentDate: "", companyId: null, contactId: null, categoryName: "", payMode: "compte", accountId: null, associateId: null, receiptUrl: "", noReceipt: false }; state.invoices.push(x); save(); openDetail("finances", x.id); });
@@ -1779,7 +1799,7 @@ function importJSON(text) {
   const contactByName = {}; state.contacts.forEach((c) => { contactByName[contactName(c)] = c.id; });
   (data.invoices || []).forEach((v) => state.invoices.push({ id: uid(), title: v.title || "", reference: v.reference || "", direction: v.direction === "depense" ? "depense" : "recette", status: (INV_STATUSES.some((x) => x.code === v.status) ? v.status : "aEmettre"), amount: Number(v.amount) || 0, vatRate: v.vatRate == null ? 20 : Number(v.vatRate), startDate: (v.startDate || "").slice(0, 10) || todayISO(), hasDueDate: !!v.hasDueDate, dueDate: (v.dueDate || "").slice(0, 10), paymentDate: (v.paymentDate || "").slice(0, 10), companyId: compByName[v.companyName] || null, contactId: contactByName[v.contactName] || null, categoryName: v.categoryName || "", payMode: v.payMode === "associe" ? "associe" : "compte", accountId: null, associateId: contactByName[v.associateName] || null, receiptUrl: v.receiptUrl || "", noReceipt: !!v.noReceipt }));
   const missionByTitle = {};
-  (data.missions || []).forEach((m) => { const nm = { id: uid(), title: m.title || "", statusCode: normStatus(m.statusCode || m.status), companyId: compByName[m.companyName] || null, createdAt: Date.now(), entries: (m.entries || []).map((e) => ({ id: uid(), kind: normKind(e.kind), title: e.title || "", content: e.content || "", date: (e.date || "").slice(0, 10) || todayISO(), url: e.url || e.urlString || "", accumulatedSeconds: Number(e.accumulatedSeconds) || 0, timerStartedAt: null, createdAt: Date.now() })) }; state.missions.push(nm); if (nm.title) missionByTitle[nm.title] = nm.id; });
+  (data.missions || []).forEach((m, i) => { const nm = { id: uid(), title: m.title || "", statusCode: normStatus(m.statusCode || m.status), companyId: compByName[m.companyName] || null, startDate: (m.startDate || "").slice(0, 10), createdAt: Date.now() + i, entries: (m.entries || []).map((e) => ({ id: uid(), kind: normKind(e.kind), title: e.title || "", content: e.content || "", date: (e.date || "").slice(0, 10) || todayISO(), url: e.url || e.urlString || "", accumulatedSeconds: Number(e.accumulatedSeconds) || 0, timerStartedAt: null, createdAt: Date.now() })) }; state.missions.push(nm); if (nm.title) missionByTitle[nm.title] = nm.id; });
   (data.tasks || []).forEach((t) => state.tasks.push({ id: uid(), title: t.title || "", status: (TASK_STATUSES.some((s) => s.code === t.status) ? t.status : "aFaire"), missionId: missionByTitle[t.missionTitle] || null, dueDate: (t.dueDate || "").slice(0, 10), createdAt: Date.now() }));
   (data.actions || []).forEach((a) => state.actions.push({ id: uid(), title: a.title || "", projectName: a.projectName || "", missionId: missionByTitle[a.missionTitle] || null, request: a.request || "", contactId: null, recipientName: a.recipientName || "", recipientEmail: a.recipientEmail || "", dueDate: (a.dueDate || "").slice(0, 10), reminderDaily: a.reminderDaily !== false, closed: !!a.closed, closedAt: a.closedAt || null, createdAt: Date.now() }));
   (data.rendezvous || []).forEach((r) => state.rendezvous.push({ id: uid(), title: r.title || "", date: (r.date || "").slice(0, 10), time: r.time || "", location: r.location || "", contactId: null, withName: r.withName || "", missionId: missionByTitle[r.missionTitle] || null, notes: r.notes || "", createdAt: Date.now() }));
