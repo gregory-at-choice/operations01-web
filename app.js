@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v27";
+const APP_VERSION = "v28";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1060,23 +1060,86 @@ function renderDashboard() {
 }
 
 // ----------------------------- Temps -----------------------------
-function renderTime() {
-  const { start, end } = weekInterval(new Date());
-  let total = 0; const perMission = [];
+// Période affichée dans l'onglet Temps : semaine ou mois, navigables.
+let timeTab = "semaine";
+let timeRef = todayISO();   // date de référence (un jour de la semaine / du mois affiché)
+const iso = (d) => d.toISOString().slice(0, 10);
+// Renvoie la période courante : bornes, libellé, et si elle contient aujourd'hui.
+function timeRange() {
+  const ref = new Date(timeRef + "T12:00:00");
+  if (timeTab === "mois") {
+    const start = new Date(ref.getFullYear(), ref.getMonth(), 1);
+    const end = new Date(ref.getFullYear(), ref.getMonth() + 1, 1);
+    const label = start.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+    return { start, end, label, sub: "Mois complet", kind: "mois" };
+  }
+  const { start, end } = weekInterval(ref);
+  return {
+    start, end,
+    label: `${fmtDate(iso(start))} → ${fmtDate(iso(new Date(end - 86400000)))}`,
+    sub: "Semaine · lundi → dimanche", kind: "semaine"
+  };
+}
+// Temps par mission sur une période.
+function timeBreakdown(start, end) {
+  let total = 0; const per = [];
   state.missions.forEach((m) => {
     let s = 0;
     (m.entries || []).forEach((e) => { const d = e.date ? new Date(e.date + "T12:00:00") : null; if (d && d >= start && d < end) s += entryElapsed(e); });
-    if (s > 0) { perMission.push({ title: m.title || "Sans titre", s }); total += s; }
+    if (s > 0) { per.push({ id: m.id, title: m.title || "Sans titre", s }); total += s; }
   });
-  perMission.sort((a, b) => b.s - a.s);
-  const rows = perMission.length ? perMission.map((p) => `<div class="inline" style="padding:6px 0"><span class="grow">${esc(p.title)}</span><span class="timer">${fmtDuration(p.s)}</span></div>`).join("") : '<div class="muted">Aucun temps cette semaine.</div>';
+  per.sort((a, b) => b.s - a.s);
+  return { total, per };
+}
+// Découpage d'un mois en semaines (lundi → dimanche) pour la répartition.
+function weeksOf(start, end) {
+  const out = [];
+  let cur = weekInterval(start).start;
+  while (cur < end) {
+    const wEnd = new Date(cur); wEnd.setDate(cur.getDate() + 7);
+    const from = cur < start ? start : cur, to = wEnd > end ? end : wEnd;
+    const { total } = timeBreakdown(from, to);
+    out.push({ from: new Date(from), to: new Date(to), total });
+    cur = wEnd;
+  }
+  return out;
+}
+function renderTime() {
+  const r = timeRange();
+  const { total, per } = timeBreakdown(r.start, r.end);
+  const tabs = [["semaine", "Semaine"], ["mois", "Mois"]]
+    .map(([id, lbl]) => `<button class="chip ${timeTab === id ? "active" : ""}" data-ttab="${id}">${lbl}</button>`).join("");
+  const bar = (s) => {
+    const pct = total > 0 ? Math.round((s / total) * 100) : 0;
+    return `<div class="tm-bar"><div style="width:${pct}%"></div></div><span class="tm-pct">${pct}%</span>`;
+  };
+  const rows = per.length
+    ? per.map((p) => `<div class="tm-row"><span class="tm-name">${esc(p.title)}</span>${bar(p.s)}<span class="timer tm-val">${fmtDuration(p.s)}</span></div>`).join("")
+    : `<div class="muted">Aucun temps sur cette période.</div>`;
+  let weekly = "";
+  if (r.kind === "mois") {
+    const ws = weeksOf(r.start, r.end).filter((w) => w.total > 0);
+    weekly = `<div class="section-h">Par semaine</div><div class="card">${
+      ws.length ? ws.map((w) => `<div class="tm-row"><span class="tm-name">${esc(fmtDate(iso(w.from)))} → ${esc(fmtDate(iso(new Date(w.to - 86400000))))}</span>${bar(w.total)}<span class="timer tm-val">${fmtDuration(w.total)}</span></div>`).join("")
+        : '<div class="muted">—</div>'}</div>`;
+  }
+  const moyenne = r.kind === "mois" && per.length
+    ? `<div class="muted" style="font-size:11px;margin-top:6px">${per.length} mission(s) · moyenne ${fmtDuration(total / per.length)} par mission</div>` : "";
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Temps</div>
       <button class="btn secondary small" data-export-temps-csv>⬇ CSV</button>
       <button class="btn secondary small" data-export-temps-pdf>📄 PDF</button></div>
-    <div class="card"><div class="muted" style="font-size:13px">Semaine · lundi → dimanche</div>
-      <div style="font-weight:600;margin:2px 0 10px">${fmtDate(start.toISOString().slice(0, 10))} → ${fmtDate(new Date(end - 86400000).toISOString().slice(0, 10))}</div>
-      <div class="inline"><strong class="grow">Temps total</strong><span class="timer" style="color:var(--primary);font-size:18px">${fmtDuration(total)}</span></div></div>
-    <div class="section-h">Par mission</div><div class="card">${rows}</div>`;
+    <div class="chip-row" style="margin-bottom:12px">${tabs}</div>
+    <div class="toolbar">
+      <button class="btn ghost small" data-time-nav="-1" title="Période précédente">‹</button>
+      <div class="grow" style="text-align:center">
+        <div class="muted" style="font-size:12px">${esc(r.sub)}</div>
+        <strong style="text-transform:capitalize">${esc(r.label)}</strong></div>
+      <button class="btn ghost small" data-time-nav="1" title="Période suivante">›</button>
+      <button class="btn secondary small" data-time-now>${r.kind === "mois" ? "Ce mois" : "Cette semaine"}</button></div>
+    <div class="card"><div class="inline"><strong class="grow">Temps total</strong>
+      <span class="timer" style="color:var(--primary);font-size:18px">${fmtDuration(total)}</span></div>${moyenne}</div>
+    <div class="section-h">Par mission</div><div class="card">${rows}</div>
+    ${weekly}`;
 }
 function weekInterval(date) { const d = new Date(date); d.setHours(0, 0, 0, 0); const day = (d.getDay() + 6) % 7; const start = new Date(d); start.setDate(d.getDate() - day); const end = new Date(start); end.setDate(start.getDate() + 7); return { start, end }; }
 
@@ -1559,6 +1622,16 @@ function wire() {
   onclick("[data-export-dashboard]", () => printReport("Operations01 - Tableau de bord", "Tableau de bord", reportDashboard()));
   onclick("[data-export-temps-pdf]", () => printReport("Operations01 - Suivi du temps", "Suivi du temps (semaine)", reportTemps()));
   onclick("[data-export-temps-csv]", exportTempsCSV);
+  // Temps : bascule semaine/mois et navigation dans les périodes
+  c.querySelectorAll("[data-ttab]").forEach((b) => b.onclick = () => { timeTab = b.dataset.ttab; render(); });
+  const tNav = c.querySelectorAll("[data-time-nav]");
+  tNav.forEach((b) => b.onclick = () => {
+    const step = Number(b.dataset.timeNav);
+    const d = new Date(timeRef + "T12:00:00");
+    if (timeTab === "mois") d.setMonth(d.getMonth() + step); else d.setDate(d.getDate() + 7 * step);
+    timeRef = iso(d); render();
+  });
+  const tNow = c.querySelector("[data-time-now]"); if (tNow) tNow.onclick = () => { timeRef = todayISO(); render(); };
   onclick("[data-export-factures]", exportFacturesCSV);
 
   // relances (mails)
@@ -2080,14 +2153,13 @@ function reportTresorerie() {
     <table class="rep-table"><thead><tr><th>Société</th><th class="num">Solde</th></tr></thead><tbody>${rows || '<tr><td colspan="2">—</td></tr>'}</tbody></table>`;
 }
 function reportTemps() {
-  const { start, end } = weekInterval(new Date());
-  let total = 0; const per = [];
-  state.missions.forEach((m) => { let s = 0; (m.entries || []).forEach((e) => { const d = e.date ? new Date(e.date + "T12:00:00") : null; if (d && d >= start && d < end) s += entryElapsed(e); }); if (s > 0) { per.push({ t: m.title || "Sans titre", s }); total += s; } });
-  per.sort((a, b) => b.s - a.s);
-  const rows = per.map((p) => `<tr><td>${esc(p.t)}</td><td class="num">${(p.s / 3600).toFixed(2).replace(".", ",")}</td><td class="num">${fmtDuration(p.s)}</td></tr>`).join("");
-  return `<div class="rep-date">Semaine du ${fmtDate(start.toISOString().slice(0, 10))} au ${fmtDate(new Date(end - 86400000).toISOString().slice(0, 10))}</div>
+  const r = timeRange();
+  const { total, per } = timeBreakdown(r.start, r.end);
+  const rows = per.map((p) => `<tr><td>${esc(p.title)}</td><td class="num">${(p.s / 3600).toFixed(2).replace(".", ",")}</td><td class="num">${fmtDuration(p.s)}</td></tr>`).join("");
+  const titre = r.kind === "mois" ? `Mois de ${r.label}` : `Semaine du ${fmtDate(iso(r.start))} au ${fmtDate(iso(new Date(r.end - 86400000)))}`;
+  return `<div class="rep-date">${esc(titre)}</div>
     <table class="rep-table"><thead><tr><th>Mission</th><th class="num">Heures</th><th class="num">Durée</th></tr></thead><tbody>
-    ${rows || '<tr><td colspan="3">Aucun temps cette semaine.</td></tr>'}
+    ${rows || '<tr><td colspan="3">Aucun temps sur cette période.</td></tr>'}
     <tr class="rep-total"><td>Total</td><td class="num">${(total / 3600).toFixed(2).replace(".", ",")}</td><td class="num">${fmtDuration(total)}</td></tr></tbody></table>`;
 }
 function reportDashboard() {
@@ -2122,13 +2194,16 @@ function exportFacturesCSV() {
   downloadFile("operations01-factures.csv", csv, "text/csv;charset=utf-8");
 }
 function exportTempsCSV() {
-  const { start, end } = weekInterval(new Date());
+  const r = timeRange();
+  const { total, per } = timeBreakdown(r.start, r.end);
   const H = ["Mission", "Heures", "Durée"];
-  const rows = [];
-  state.missions.forEach((m) => { let s = 0; (m.entries || []).forEach((e) => { const d = e.date ? new Date(e.date + "T12:00:00") : null; if (d && d >= start && d < end) s += entryElapsed(e); }); if (s > 0) rows.push([m.title || "Sans titre", (s / 3600).toFixed(2).replace(".", ","), fmtDuration(s)]); });
-  const csv = "﻿" + [H, ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
-  downloadFile("operations01-temps-semaine.csv", csv, "text/csv;charset=utf-8");
+  const rows = per.map((p) => [p.title, (p.s / 3600).toFixed(2).replace(".", ","), fmtDuration(p.s)]);
+  rows.push(["TOTAL", (total / 3600).toFixed(2).replace(".", ","), fmtDuration(total)]);
+  const entete = [[r.kind === "mois" ? "Mois" : "Semaine", r.label, ""]];
+  const csv = "\ufeff" + [...entete, [], H, ...rows].map((x) => x.map(csvCell).join(";")).join("\r\n");
+  downloadFile(`operations01-temps-${r.kind}.csv`, csv, "text/csv;charset=utf-8");
 }
+
 
 // ----------------------------- Chronos live -----------------------------
 setInterval(() => {

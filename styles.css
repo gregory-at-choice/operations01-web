@@ -172,6 +172,15 @@ textarea { min-height: 72px; resize: vertical; }
 .dl-legend { display: flex; align-items: center; gap: 8px; margin: 2px 0 14px; font-size: 12px; }
 .dl-grad { flex: 0 0 120px; height: 10px; border-radius: 999px;
   background: linear-gradient(90deg, hsl(190,80%,45%), hsl(120,80%,45%), hsl(60,80%,45%), hsl(30,80%,45%), hsl(0,85%,45%)); }
+/* Suivi du temps : répartition */
+.tm-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.tm-name { flex: 1 1 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tm-bar { flex: 1 1 30%; height: 8px; min-width: 60px; background: var(--line); border-radius: 999px; overflow: hidden; }
+.tm-bar > div { height: 100%; background: var(--primary); border-radius: 999px; }
+.tm-pct { flex: 0 0 34px; text-align: right; font-size: 11px; color: var(--muted); }
+.tm-val { flex: 0 0 auto; min-width: 78px; text-align: right; }
+@media (max-width: 560px) { .tm-bar, .tm-pct { display: none; } }
+
 /* Tableau Kanban des tâches */
 .kb-board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: start; }
 .kb-col { background: rgba(127,206,159,.07); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; min-width: 0; }
