@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v26";
+const APP_VERSION = "v27";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1115,34 +1115,46 @@ function deadlineInfo(due, done) {
   else label = `J-${days} · ${fmtDate(due)}`;
   return { color: deadlineColor(days), label, muted: false };
 }
+// Tâches d'une colonne, classées par échéance croissante (sans échéance en dernier).
+function tasksOf(code) {
+  return state.tasks.filter((t) => (t.status || "aFaire") === code)
+    .sort((a, b) => (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31") || (a.createdAt || 0) - (b.createdAt || 0));
+}
 function renderTasks() {
-  const groups = TASK_STATUSES.map((st) => {
-    const items = state.tasks.filter((t) => (t.status || "aFaire") === st.code)
-      .sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999") || (b.createdAt || 0) - (a.createdAt || 0));
-    const rows = items.map((t) => {
-      const done = (t.status || "aFaire") === "termine";
+  const cols = TASK_STATUSES.map((st, idx) => {
+    const items = tasksOf(st.code);
+    const cards = items.map((t) => {
+      const done = st.code === "termine";
       const di = deadlineInfo(t.dueDate, done);
-      const nextOpts = TASK_STATUSES.map((s) => `<option value="${s.code}" ${s.code === (t.status || "aFaire") ? "selected" : ""}>${s.label}</option>`).join("");
-      const mission = t.missionId ? `<span>${esc(missionTitle(t.missionId))}</span>` : "";
-      const dl = `<span style="color:${di.muted ? "var(--muted)" : di.color};font-weight:${di.muted ? 400 : 600}">${di.muted ? "" : "⬤ "}${esc(di.label)}</span>`;
-      return `<div class="row task-row" style="border-left-color:${di.color}">
-        <div class="grow" style="min-width:160px"><input class="flat-input r-title" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
-          <div class="r-sub">${[mission, dl].filter(Boolean).join(" · ")}</div></div>
-        <input type="date" class="task-due" data-taskdue="${t.id}" value="${esc(t.dueDate || "")}" title="Échéance"/>
-        <select data-task-status="${t.id}" style="width:auto">${nextOpts}</select>
-        <button class="btn ghost small" data-del-task="${t.id}">✕</button></div>`;
+      const mission = t.missionId ? `<div class="kb-mission">${esc(missionTitle(t.missionId))}</div>` : "";
+      return `<div class="kb-card" data-task-card="${t.id}" style="border-left-color:${di.color}">
+        <div class="kb-grip" title="Glisser vers une autre colonne">⠿</div>
+        <input class="flat-input kb-title" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
+        ${mission}
+        <div class="kb-dl" style="color:${di.muted ? "var(--muted)" : di.color};font-weight:${di.muted ? 400 : 600}">${di.muted ? "" : "⬤ "}${esc(di.label)}</div>
+        <div class="kb-actions">
+          <input type="date" data-taskdue="${t.id}" value="${esc(t.dueDate || "")}" title="Échéance"/>
+          <span class="grow"></span>
+          <button class="btn ghost small" data-task-move="-1" data-t="${t.id}" ${idx === 0 ? "disabled" : ""} title="Colonne précédente">‹</button>
+          <button class="btn ghost small" data-task-move="1" data-t="${t.id}" ${idx === TASK_STATUSES.length - 1 ? "disabled" : ""} title="Colonne suivante">›</button>
+          <button class="btn ghost small" data-del-task="${t.id}" title="Supprimer">✕</button>
+        </div></div>`;
     }).join("");
-    return `<div class="section-h">${st.label} <span class="muted">(${items.length})</span></div>
-      <div class="list">${items.length ? rows : '<div class="muted" style="padding:4px 2px">—</div>'}</div>`;
+    return `<div class="kb-col" data-kanban-col="${st.code}">
+      <div class="kb-head"><span class="grow">${st.label}</span><span class="kb-count">${items.length}</span></div>
+      <div class="kb-body">${cards || '<div class="kb-empty">Aucune tâche</div>'}
+        <button class="btn ghost small kb-add" data-add-task="${st.code}">+ Ajouter</button></div>
+    </div>`;
   }).join("");
   const legend = `<div class="dl-legend"><span class="muted">Échéance :</span>
     <span class="dl-grad"></span>
     <span class="muted" style="font-size:11px">lointaine → imminente</span></div>`;
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tâches</div>
-      <button class="btn" data-add-task>+ Nouvelle tâche</button></div>
+      <button class="btn" data-add-task="aFaire">+ Nouvelle tâche</button></div>
     ${legend}
-    ${groups}
-    <button class="btn fab" data-add-task>+</button>`;
+    <div class="muted" style="font-size:11px;margin-bottom:10px">Colonnes classées par échéance la plus proche · glisse une carte (⠿) ou utilise ‹ › pour la déplacer.</div>
+    <div class="kb-board">${cols}</div>
+    <button class="btn fab" data-add-task="aFaire">+</button>`;
 }
 function missionTitle(id) { const m = state.missions.find((x) => x.id === id); return m ? (m.title || "Sans titre") : ""; }
 
@@ -1642,10 +1654,18 @@ function wire() {
   };
 
   // Tâches
-  c.querySelectorAll("[data-add-task]").forEach((b) => b.onclick = () => { state.tasks.push({ id: uid(), title: "", status: "aFaire", missionId: null, dueDate: "", createdAt: Date.now() }); save(); render(); });
+  c.querySelectorAll("[data-add-task]").forEach((b) => b.onclick = () => { const st = b.dataset.addTask || "aFaire"; state.tasks.push({ id: uid(), title: "", status: st, missionId: null, dueDate: "", createdAt: Date.now() }); save(); render(); });
   c.querySelectorAll("[data-taskfield]").forEach((el) => { const h = () => { const t = state.tasks.find((x) => x.id === el.dataset.t); if (t) { t[el.dataset.taskfield] = el.value; save(); } }; el.addEventListener("change", h); el.addEventListener("blur", h); });
   c.querySelectorAll("[data-taskdue]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskdue); if (t) { t.dueDate = el.value; save(); render(); } });
   c.querySelectorAll("[data-task-status]").forEach((sel) => sel.onchange = () => { const t = state.tasks.find((x) => x.id === sel.dataset.taskStatus); if (t) { t.status = sel.value; save(); render(); } });
+  // Kanban : déplacement d'une colonne à l'autre par les flèches
+  c.querySelectorAll("[data-task-move]").forEach((b) => b.onclick = () => {
+    const t = state.tasks.find((x) => x.id === b.dataset.t); if (!t) return;
+    const i = TASK_STATUSES.findIndex((s) => s.code === (t.status || "aFaire"));
+    const j = Math.max(0, Math.min(TASK_STATUSES.length - 1, i + Number(b.dataset.taskMove)));
+    if (j !== i) { t.status = TASK_STATUSES[j].code; save(); render(); }
+  });
+  wireKanban(c);
   c.querySelectorAll("[data-del-task]").forEach((b) => b.onclick = () => { state.tasks = state.tasks.filter((t) => t.id !== b.dataset.delTask); save(); render(); });
 
   // Actions (tickets)
@@ -1669,6 +1689,42 @@ function wire() {
   c.querySelectorAll("[data-plan-open]").forEach((r) => r.onclick = () => { const sec = r.dataset.planOpen, id = r.dataset.planId; if (id) openDetail(sec, id); else go(sec); });
   c.querySelectorAll("[data-ptab]").forEach((b) => b.onclick = () => { planningTab = b.dataset.ptab; render(); });
   wireTimetable(c);
+}
+
+// ---- Kanban : glisser-déposer d'une carte vers une autre colonne ----
+function wireKanban(c) {
+  const cols = Array.from(c.querySelectorAll("[data-kanban-col]"));
+  if (!cols.length) return;
+  c.querySelectorAll("[data-task-card]").forEach((card) => {
+    card.addEventListener("pointerdown", (ev) => {
+      // on ne démarre pas de glissement depuis un champ ou un bouton
+      if (ev.target.closest("input,select,textarea,button,a")) return;
+      const t = state.tasks.find((x) => x.id === card.dataset.taskCard); if (!t) return;
+      ev.preventDefault(); card.setPointerCapture(ev.pointerId);
+      const ghost = document.createElement("div");
+      ghost.className = "tt-ghost"; ghost.textContent = t.title || "Tâche";
+      ghost.style.left = ev.clientX + 8 + "px"; ghost.style.top = ev.clientY + 8 + "px";
+      document.body.appendChild(ghost);
+      let moved = false;
+      const highlight = (el) => cols.forEach((k) => k.classList.toggle("kb-over", k === el));
+      const colAt = (x, y) => cols.find((k) => { const r = k.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }) || null;
+      const onMove = (e) => {
+        moved = true;
+        ghost.style.left = e.clientX + 8 + "px"; ghost.style.top = e.clientY + 8 + "px";
+        highlight(colAt(e.clientX, e.clientY));
+      };
+      const onUp = (e) => {
+        card.removeEventListener("pointermove", onMove); card.removeEventListener("pointerup", onUp); card.removeEventListener("pointercancel", onUp);
+        ghost.remove(); highlight(null);
+        if (!moved) return;
+        const target = colAt(e.clientX, e.clientY);
+        if (target && target.dataset.kanbanCol !== (t.status || "aFaire")) {
+          t.status = target.dataset.kanbanCol; save(); render();
+        }
+      };
+      card.addEventListener("pointermove", onMove); card.addEventListener("pointerup", onUp); card.addEventListener("pointercancel", onUp);
+    });
+  });
 }
 
 // ---- Emploi du temps : glisser-déposer, redimensionnement, création ----
