@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v28";
+const APP_VERSION = "v29";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), updatedAt: 0 };
 }
 function load() {
   try {
@@ -1104,11 +1104,141 @@ function weeksOf(start, end) {
   }
   return out;
 }
+// ----------------------------- Congés (compteur d'heures) -----------------------------
+// Règles : +CRÉDIT MENSUEL le 1er de chaque mois ; en fin de semaine, l'écart entre
+// les heures travaillées et le quota hebdomadaire est crédité (ou débité).
+// Seules les semaines TERMINÉES sont comptées : la semaine en cours est affichée
+// à part, en projection, pour ne pas afficher un solde faussement négatif.
+function defaultLeave() {
+  return { startMonth: new Date().toISOString().slice(0, 7), initialBalance: 0, monthlyCredit: 20, weeklyQuota: 40, hoursPerDay: 8, adjustments: [] };
+}
+const leaveCfg = () => Object.assign(defaultLeave(), state.leave || {});
+// Format signé : 62h30, −32h, +2h30
+function fmtH(h) {
+  const sign = h < 0 ? "−" : (h > 0 ? "+" : "");
+  const a = Math.abs(h), hh = Math.floor(a + 1e-9), mm = Math.round((a - hh) * 60);
+  return sign + (mm ? `${hh}h${String(mm).padStart(2, "0")}` : `${hh}h`);
+}
+const fmtDays = (h, perDay) => (h / (perDay || 8)).toFixed(2).replace(".", ",") + " j";
+// Heures travaillées sur un intervalle (d'après l'historique des missions).
+function workedHours(start, end) { return timeBreakdown(start, end).total / 3600; }
+// Journal chronologique des mouvements, avec solde courant.
+function leaveLedger() {
+  const cfg = leaveCfg();
+  const moves = [];
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const ref = new Date(cfg.startMonth + "-01T12:00:00");
+  if (isNaN(ref)) return { moves: [], balance: cfg.initialBalance, cfg, current: null };
+  // 1er du mois de départ, à minuit (les bornes de semaine le sont aussi :
+  // comparer midi et minuit ferait sauter la première semaine).
+  const first = new Date(ref.getFullYear(), ref.getMonth(), 1);
+
+  // Crédits mensuels : le 1er de chaque mois, du mois de départ au mois courant.
+  const cur = new Date(first);
+  while (cur <= today) {
+    moves.push({ date: iso(new Date(cur.getFullYear(), cur.getMonth(), 1)), kind: "credit",
+      label: `Crédit mensuel — ${cur.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}`, delta: cfg.monthlyCredit });
+    cur.setMonth(cur.getMonth() + 1);
+  }
+  // Régularisations hebdomadaires : semaines entièrement écoulées.
+  // Si le mois commence en milieu de semaine, on ignore cette semaine incomplète
+  // (elle déborderait sur le mois précédent).
+  let w = weekInterval(first).start;
+  if (w < first) w.setDate(w.getDate() + 7);
+  while (true) {
+    const wEnd = new Date(w); wEnd.setDate(w.getDate() + 7);
+    if (wEnd > today) break;                       // semaine non terminée : on s'arrête
+    const worked = workedHours(w, wEnd);
+    moves.push({ date: iso(new Date(wEnd.getTime() - 86400000)), kind: "semaine",
+      label: `Semaine du ${fmtDate(iso(w))} — ${fmtH(worked).replace(/^\+/, "")} travaillées`,
+      delta: worked - cfg.weeklyQuota, worked });
+    w = wEnd;
+  }
+  // Ajustements manuels.
+  (cfg.adjustments || []).forEach((a) => moves.push({ date: a.date, kind: "ajust", label: a.note || "Ajustement", delta: Number(a.hours) || 0, id: a.id }));
+
+  moves.sort((a, b) => (a.date || "").localeCompare(b.date || "") || (a.kind === "credit" ? -1 : 1));
+  let bal = Number(cfg.initialBalance) || 0;
+  moves.forEach((m) => { bal += m.delta; m.balance = bal; });
+
+  // Semaine en cours (non encore régularisée) : projection.
+  const cw = weekInterval(new Date());
+  const current = { start: cw.start, end: cw.end, worked: workedHours(cw.start, cw.end) };
+  current.delta = current.worked - cfg.weeklyQuota;
+  return { moves, balance: bal, cfg, current };
+}
+function renderLeave() {
+  const { moves, balance, cfg, current } = leaveLedger();
+  const rows = [...moves].reverse().slice(0, 80).map((m) => {
+    const col = m.delta >= 0 ? "var(--positive)" : "#d23c3c";
+    return `<tr><td style="white-space:nowrap">${esc(fmtDate(m.date))}</td>
+      <td>${esc(m.label)}</td>
+      <td class="num" style="color:${col};font-weight:600">${esc(fmtH(m.delta))}</td>
+      <td class="num">${esc(fmtH(m.balance).replace(/^\+/, ""))}</td></tr>`;
+  }).join("");
+  return `<div class="card" style="background:rgba(24,193,216,.08)">
+      <div class="inline"><strong class="grow">Solde de congés</strong>
+        <strong style="color:${balance >= 0 ? "var(--positive)" : "#d23c3c"};font-size:22px">${esc(fmtH(balance).replace(/^\+/, ""))}</strong></div>
+      <div class="muted" style="font-size:12px;margin-top:2px">soit ${esc(fmtDays(balance, cfg.hoursPerDay))} · ${cfg.monthlyCredit}h créditées le 1er de chaque mois · quota ${cfg.weeklyQuota}h/semaine</div></div>
+    <div class="card" style="margin-top:10px">
+      <div class="inline"><span class="grow">Semaine en cours <span class="muted" style="font-size:12px">(pas encore régularisée)</span></span>
+        <span class="timer">${esc(fmtH(current.worked).replace(/^\+/, ""))} / ${cfg.weeklyQuota}h</span></div>
+      <div class="muted" style="font-size:12px;margin-top:3px">À la clôture de la semaine : <strong style="color:${current.delta >= 0 ? "var(--positive)" : "#d23c3c"}">${esc(fmtH(current.delta))}</strong> → solde prévisionnel ${esc(fmtH(balance + current.delta).replace(/^\+/, ""))}</div></div>
+    <div class="toolbar" style="margin-top:14px"><span class="grow"></span>
+      <button class="btn secondary small" data-leave-adjust>+ Ajustement</button>
+      <button class="btn secondary small" data-leave-settings>⚙︎ Paramètres</button></div>
+    <div class="section-h">Journal des mouvements</div>
+    <div class="card" style="padding:8px"><div style="overflow-x:auto"><table class="bank-table">
+      <thead><tr><th>Date</th><th>Mouvement</th><th class="num">Variation</th><th class="num">Solde</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="4">Aucun mouvement. Vérifie le mois de départ dans les paramètres.</td></tr>'}</tbody></table></div>
+      ${moves.length > 80 ? `<div class="muted" style="font-size:11px;margin-top:6px">80 mouvements les plus récents sur ${moves.length}.</div>` : ""}</div>
+    <div class="muted" style="font-size:11px;margin-top:10px;line-height:1.5">⚠️ Une semaine sans temps saisi est comptée comme une semaine non travaillée (−${cfg.weeklyQuota}h). Règle le <strong>mois de départ</strong> sur le début réel de ton suivi pour éviter des débits sur des semaines non pointées.</div>`;
+}
+function leaveSettings() {
+  const cfg = leaveCfg();
+  showModal(`<div class="modal-head"><strong class="grow">Paramètres des congés</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <label class="field"><span>Mois de départ du suivi</span><input type="month" id="lvStart" value="${esc(cfg.startMonth)}"/></label>
+    <label class="field"><span>Solde initial (heures)</span><input type="number" step="0.5" id="lvInit" value="${cfg.initialBalance}"/></label>
+    <label class="field"><span>Crédit mensuel (heures)</span><input type="number" step="0.5" id="lvCredit" value="${cfg.monthlyCredit}"/></label>
+    <label class="field"><span>Quota hebdomadaire (heures)</span><input type="number" step="0.5" id="lvQuota" value="${cfg.weeklyQuota}"/></label>
+    <label class="field"><span>Heures par jour (conversion en jours)</span><input type="number" step="0.5" id="lvDay" value="${cfg.hoursPerDay}"/></label>
+    <div class="inline" style="margin-top:12px"><button class="btn" id="lvSave">Enregistrer</button></div>`);
+  document.querySelector("[data-modal-close]").onclick = closeModal;
+  document.getElementById("lvSave").onclick = () => {
+    state.leave = Object.assign(leaveCfg(), {
+      startMonth: document.getElementById("lvStart").value || cfg.startMonth,
+      initialBalance: parseFloat(document.getElementById("lvInit").value) || 0,
+      monthlyCredit: parseFloat(document.getElementById("lvCredit").value) || 0,
+      weeklyQuota: parseFloat(document.getElementById("lvQuota").value) || 40,
+      hoursPerDay: parseFloat(document.getElementById("lvDay").value) || 8
+    });
+    save(); closeModal(); render();
+  };
+}
+function leaveAdjust() {
+  showModal(`<div class="modal-head"><strong class="grow">Ajustement manuel</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">Pour une correction ou un congé non reflété par le temps saisi. Valeur négative = débit.</div>
+    <label class="field"><span>Date</span><input type="date" id="ajDate" value="${todayISO()}"/></label>
+    <label class="field"><span>Heures (+ ou −)</span><input type="number" step="0.5" id="ajH" value="0"/></label>
+    <label class="field"><span>Libellé</span><input id="ajNote" placeholder="Ex. Congé posé, régularisation…"/></label>
+    <div class="inline" style="margin-top:12px"><button class="btn" id="ajSave">Enregistrer</button></div>`);
+  document.querySelector("[data-modal-close]").onclick = closeModal;
+  document.getElementById("ajSave").onclick = () => {
+    const cfg = leaveCfg();
+    cfg.adjustments = (cfg.adjustments || []).concat([{ id: uid(), date: document.getElementById("ajDate").value || todayISO(), hours: parseFloat(document.getElementById("ajH").value) || 0, note: document.getElementById("ajNote").value }]);
+    state.leave = cfg; save(); closeModal(); render();
+  };
+}
+
 function renderTime() {
   const r = timeRange();
   const { total, per } = timeBreakdown(r.start, r.end);
-  const tabs = [["semaine", "Semaine"], ["mois", "Mois"]]
+  const tabs = [["semaine", "Semaine"], ["mois", "Mois"], ["conges", "Congés"]]
     .map(([id, lbl]) => `<button class="chip ${timeTab === id ? "active" : ""}" data-ttab="${id}">${lbl}</button>`).join("");
+  if (timeTab === "conges") {
+    return `<div class="toolbar"><div class="page-title grow" style="margin:0">Temps</div></div>
+      <div class="chip-row" style="margin-bottom:12px">${tabs}</div>${renderLeave()}`;
+  }
   const bar = (s) => {
     const pct = total > 0 ? Math.round((s / total) * 100) : 0;
     return `<div class="tm-bar"><div style="width:${pct}%"></div></div><span class="tm-pct">${pct}%</span>`;
@@ -1632,6 +1762,8 @@ function wire() {
     timeRef = iso(d); render();
   });
   const tNow = c.querySelector("[data-time-now]"); if (tNow) tNow.onclick = () => { timeRef = todayISO(); render(); };
+  const lvS = c.querySelector("[data-leave-settings]"); if (lvS) lvS.onclick = leaveSettings;
+  const lvA = c.querySelector("[data-leave-adjust]"); if (lvA) lvA.onclick = leaveAdjust;
   onclick("[data-export-factures]", exportFacturesCSV);
 
   // relances (mails)
