@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v31";
+const APP_VERSION = "v32";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -241,22 +241,22 @@ function companySelect(bind, current) {
 // n'est pas installée sur l'appareil, le navigateur retombe sur une équivalente.
 const MD_FONTS = [
   // Serif — lecture longue
-  { code: "newyork", group: "Serif", label: "New York", css: 'ui-serif, "New York", "Times New Roman", serif' },
-  { code: "charter", group: "Serif", label: "Charter", css: 'Charter, "Bitstream Charter", "Charis SIL", Georgia, serif' },
-  { code: "baskerville", group: "Serif", label: "Baskerville", css: 'Baskerville, "Baskerville Old Face", "Libre Baskerville", Georgia, serif' },
-  { code: "hoefler", group: "Serif", label: "Hoefler Text", css: '"Hoefler Text", "Times New Roman", Times, serif' },
-  { code: "times", group: "Serif", label: "Times New Roman", css: '"Times New Roman", Times, serif' },
+  { code: "newyork", group: "Serif", label: "New York", css: "ui-serif, 'New York', 'Times New Roman', serif" },
+  { code: "charter", group: "Serif", label: "Charter", css: "Charter, 'Bitstream Charter', 'Charis SIL', Georgia, serif" },
+  { code: "baskerville", group: "Serif", label: "Baskerville", css: "Baskerville, 'Baskerville Old Face', 'Libre Baskerville', Georgia, serif" },
+  { code: "hoefler", group: "Serif", label: "Hoefler Text", css: "'Hoefler Text', 'Times New Roman', Times, serif" },
+  { code: "times", group: "Serif", label: "Times New Roman", css: "'Times New Roman', Times, serif" },
   // Sans serif
-  { code: "avenir", group: "Sans serif", label: "Avenir Next", css: '"Avenir Next", Avenir, "Segoe UI", Roboto, sans-serif' },
-  { code: "optima", group: "Sans serif", label: "Optima", css: 'Optima, Candara, "Segoe UI", sans-serif' },
-  { code: "futura", group: "Sans serif", label: "Futura", css: 'Futura, "Century Gothic", "Trebuchet MS", sans-serif' },
-  { code: "gill", group: "Sans serif", label: "Gill Sans", css: '"Gill Sans", "Gill Sans MT", Calibri, sans-serif' },
-  { code: "verdana", group: "Sans serif", label: "Verdana", css: 'Verdana, Geneva, sans-serif' },
-  { code: "tahoma", group: "Sans serif", label: "Tahoma", css: 'Tahoma, Geneva, Verdana, sans-serif' },
+  { code: "avenir", group: "Sans serif", label: "Avenir Next", css: "'Avenir Next', Avenir, 'Segoe UI', Roboto, sans-serif" },
+  { code: "optima", group: "Sans serif", label: "Optima", css: "Optima, Candara, 'Segoe UI', sans-serif" },
+  { code: "futura", group: "Sans serif", label: "Futura", css: "Futura, 'Century Gothic', 'Trebuchet MS', sans-serif" },
+  { code: "gill", group: "Sans serif", label: "Gill Sans", css: "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif" },
+  { code: "verdana", group: "Sans serif", label: "Verdana", css: "Verdana, Geneva, sans-serif" },
+  { code: "tahoma", group: "Sans serif", label: "Tahoma", css: "Tahoma, Geneva, Verdana, sans-serif" },
   // Monospace
-  { code: "menlo", group: "Monospace", label: "Menlo", css: 'Menlo, ui-monospace, SFMono-Regular, Consolas, monospace' },
-  { code: "monaco", group: "Monospace", label: "Monaco", css: 'Monaco, Menlo, ui-monospace, Consolas, monospace' },
-  { code: "courier", group: "Monospace", label: "Courier New", css: '"Courier New", Courier, monospace' },
+  { code: "menlo", group: "Monospace", label: "Menlo", css: "Menlo, ui-monospace, SFMono-Regular, Consolas, monospace" },
+  { code: "monaco", group: "Monospace", label: "Monaco", css: "Monaco, Menlo, ui-monospace, Consolas, monospace" },
+  { code: "courier", group: "Monospace", label: "Courier New", css: "'Courier New', Courier, monospace" },
 ];
 const MD_BGS = [
   { code: "blanc", label: "Blanc", bg: "#ffffff" },
@@ -302,7 +302,7 @@ function mdToHtml(src) {
   const blocks = [];
   let s = String(src || "").replace(/\r\n?/g, "\n");
   // les blocs de code sont mis de côté pour ne pas être reformatés
-  s = s.replace(/```[\w+-]*\n([\s\S]*?)```/g, (m, code) => { blocks.push(code); return ` C${blocks.length - 1} `; });
+  s = s.replace(/```[\w+-]*\n([\s\S]*?)```/g, (m, code) => { blocks.push(code); return `\uE000C${blocks.length - 1}\uE000`; });
   s = esc(s);
   const lines = s.split("\n");
   const out = [];
@@ -312,7 +312,7 @@ function mdToHtml(src) {
   while (i < lines.length) {
     const l = lines[i];
     if (/^\s*$/.test(l)) { i++; continue; }
-    if (/^ C\d+ $/.test(l.trim())) { out.push(l.trim()); i++; continue; }
+    if (/^\uE000C\d+\uE000$/.test(l.trim())) { out.push(l.trim()); i++; continue; }
     let m;
     if ((m = /^(#{1,6})\s+(.*)$/.exec(l))) { out.push(`<h${m[1].length}>${mdInline(m[2].trim())}</h${m[1].length}>`); i++; continue; }
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { out.push("<hr/>"); i++; continue; }
@@ -351,10 +351,10 @@ function mdToHtml(src) {
     const buf = [];
     while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(#{1,6})\s+/.test(lines[i])
       && !/^\s*([-*+])\s+/.test(lines[i]) && !/^\s*\d+[.)]\s+/.test(lines[i]) && !/^\s*&gt;\s?/.test(lines[i])
-      && !/^ C\d+ $/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
+      && !/^\uE000C\d+\uE000$/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
     if (buf.length) out.push(`<p>${mdInline(buf.join("\n")).replace(/\n/g, "<br/>")}</p>`);
   }
-  return out.join("\n").replace(/ C(\d+) /g, (m, n) => `<pre><code>${esc(blocks[Number(n)])}</code></pre>`);
+  return out.join("\n").replace(/\uE000C(\d+)\uE000/g, (m, n) => `<pre><code>${esc(blocks[Number(n)])}</code></pre>`);
 }
 function renderReader() {
   const fontCss = (MD_FONTS.find((f) => f.code === reader.font) || MD_FONTS[0]).css;
