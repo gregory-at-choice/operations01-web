@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v30";
+const APP_VERSION = "v31";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -237,12 +237,26 @@ function companySelect(bind, current) {
 // Conversion Markdown → HTML sans librairie externe.
 // Le contenu du fichier est ÉCHAPPÉ avant tout traitement : aucun HTML ni script
 // présent dans le document ne peut s'exécuter.
+// Polices proposées au lecteur. Chaque pile prévoit des substituts : si la police
+// n'est pas installée sur l'appareil, le navigateur retombe sur une équivalente.
 const MD_FONTS = [
-  { code: "system", label: "Système", css: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
-  { code: "serif", label: "Serif (Georgia)", css: 'Georgia, "Times New Roman", serif' },
-  { code: "lecture", label: "Lecture (Palatino)", css: '"Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", serif' },
-  { code: "sans", label: "Sans (Helvetica)", css: 'Helvetica, Arial, sans-serif' },
-  { code: "mono", label: "Monospace", css: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
+  // Serif — lecture longue
+  { code: "newyork", group: "Serif", label: "New York", css: 'ui-serif, "New York", "Times New Roman", serif' },
+  { code: "charter", group: "Serif", label: "Charter", css: 'Charter, "Bitstream Charter", "Charis SIL", Georgia, serif' },
+  { code: "baskerville", group: "Serif", label: "Baskerville", css: 'Baskerville, "Baskerville Old Face", "Libre Baskerville", Georgia, serif' },
+  { code: "hoefler", group: "Serif", label: "Hoefler Text", css: '"Hoefler Text", "Times New Roman", Times, serif' },
+  { code: "times", group: "Serif", label: "Times New Roman", css: '"Times New Roman", Times, serif' },
+  // Sans serif
+  { code: "avenir", group: "Sans serif", label: "Avenir Next", css: '"Avenir Next", Avenir, "Segoe UI", Roboto, sans-serif' },
+  { code: "optima", group: "Sans serif", label: "Optima", css: 'Optima, Candara, "Segoe UI", sans-serif' },
+  { code: "futura", group: "Sans serif", label: "Futura", css: 'Futura, "Century Gothic", "Trebuchet MS", sans-serif' },
+  { code: "gill", group: "Sans serif", label: "Gill Sans", css: '"Gill Sans", "Gill Sans MT", Calibri, sans-serif' },
+  { code: "verdana", group: "Sans serif", label: "Verdana", css: 'Verdana, Geneva, sans-serif' },
+  { code: "tahoma", group: "Sans serif", label: "Tahoma", css: 'Tahoma, Geneva, Verdana, sans-serif' },
+  // Monospace
+  { code: "menlo", group: "Monospace", label: "Menlo", css: 'Menlo, ui-monospace, SFMono-Regular, Consolas, monospace' },
+  { code: "monaco", group: "Monospace", label: "Monaco", css: 'Monaco, Menlo, ui-monospace, Consolas, monospace' },
+  { code: "courier", group: "Monospace", label: "Courier New", css: '"Courier New", Courier, monospace' },
 ];
 const MD_BGS = [
   { code: "blanc", label: "Blanc", bg: "#ffffff" },
@@ -255,7 +269,7 @@ const READER_KEY = "operations01_reader";   // hors état synchronisé (document
 let reader = loadReader();
 function loadReader() {
   try { const r = JSON.parse(localStorage.getItem(READER_KEY) || "null"); if (r) return r; } catch (e) {}
-  return { name: "", text: "", font: "system", bg: "blanc", customBg: "", size: 17 };
+  return { name: "", text: "", font: "newyork", bg: "blanc", customBg: "", size: 17 };
 }
 function saveReader() { try { localStorage.setItem(READER_KEY, JSON.stringify(reader)); } catch (e) {} }
 // Texte lisible (clair ou foncé) selon la luminance du fond.
@@ -346,7 +360,16 @@ function renderReader() {
   const fontCss = (MD_FONTS.find((f) => f.code === reader.font) || MD_FONTS[0]).css;
   const bg = reader.customBg || (MD_BGS.find((b) => b.code === reader.bg) || MD_BGS[0]).bg;
   const fg = textOn(bg);
-  const fontOpts = MD_FONTS.map((f) => `<option value="${f.code}" ${f.code === reader.font ? "selected" : ""}>${f.label}</option>`).join("");
+  // menu groupé par famille ; chaque option s'affiche dans sa propre police
+  const groups = [];
+  MD_FONTS.forEach((f) => {
+    let g = groups.find((x) => x.name === (f.group || ""));
+    if (!g) { g = { name: f.group || "", items: [] }; groups.push(g); }
+    g.items.push(f);
+  });
+  const fontOpts = groups.map((g) => `<optgroup label="${esc(g.name)}">${
+    g.items.map((f) => `<option value="${f.code}" style="font-family:${f.css}" ${f.code === reader.font ? "selected" : ""}>${esc(f.label)}</option>`).join("")
+  }</optgroup>`).join("");
   const bgChips = MD_BGS.map((b) => `<button class="md-swatch ${!reader.customBg && reader.bg === b.code ? "active" : ""}" data-md-bg="${b.code}" style="background:${b.bg}" title="${b.label}"></button>`).join("");
   const body = reader.text
     ? `<div class="md-doc" style="font-family:${fontCss};background:${bg};color:${fg};font-size:${reader.size}px">${mdToHtml(reader.text)}</div>`
