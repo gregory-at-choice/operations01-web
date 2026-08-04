@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v29";
+const APP_VERSION = "v30";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -156,6 +156,7 @@ const SECTIONS = [
   { id: "contacts", label: "Contacts", ic: "👥", fn: renderContacts },
   { id: "groupe", label: "Groupe", ic: "🏢", fn: renderGroupe },
   { id: "dashboard", label: "Tableau de bord", ic: "🎛️", fn: renderDashboard },
+  { id: "reader", label: "Lecteur", ic: "📖", fn: renderReader },
 ];
 let view = { section: "missions", detailId: null };
 function go(section) { view = { section, detailId: null }; render(); }
@@ -230,6 +231,137 @@ function companySelect(bind, current) {
     state.companies.map((c) => `<option value="${c.id}" ${c.id === current ? "selected" : ""}>${esc(c.name || "Sans nom")}</option>`)
   ).join("");
   return `<select data-bind="${bind}" data-rerender>${opts}</select>`;
+}
+
+// ----------------------------- Lecteur Markdown -----------------------------
+// Conversion Markdown → HTML sans librairie externe.
+// Le contenu du fichier est ÉCHAPPÉ avant tout traitement : aucun HTML ni script
+// présent dans le document ne peut s'exécuter.
+const MD_FONTS = [
+  { code: "system", label: "Système", css: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
+  { code: "serif", label: "Serif (Georgia)", css: 'Georgia, "Times New Roman", serif' },
+  { code: "lecture", label: "Lecture (Palatino)", css: '"Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", serif' },
+  { code: "sans", label: "Sans (Helvetica)", css: 'Helvetica, Arial, sans-serif' },
+  { code: "mono", label: "Monospace", css: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
+];
+const MD_BGS = [
+  { code: "blanc", label: "Blanc", bg: "#ffffff" },
+  { code: "sepia", label: "Sépia", bg: "#f6ecd9" },
+  { code: "gris", label: "Gris clair", bg: "#eef1f2" },
+  { code: "vert", label: "Vert pâle", bg: "#e9f1e8" },
+  { code: "nuit", label: "Nuit", bg: "#141a1e" },
+];
+const READER_KEY = "operations01_reader";   // hors état synchronisé (documents volumineux)
+let reader = loadReader();
+function loadReader() {
+  try { const r = JSON.parse(localStorage.getItem(READER_KEY) || "null"); if (r) return r; } catch (e) {}
+  return { name: "", text: "", font: "system", bg: "blanc", customBg: "", size: 17 };
+}
+function saveReader() { try { localStorage.setItem(READER_KEY, JSON.stringify(reader)); } catch (e) {} }
+// Texte lisible (clair ou foncé) selon la luminance du fond.
+function textOn(bg) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(bg).trim());
+  if (!m) return "#14201f";
+  const n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? "#14201f" : "#e8efee";
+}
+const safeUrl = (u) => /^(https?:\/\/|mailto:|#|\/|\.\/)/i.test(String(u).trim());
+function mdInline(t) {
+  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+  t = t.replace(/\*\*\*([^*]+)\*\*\*/g, "<strong><em>$1</em></strong>");
+  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+  t = t.replace(/(^|[^*\w])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  t = t.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  // l'URL peut contenir un niveau de parenthèses (liens Wikipédia, etc.)
+  t = t.replace(/!\[([^\]]*)\]\(((?:[^()\s]|\([^()]*\))+)\)/g, (m, alt, url) => {
+    const u = url.replace(/&amp;/g, "&");
+    return safeUrl(u) ? `<img src="${u}" alt="${alt}"/>` : alt;
+  });
+  t = t.replace(/\[([^\]]+)\]\(((?:[^()\s]|\([^()]*\))+)\)/g, (m, txt, url) => {
+    const u = url.replace(/&amp;/g, "&");
+    return safeUrl(u) ? `<a href="${u}" target="_blank" rel="noopener">${txt}</a>` : txt;
+  });
+  return t;
+}
+function mdToHtml(src) {
+  const blocks = [];
+  let s = String(src || "").replace(/\r\n?/g, "\n");
+  // les blocs de code sont mis de côté pour ne pas être reformatés
+  s = s.replace(/```[\w+-]*\n([\s\S]*?)```/g, (m, code) => { blocks.push(code); return ` C${blocks.length - 1} `; });
+  s = esc(s);
+  const lines = s.split("\n");
+  const out = [];
+  let i = 0;
+  const isTableSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+  const cells = (l) => l.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => mdInline(c.trim()));
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^\s*$/.test(l)) { i++; continue; }
+    if (/^ C\d+ $/.test(l.trim())) { out.push(l.trim()); i++; continue; }
+    let m;
+    if ((m = /^(#{1,6})\s+(.*)$/.exec(l))) { out.push(`<h${m[1].length}>${mdInline(m[2].trim())}</h${m[1].length}>`); i++; continue; }
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { out.push("<hr/>"); i++; continue; }
+    // tableau
+    if (l.indexOf("|") > -1 && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      const head = cells(l); i += 2;
+      const body = [];
+      while (i < lines.length && lines[i].indexOf("|") > -1 && !/^\s*$/.test(lines[i])) { body.push(cells(lines[i])); i++; }
+      out.push(`<table><thead><tr>${head.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>${
+        body.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      continue;
+    }
+    // citation
+    if (/^\s*&gt;\s?/.test(l)) {
+      const buf = [];
+      while (i < lines.length && /^\s*&gt;\s?/.test(lines[i])) { buf.push(lines[i].replace(/^\s*&gt;\s?/, "")); i++; }
+      out.push(`<blockquote>${mdToHtml(buf.join("\n").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'"))}</blockquote>`);
+      continue;
+    }
+    // listes
+    if (/^\s*([-*+])\s+/.test(l) || /^\s*\d+[.)]\s+/.test(l)) {
+      const ordered = /^\s*\d+[.)]\s+/.test(l);
+      const items = [];
+      while (i < lines.length && (ordered ? /^\s*\d+[.)]\s+/ : /^\s*([-*+])\s+/).test(lines[i])) {
+        let txt = lines[i].replace(ordered ? /^\s*\d+[.)]\s+/ : /^\s*([-*+])\s+/, "");
+        const task = /^\[( |x|X)\]\s+/.exec(txt);
+        if (task) txt = (task[1].toLowerCase() === "x" ? "☑ " : "☐ ") + txt.replace(/^\[( |x|X)\]\s+/, "");
+        i++;
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) { txt += " " + lines[i].trim(); i++; }
+        items.push(`<li>${mdInline(txt)}</li>`);
+      }
+      out.push(ordered ? `<ol>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`);
+      continue;
+    }
+    // paragraphe
+    const buf = [];
+    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(#{1,6})\s+/.test(lines[i])
+      && !/^\s*([-*+])\s+/.test(lines[i]) && !/^\s*\d+[.)]\s+/.test(lines[i]) && !/^\s*&gt;\s?/.test(lines[i])
+      && !/^ C\d+ $/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
+    if (buf.length) out.push(`<p>${mdInline(buf.join("\n")).replace(/\n/g, "<br/>")}</p>`);
+  }
+  return out.join("\n").replace(/ C(\d+) /g, (m, n) => `<pre><code>${esc(blocks[Number(n)])}</code></pre>`);
+}
+function renderReader() {
+  const fontCss = (MD_FONTS.find((f) => f.code === reader.font) || MD_FONTS[0]).css;
+  const bg = reader.customBg || (MD_BGS.find((b) => b.code === reader.bg) || MD_BGS[0]).bg;
+  const fg = textOn(bg);
+  const fontOpts = MD_FONTS.map((f) => `<option value="${f.code}" ${f.code === reader.font ? "selected" : ""}>${f.label}</option>`).join("");
+  const bgChips = MD_BGS.map((b) => `<button class="md-swatch ${!reader.customBg && reader.bg === b.code ? "active" : ""}" data-md-bg="${b.code}" style="background:${b.bg}" title="${b.label}"></button>`).join("");
+  const body = reader.text
+    ? `<div class="md-doc" style="font-family:${fontCss};background:${bg};color:${fg};font-size:${reader.size}px">${mdToHtml(reader.text)}</div>`
+    : `<div class="center-empty">Aucun document ouvert.<br>Clique sur « Importer un .md » pour en lire un.</div>`;
+  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Lecteur</div>
+      ${reader.text ? '<button class="btn ghost small" data-md-close>Fermer</button>' : ""}
+      <button class="btn" data-md-import>📂 Importer un .md</button></div>
+    <div class="md-bar">
+      <label class="md-ctl"><span>Police</span><select id="mdFont">${fontOpts}</select></label>
+      <label class="md-ctl"><span>Taille</span><input type="number" id="mdSize" min="12" max="28" step="1" value="${reader.size}"/></label>
+      <div class="md-ctl"><span>Fond</span><div class="md-swatches">${bgChips}
+        <input type="color" id="mdCustom" value="${esc(reader.customBg || bg)}" title="Couleur personnalisée"/></div></div>
+      ${reader.name ? `<div class="grow" style="text-align:right"><span class="muted" style="font-size:12px">${esc(reader.name)}</span></div>` : '<span class="grow"></span>'}
+    </div>
+    ${body}`;
 }
 
 // ----------------------------- Recherche globale -----------------------------
@@ -1765,6 +1897,25 @@ function wire() {
   const lvS = c.querySelector("[data-leave-settings]"); if (lvS) lvS.onclick = leaveSettings;
   const lvA = c.querySelector("[data-leave-adjust]"); if (lvA) lvA.onclick = leaveAdjust;
   onclick("[data-export-factures]", exportFacturesCSV);
+
+  // lecteur Markdown
+  const mdImp = c.querySelector("[data-md-import]");
+  if (mdImp) mdImp.onclick = () => {
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = ".md,.markdown,.txt,text/markdown,text/plain";
+    inp.onchange = () => {
+      const f = inp.files && inp.files[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = () => { reader.text = String(r.result); reader.name = f.name; saveReader(); render(); toast("Document ouvert."); };
+      r.readAsText(f, "utf-8");
+    };
+    inp.click();
+  };
+  const mdClose = c.querySelector("[data-md-close]"); if (mdClose) mdClose.onclick = () => { reader.text = ""; reader.name = ""; saveReader(); render(); };
+  const mdFont = c.querySelector("#mdFont"); if (mdFont) mdFont.onchange = () => { reader.font = mdFont.value; saveReader(); render(); };
+  const mdSize = c.querySelector("#mdSize"); if (mdSize) mdSize.onchange = () => { reader.size = Math.max(12, Math.min(28, parseInt(mdSize.value, 10) || 17)); saveReader(); render(); };
+  c.querySelectorAll("[data-md-bg]").forEach((b) => b.onclick = () => { reader.bg = b.dataset.mdBg; reader.customBg = ""; saveReader(); render(); });
+  const mdCustom = c.querySelector("#mdCustom"); if (mdCustom) mdCustom.onchange = () => { reader.customBg = mdCustom.value; saveReader(); render(); };
 
   // relances (mails)
   const mailRefresh = c.querySelector("[data-mail-refresh]"); if (mailRefresh) mailRefresh.onclick = loadMails;
