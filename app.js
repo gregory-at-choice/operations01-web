@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v32";
+const APP_VERSION = "v33";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -266,12 +266,31 @@ const MD_BGS = [
   { code: "nuit", label: "Nuit", bg: "#141a1e" },
 ];
 const READER_KEY = "operations01_reader";   // hors état synchronisé (documents volumineux)
+const READER_MAX = 4.5 * 1024 * 1024;       // garde-fou : capacité du stockage local
+function readerDefaults() { return { docs: [], currentId: null, font: "newyork", bg: "blanc", customBg: "", size: 17 }; }
 let reader = loadReader();
 function loadReader() {
-  try { const r = JSON.parse(localStorage.getItem(READER_KEY) || "null"); if (r) return r; } catch (e) {}
-  return { name: "", text: "", font: "newyork", bg: "blanc", customBg: "", size: 17 };
+  try {
+    const r = JSON.parse(localStorage.getItem(READER_KEY) || "null");
+    if (r) {
+      // reprise de l'ancien format (un seul document) vers la liste de lecture
+      if (!Array.isArray(r.docs)) {
+        r.docs = r.text ? [{ id: uid(), name: r.name || "Document", text: r.text, addedAt: Date.now() }] : [];
+        r.currentId = r.docs.length ? r.docs[0].id : null;
+        delete r.text; delete r.name;
+      }
+      return Object.assign(readerDefaults(), r);
+    }
+  } catch (e) {}
+  return readerDefaults();
 }
-function saveReader() { try { localStorage.setItem(READER_KEY, JSON.stringify(reader)); } catch (e) {} }
+function saveReader() {
+  try { localStorage.setItem(READER_KEY, JSON.stringify(reader)); return true; }
+  catch (e) { alert("Stockage local saturé : retire des documents de la liste de lecture pour en ajouter d'autres."); return false; }
+}
+const readerBytes = () => { try { return JSON.stringify(reader).length; } catch (e) { return 0; } };
+const currentDoc = () => (reader.docs || []).find((d) => d.id === reader.currentId) || null;
+function fmtSize(n) { return n >= 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " Mo" : Math.max(1, Math.round(n / 1024)) + " ko"; }
 // Texte lisible (clair ou foncé) selon la luminance du fond.
 function textOn(bg) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(bg).trim());
@@ -371,20 +390,49 @@ function renderReader() {
     g.items.map((f) => `<option value="${f.code}" style="font-family:${f.css}" ${f.code === reader.font ? "selected" : ""}>${esc(f.label)}</option>`).join("")
   }</optgroup>`).join("");
   const bgChips = MD_BGS.map((b) => `<button class="md-swatch ${!reader.customBg && reader.bg === b.code ? "active" : ""}" data-md-bg="${b.code}" style="background:${b.bg}" title="${b.label}"></button>`).join("");
-  const body = reader.text
-    ? `<div class="md-doc" style="font-family:${fontCss};background:${bg};color:${fg};font-size:${reader.size}px">${mdToHtml(reader.text)}</div>`
-    : `<div class="center-empty">Aucun document ouvert.<br>Clique sur « Importer un .md » pour en lire un.</div>`;
+
+  const docs = reader.docs || [];
+  const cur = currentDoc();
+  const idx = cur ? docs.findIndex((d) => d.id === cur.id) : -1;
+  // liste de lecture (ordre modifiable)
+  const items = docs.map((d, i) => `<div class="md-item ${d.id === reader.currentId ? "active" : ""}" data-md-open="${d.id}">
+      <span class="md-num">${i + 1}</span>
+      <div class="grow" style="min-width:0">
+        <div class="md-item-t">${esc(d.name || "Document")}</div>
+        <div class="md-item-s">${esc(fmtSize((d.text || "").length))}</div></div>
+      <button class="btn ghost small" data-md-move="-1" data-d="${d.id}" ${i === 0 ? "disabled" : ""} title="Monter">↑</button>
+      <button class="btn ghost small" data-md-move="1" data-d="${d.id}" ${i === docs.length - 1 ? "disabled" : ""} title="Descendre">↓</button>
+      <button class="btn ghost small" data-md-del="${d.id}" title="Retirer">✕</button>
+    </div>`).join("");
+
+  const nav = docs.length > 1 && idx > -1
+    ? `<div class="md-nav">
+        <button class="btn ghost small" data-md-prev ${idx === 0 ? "disabled" : ""}>‹ Précédent</button>
+        <span class="grow" style="text-align:center">${idx + 1} / ${docs.length}</span>
+        <button class="btn ghost small" data-md-next ${idx === docs.length - 1 ? "disabled" : ""}>Suivant ›</button></div>`
+    : "";
+  const body = cur
+    ? `${nav}<div class="md-doc" style="font-family:${fontCss};background:${bg};color:${fg};font-size:${reader.size}px">${mdToHtml(cur.text)}</div>`
+    : `<div class="center-empty">${docs.length ? "Choisis un document dans la liste de lecture." : "Aucun document.<br>Clique sur « Importer des .md » — tu peux en sélectionner plusieurs d'un coup."}</div>`;
+
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Lecteur</div>
-      ${reader.text ? '<button class="btn ghost small" data-md-close>Fermer</button>' : ""}
-      <button class="btn" data-md-import>📂 Importer un .md</button></div>
+      ${docs.length ? '<button class="btn ghost small" data-md-clear>Tout retirer</button>' : ""}
+      <button class="btn" data-md-import>📂 Importer des .md</button></div>
     <div class="md-bar">
       <label class="md-ctl"><span>Police</span><select id="mdFont">${fontOpts}</select></label>
       <label class="md-ctl"><span>Taille</span><input type="number" id="mdSize" min="12" max="28" step="1" value="${reader.size}"/></label>
       <div class="md-ctl"><span>Fond</span><div class="md-swatches">${bgChips}
         <input type="color" id="mdCustom" value="${esc(reader.customBg || bg)}" title="Couleur personnalisée"/></div></div>
-      ${reader.name ? `<div class="grow" style="text-align:right"><span class="muted" style="font-size:12px">${esc(reader.name)}</span></div>` : '<span class="grow"></span>'}
+      <span class="grow"></span>
     </div>
-    ${body}`;
+    <div class="md-layout">
+      <div class="md-side">
+        <div class="section-h" style="margin-top:0">Liste de lecture <span class="muted">(${docs.length})</span></div>
+        <div class="md-list">${items || '<div class="muted" style="font-size:12px">Vide.</div>'}</div>
+        ${docs.length ? `<div class="muted" style="font-size:11px;margin-top:8px">${esc(fmtSize(readerBytes()))} utilisés · stockés sur cet appareil</div>` : ""}
+      </div>
+      <div class="md-main">${body}</div>
+    </div>`;
 }
 
 // ----------------------------- Recherche globale -----------------------------
@@ -1925,16 +1973,64 @@ function wire() {
   const mdImp = c.querySelector("[data-md-import]");
   if (mdImp) mdImp.onclick = () => {
     const inp = document.createElement("input");
-    inp.type = "file"; inp.accept = ".md,.markdown,.txt,text/markdown,text/plain";
+    inp.type = "file"; inp.multiple = true;
+    inp.accept = ".md,.markdown,.txt,text/markdown,text/plain";
     inp.onchange = () => {
-      const f = inp.files && inp.files[0]; if (!f) return;
-      const r = new FileReader();
-      r.onload = () => { reader.text = String(r.result); reader.name = f.name; saveReader(); render(); toast("Document ouvert."); };
-      r.readAsText(f, "utf-8");
+      const files = Array.from(inp.files || []);
+      if (!files.length) return;
+      let done = 0, added = 0;
+      files.forEach((f) => {
+        const r = new FileReader();
+        r.onload = () => {
+          const text = String(r.result);
+          if (readerBytes() + text.length < READER_MAX) {
+            reader.docs.push({ id: uid(), name: f.name, text, addedAt: Date.now() });
+            added++;
+          }
+          if (++done === files.length) finish();
+        };
+        r.onerror = () => { if (++done === files.length) finish(); };
+        r.readAsText(f, "utf-8");
+      });
+      const finish = () => {
+        // ordre stable : on suit l'ordre de sélection des fichiers
+        reader.docs.sort((a, b) => (a.addedAt - b.addedAt) || files.findIndex((f) => f.name === a.name) - files.findIndex((f) => f.name === b.name));
+        if (!currentDoc() && reader.docs.length) reader.currentId = reader.docs[0].id;
+        saveReader(); render();
+        const ignored = files.length - added;
+        toast(added + " document(s) ajouté(s)" + (ignored > 0 ? ` · ${ignored} ignoré(s), stockage plein` : ""));
+      };
     };
     inp.click();
   };
-  const mdClose = c.querySelector("[data-md-close]"); if (mdClose) mdClose.onclick = () => { reader.text = ""; reader.name = ""; saveReader(); render(); };
+  c.querySelectorAll("[data-md-open]").forEach((el) => el.onclick = (ev) => {
+    if (ev.target.closest("button")) return;      // les boutons de la ligne ont leur propre action
+    reader.currentId = el.dataset.mdOpen; saveReader(); render();
+  });
+  c.querySelectorAll("[data-md-del]").forEach((b) => b.onclick = () => {
+    const id = b.dataset.mdDel;
+    reader.docs = reader.docs.filter((d) => d.id !== id);
+    if (reader.currentId === id) reader.currentId = reader.docs.length ? reader.docs[0].id : null;
+    saveReader(); render();
+  });
+  c.querySelectorAll("[data-md-move]").forEach((b) => b.onclick = () => {
+    const i = reader.docs.findIndex((d) => d.id === b.dataset.d);
+    const j = i + Number(b.dataset.mdMove);
+    if (i < 0 || j < 0 || j >= reader.docs.length) return;
+    const [d] = reader.docs.splice(i, 1); reader.docs.splice(j, 0, d);
+    saveReader(); render();
+  });
+  const mdClear = c.querySelector("[data-md-clear]");
+  if (mdClear) mdClear.onclick = () => { if (confirm("Retirer tous les documents de la liste de lecture ?")) { reader.docs = []; reader.currentId = null; saveReader(); render(); } };
+  const step = (dir) => {
+    const i = reader.docs.findIndex((d) => d.id === reader.currentId);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= reader.docs.length) return;
+    reader.currentId = reader.docs[j].id; saveReader(); render();
+    const el = document.getElementById("content"); if (el) el.scrollTop = 0;
+  };
+  const mdPrev = c.querySelector("[data-md-prev]"); if (mdPrev) mdPrev.onclick = () => step(-1);
+  const mdNext = c.querySelector("[data-md-next]"); if (mdNext) mdNext.onclick = () => step(1);
   const mdFont = c.querySelector("#mdFont"); if (mdFont) mdFont.onchange = () => { reader.font = mdFont.value; saveReader(); render(); };
   const mdSize = c.querySelector("#mdSize"); if (mdSize) mdSize.onchange = () => { reader.size = Math.max(12, Math.min(28, parseInt(mdSize.value, 10) || 17)); saveReader(); render(); };
   c.querySelectorAll("[data-md-bg]").forEach((b) => b.onclick = () => { reader.bg = b.dataset.mdBg; reader.customBg = ""; saveReader(); render(); });
