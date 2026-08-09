@@ -194,12 +194,13 @@
   }
 
   // Crée un fichier de nom donné (data ou sauvegarde). Renvoie {id, modifiedTime}.
-  async function createNamed(name, content) {
+  async function createNamed(name, content, mime) {
+    const type = mime || "application/json";
     const boundary = "op01" + Math.random().toString(36).slice(2);
-    const meta = JSON.stringify({ name: name, mimeType: "application/json" });
+    const meta = JSON.stringify({ name: name, mimeType: type });
     const body =
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}` +
-      `\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}` +
+      `\r\n--${boundary}\r\nContent-Type: ${type}; charset=UTF-8\r\n\r\n${content}` +
       `\r\n--${boundary}--`;
     const r = await api("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime", {
       method: "POST",
@@ -401,6 +402,29 @@
     ensureToken(false).then(() => { if (pending) { retries = 0; schedule(200); } }).catch(() => {});
   });
 
+  // --- Bibliothèque de documents (.md) : un fichier Drive par document ---
+  // Stockés à part du fichier de données pour ne pas l'alourdir, mais bien
+  // sur le Drive : ils suivent donc d'un appareil et d'un navigateur à l'autre.
+  const DOC_PREFIX = "operations01-doc-";
+  async function listDocs() {
+    if (!hasSession()) return [];
+    const q = encodeURIComponent(`name contains '${DOC_PREFIX}' and trashed=false`);
+    const r = await api(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&orderBy=name&pageSize=200&fields=files(id,name,size,modifiedTime)`);
+    const j = await r.json();
+    return (j.files || []).map((f) => ({
+      id: f.id,
+      name: String(f.name).indexOf(DOC_PREFIX) === 0 ? String(f.name).slice(DOC_PREFIX.length) : f.name,
+      size: Number(f.size) || 0,
+      modifiedTime: f.modifiedTime
+    }));
+  }
+  async function uploadDoc(name, text) {
+    const f = await createNamed(DOC_PREFIX + name, text, "text/markdown");
+    return f.id;
+  }
+  const readDoc = (id) => download(id);
+  const deleteDoc = (id) => deleteFile(id);
+
   window.DriveSync = {
     ready,
     // La redirection ne dépend pas du script Google : un identifiant client suffit.
@@ -420,6 +444,10 @@
     listBackups,
     restore,
     backupNow,
-    readMails
+    readMails,
+    listDocs,
+    uploadDoc,
+    readDoc,
+    deleteDoc
   };
 })();

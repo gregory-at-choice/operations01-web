@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v33";
+const APP_VERSION = "v34";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, updatedAt: 0 };
 }
 function load() {
   try {
@@ -265,32 +265,75 @@ const MD_BGS = [
   { code: "vert", label: "Vert pâle", bg: "#e9f1e8" },
   { code: "nuit", label: "Nuit", bg: "#141a1e" },
 ];
-const READER_KEY = "operations01_reader";   // hors état synchronisé (documents volumineux)
-const READER_MAX = 4.5 * 1024 * 1024;       // garde-fou : capacité du stockage local
-function readerDefaults() { return { docs: [], currentId: null, font: "newyork", bg: "blanc", customBg: "", size: 17 }; }
+const READER_KEY = "operations01_reader";   // préférences d'affichage (propres à l'appareil)
+const READER_CACHE = "operations01_readercache"; // copie locale des documents (lecture hors ligne)
+const READER_MAX = 4.5 * 1024 * 1024;
+function readerDefaults() { return { font: "newyork", bg: "blanc", customBg: "", size: 17 }; }
 let reader = loadReader();
+let readerLib = loadCache();      // [{id, name, size}] connus
+let readerBusy = false;           // chargement Drive en cours
 function loadReader() {
   try {
     const r = JSON.parse(localStorage.getItem(READER_KEY) || "null");
-    if (r) {
-      // reprise de l'ancien format (un seul document) vers la liste de lecture
-      if (!Array.isArray(r.docs)) {
-        r.docs = r.text ? [{ id: uid(), name: r.name || "Document", text: r.text, addedAt: Date.now() }] : [];
-        r.currentId = r.docs.length ? r.docs[0].id : null;
-        delete r.text; delete r.name;
-      }
-      return Object.assign(readerDefaults(), r);
-    }
+    if (r) return Object.assign(readerDefaults(), { font: r.font, bg: r.bg, customBg: r.customBg, size: r.size });
   } catch (e) {}
   return readerDefaults();
 }
-function saveReader() {
-  try { localStorage.setItem(READER_KEY, JSON.stringify(reader)); return true; }
-  catch (e) { alert("Stockage local saturé : retire des documents de la liste de lecture pour en ajouter d'autres."); return false; }
+function saveReader() { try { localStorage.setItem(READER_KEY, JSON.stringify(reader)); } catch (e) {} }
+// Cache local : { docs:[{id,name,size}], texts:{id:contenu} }
+function loadCache() {
+  try { const c = JSON.parse(localStorage.getItem(READER_CACHE) || "null"); if (c && Array.isArray(c.docs)) return c; } catch (e) {}
+  return { docs: [], texts: {} };
 }
-const readerBytes = () => { try { return JSON.stringify(reader).length; } catch (e) { return 0; } };
-const currentDoc = () => (reader.docs || []).find((d) => d.id === reader.currentId) || null;
+function saveCache() {
+  try { localStorage.setItem(READER_CACHE, JSON.stringify(readerLib)); }
+  catch (e) { readerLib.texts = {}; try { localStorage.setItem(READER_CACHE, JSON.stringify(readerLib)); } catch (e2) {} }
+}
+// L'ordre de lecture et le document courant sont dans l'état synchronisé (petits),
+// les documents eux-mêmes sont des fichiers Drive séparés.
+function readerOrder() { return Array.isArray(state.readerOrder) ? state.readerOrder : (state.readerOrder = []); }
+function orderedDocs() {
+  const ord = readerOrder();
+  return [...readerLib.docs].sort((a, b) => {
+    const ia = ord.indexOf(a.id), ib = ord.indexOf(b.id);
+    if (ia > -1 && ib > -1) return ia - ib;
+    if (ia > -1) return -1;
+    if (ib > -1) return 1;
+    return (a.name || "").localeCompare(b.name || "", "fr");
+  });
+}
+const currentDoc = () => orderedDocs().find((d) => d.id === state.readerCurrent) || null;
 function fmtSize(n) { return n >= 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " Mo" : Math.max(1, Math.round(n / 1024)) + " ko"; }
+// Récupère la liste depuis le Drive (les documents suivent d'un appareil à l'autre).
+async function refreshDocs(force) {
+  if (!(window.DriveSync && DriveSync.isConnected())) return;
+  if (readerBusy) return;
+  readerBusy = true; if (view.section === "reader") render();
+  try {
+    const docs = await DriveSync.listDocs();
+    const texts = {};
+    docs.forEach((d) => { if (readerLib.texts[d.id]) texts[d.id] = readerLib.texts[d.id]; });
+    readerLib = { docs, texts };
+    saveCache();
+  } catch (e) {}
+  readerBusy = false;
+  if (view.section === "reader") render();
+}
+// Contenu d'un document : cache local, sinon téléchargement depuis le Drive.
+async function ensureDocText(id) {
+  if (readerLib.texts[id] != null) return readerLib.texts[id];
+  if (!(window.DriveSync && DriveSync.isConnected())) return null;
+  readerBusy = true; if (view.section === "reader") render();
+  try {
+    const txt = await DriveSync.readDoc(id);
+    if (JSON.stringify(readerLib).length + txt.length < READER_MAX) readerLib.texts[id] = txt;
+    else readerLib.texts[id] = txt;   // gardé en mémoire même si le cache déborde
+    saveCache();
+  } catch (e) {}
+  readerBusy = false;
+  if (view.section === "reader") render();
+  return readerLib.texts[id] != null ? readerLib.texts[id] : null;
+}
 // Texte lisible (clair ou foncé) selon la luminance du fond.
 function textOn(bg) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(bg).trim());
@@ -391,15 +434,15 @@ function renderReader() {
   }</optgroup>`).join("");
   const bgChips = MD_BGS.map((b) => `<button class="md-swatch ${!reader.customBg && reader.bg === b.code ? "active" : ""}" data-md-bg="${b.code}" style="background:${b.bg}" title="${b.label}"></button>`).join("");
 
-  const docs = reader.docs || [];
+  const docs = orderedDocs();
   const cur = currentDoc();
   const idx = cur ? docs.findIndex((d) => d.id === cur.id) : -1;
-  // liste de lecture (ordre modifiable)
-  const items = docs.map((d, i) => `<div class="md-item ${d.id === reader.currentId ? "active" : ""}" data-md-open="${d.id}">
+  const connected = window.DriveSync && DriveSync.isConnected();
+  const items = docs.map((d, i) => `<div class="md-item ${d.id === state.readerCurrent ? "active" : ""}" data-md-open="${d.id}">
       <span class="md-num">${i + 1}</span>
       <div class="grow" style="min-width:0">
         <div class="md-item-t">${esc(d.name || "Document")}</div>
-        <div class="md-item-s">${esc(fmtSize((d.text || "").length))}</div></div>
+        <div class="md-item-s">${esc(fmtSize(d.size || (readerLib.texts[d.id] || "").length))}${readerLib.texts[d.id] != null ? "" : " · sur le Drive"}</div></div>
       <button class="btn ghost small" data-md-move="-1" data-d="${d.id}" ${i === 0 ? "disabled" : ""} title="Monter">↑</button>
       <button class="btn ghost small" data-md-move="1" data-d="${d.id}" ${i === docs.length - 1 ? "disabled" : ""} title="Descendre">↓</button>
       <button class="btn ghost small" data-md-del="${d.id}" title="Retirer">✕</button>
@@ -411,11 +454,15 @@ function renderReader() {
         <span class="grow" style="text-align:center">${idx + 1} / ${docs.length}</span>
         <button class="btn ghost small" data-md-next ${idx === docs.length - 1 ? "disabled" : ""}>Suivant ›</button></div>`
     : "";
-  const body = cur
-    ? `${nav}<div class="md-doc" style="font-family:${fontCss};background:${bg};color:${fg};font-size:${reader.size}px">${mdToHtml(cur.text)}</div>`
-    : `<div class="center-empty">${docs.length ? "Choisis un document dans la liste de lecture." : "Aucun document.<br>Clique sur « Importer des .md » — tu peux en sélectionner plusieurs d'un coup."}</div>`;
+  const curText = cur ? readerLib.texts[cur.id] : null;
+  let body;
+  if (!connected) body = `<div class="center-empty">Connecte-toi à Google Drive (menu de gauche) : tes documents y sont enregistrés et suivent d'un appareil à l'autre.</div>`;
+  else if (cur && curText != null) body = `${nav}<div class="md-doc" style="font-family:${fontCss};background:${bg};color:${fg};font-size:${reader.size}px">${mdToHtml(curText)}</div>`;
+  else if (cur) body = `${nav}<div class="center-empty">${readerBusy ? "Chargement du document…" : "Document non chargé — clique à nouveau dessus dans la liste."}</div>`;
+  else body = `<div class="center-empty">${docs.length ? "Choisis un document dans la liste de lecture." : (readerBusy ? "Lecture du Drive…" : "Aucun document.<br>Clique sur « Importer des .md » — tu peux en sélectionner plusieurs d'un coup.")}</div>`;
 
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Lecteur</div>
+      <button class="btn ghost small" data-md-refresh>${readerBusy ? "…" : "↻"}</button>
       ${docs.length ? '<button class="btn ghost small" data-md-clear>Tout retirer</button>' : ""}
       <button class="btn" data-md-import>📂 Importer des .md</button></div>
     <div class="md-bar">
@@ -429,7 +476,7 @@ function renderReader() {
       <div class="md-side">
         <div class="section-h" style="margin-top:0">Liste de lecture <span class="muted">(${docs.length})</span></div>
         <div class="md-list">${items || '<div class="muted" style="font-size:12px">Vide.</div>'}</div>
-        ${docs.length ? `<div class="muted" style="font-size:11px;margin-top:8px">${esc(fmtSize(readerBytes()))} utilisés · stockés sur cet appareil</div>` : ""}
+        ${docs.length ? `<div class="muted" style="font-size:11px;margin-top:8px">Enregistrés sur ton Google Drive</div>` : ""}
       </div>
       <div class="md-main">${body}</div>
     </div>`;
@@ -1969,65 +2016,75 @@ function wire() {
   const lvA = c.querySelector("[data-leave-adjust]"); if (lvA) lvA.onclick = leaveAdjust;
   onclick("[data-export-factures]", exportFacturesCSV);
 
-  // lecteur Markdown
+  // lecteur Markdown — les documents sont des fichiers sur le Drive
+  if (view.section === "reader" && !readerBusy && !readerLib.docs.length && window.DriveSync && DriveSync.isConnected()) refreshDocs();
+  const mdRef = c.querySelector("[data-md-refresh]"); if (mdRef) mdRef.onclick = () => refreshDocs(true);
   const mdImp = c.querySelector("[data-md-import]");
   if (mdImp) mdImp.onclick = () => {
+    if (!(window.DriveSync && DriveSync.isConnected())) { alert("Connecte-toi d'abord à Google Drive : les documents y sont enregistrés pour être disponibles sur tous tes appareils."); return; }
     const inp = document.createElement("input");
     inp.type = "file"; inp.multiple = true;
     inp.accept = ".md,.markdown,.txt,text/markdown,text/plain";
-    inp.onchange = () => {
+    inp.onchange = async () => {
       const files = Array.from(inp.files || []);
       if (!files.length) return;
-      let done = 0, added = 0;
-      files.forEach((f) => {
-        const r = new FileReader();
-        r.onload = () => {
-          const text = String(r.result);
-          if (readerBytes() + text.length < READER_MAX) {
-            reader.docs.push({ id: uid(), name: f.name, text, addedAt: Date.now() });
-            added++;
-          }
-          if (++done === files.length) finish();
-        };
-        r.onerror = () => { if (++done === files.length) finish(); };
-        r.readAsText(f, "utf-8");
-      });
-      const finish = () => {
-        // ordre stable : on suit l'ordre de sélection des fichiers
-        reader.docs.sort((a, b) => (a.addedAt - b.addedAt) || files.findIndex((f) => f.name === a.name) - files.findIndex((f) => f.name === b.name));
-        if (!currentDoc() && reader.docs.length) reader.currentId = reader.docs[0].id;
-        saveReader(); render();
-        const ignored = files.length - added;
-        toast(added + " document(s) ajouté(s)" + (ignored > 0 ? ` · ${ignored} ignoré(s), stockage plein` : ""));
-      };
+      readerBusy = true; render();
+      let added = 0, failed = 0;
+      for (const f of files) {
+        try {
+          const text = await f.text();
+          const id = await DriveSync.uploadDoc(f.name, text);
+          readerLib.docs.push({ id, name: f.name, size: text.length });
+          readerLib.texts[id] = text;
+          readerOrder().push(id);
+          if (!state.readerCurrent) state.readerCurrent = id;
+          added++;
+        } catch (e) { failed++; }
+      }
+      saveCache(); save();
+      readerBusy = false; render();
+      toast(added + " document(s) ajouté(s) sur le Drive" + (failed ? ` · ${failed} en échec` : ""));
     };
     inp.click();
   };
-  c.querySelectorAll("[data-md-open]").forEach((el) => el.onclick = (ev) => {
-    if (ev.target.closest("button")) return;      // les boutons de la ligne ont leur propre action
-    reader.currentId = el.dataset.mdOpen; saveReader(); render();
+  c.querySelectorAll("[data-md-open]").forEach((el) => el.onclick = async (ev) => {
+    if (ev.target.closest("button")) return;
+    state.readerCurrent = el.dataset.mdOpen; save(); render();
+    await ensureDocText(state.readerCurrent);
   });
-  c.querySelectorAll("[data-md-del]").forEach((b) => b.onclick = () => {
+  c.querySelectorAll("[data-md-del]").forEach((b) => b.onclick = async () => {
     const id = b.dataset.mdDel;
-    reader.docs = reader.docs.filter((d) => d.id !== id);
-    if (reader.currentId === id) reader.currentId = reader.docs.length ? reader.docs[0].id : null;
-    saveReader(); render();
+    const d = readerLib.docs.find((x) => x.id === id);
+    if (!confirm(`Retirer « ${d ? d.name : "ce document"} » ? Le fichier sera supprimé de ton Drive.`)) return;
+    try { await DriveSync.deleteDoc(id); } catch (e) {}
+    readerLib.docs = readerLib.docs.filter((x) => x.id !== id);
+    delete readerLib.texts[id];
+    state.readerOrder = readerOrder().filter((x) => x !== id);
+    if (state.readerCurrent === id) state.readerCurrent = readerLib.docs.length ? orderedDocs()[0].id : null;
+    saveCache(); save(); render();
   });
   c.querySelectorAll("[data-md-move]").forEach((b) => b.onclick = () => {
-    const i = reader.docs.findIndex((d) => d.id === b.dataset.d);
-    const j = i + Number(b.dataset.mdMove);
-    if (i < 0 || j < 0 || j >= reader.docs.length) return;
-    const [d] = reader.docs.splice(i, 1); reader.docs.splice(j, 0, d);
-    saveReader(); render();
+    const ids = orderedDocs().map((d) => d.id);
+    const i = ids.indexOf(b.dataset.d), j = i + Number(b.dataset.mdMove);
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    const [x] = ids.splice(i, 1); ids.splice(j, 0, x);
+    state.readerOrder = ids; save(); render();
   });
   const mdClear = c.querySelector("[data-md-clear]");
-  if (mdClear) mdClear.onclick = () => { if (confirm("Retirer tous les documents de la liste de lecture ?")) { reader.docs = []; reader.currentId = null; saveReader(); render(); } };
-  const step = (dir) => {
-    const i = reader.docs.findIndex((d) => d.id === reader.currentId);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= reader.docs.length) return;
-    reader.currentId = reader.docs[j].id; saveReader(); render();
+  if (mdClear) mdClear.onclick = async () => {
+    if (!confirm("Retirer tous les documents ? Les fichiers seront supprimés de ton Drive.")) return;
+    readerBusy = true; render();
+    for (const d of [...readerLib.docs]) { try { await DriveSync.deleteDoc(d.id); } catch (e) {} }
+    readerLib = { docs: [], texts: {} }; state.readerOrder = []; state.readerCurrent = null;
+    saveCache(); save(); readerBusy = false; render();
+  };
+  const step = async (dir) => {
+    const ids = orderedDocs().map((d) => d.id);
+    const j = ids.indexOf(state.readerCurrent) + dir;
+    if (j < 0 || j >= ids.length) return;
+    state.readerCurrent = ids[j]; save(); render();
     const el = document.getElementById("content"); if (el) el.scrollTop = 0;
+    await ensureDocText(state.readerCurrent);
   };
   const mdPrev = c.querySelector("[data-md-prev]"); if (mdPrev) mdPrev.onclick = () => step(-1);
   const mdNext = c.querySelector("[data-md-next]"); if (mdNext) mdNext.onclick = () => step(1);
