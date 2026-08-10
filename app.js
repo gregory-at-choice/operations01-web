@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v34";
+const APP_VERSION = "v35";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -579,44 +579,92 @@ const missionCreated = (m) => m.createdAt || (m.startDate ? new Date(m.startDate
 // Classement par ordre chronologique de création (la plus ancienne en premier).
 // Le tri est stable : à date identique (données importées en bloc), l'ordre
 // d'origine du fichier est conservé.
-function sortedMissions() {
-  return [...state.missions].sort((a, b) => missionCreated(a) - missionCreated(b));
+let missionView = "liste", missionSort = "creation";
+const MISSION_SORTS = [["creation", "Création"], ["nom", "Nom (A→Z)"], ["recent", "Dernier événement"]];
+function sortMissions(arr) {
+  const a = [...arr];
+  if (missionSort === "nom") a.sort((x, y) => (x.title || "").localeCompare(y.title || "", "fr", { sensitivity: "base" }));
+  else if (missionSort === "recent") a.sort((x, y) => (missionLast(y) || "").localeCompare(missionLast(x) || "") || missionCreated(y) - missionCreated(x));
+  else a.sort((x, y) => missionCreated(x) - missionCreated(y));   // ordre chronologique de création
+  return a;
 }
+function sortedMissions() { return sortMissions(state.missions); }
 const missionRunning = (m) => (m.entries || []).some((e) => e.timerStartedAt);
 const anyTimerRunning = () => state.missions.some(missionRunning);
 function renderMissions() {
   if (view.detailId) return renderMissionDetail(view.detailId);
-  const items = sortedMissions();
-  const nbRunning = items.filter(missionRunning).length;
-  const rows = items.map((m) => {
-    const total = missionTotal(m);
-    const run = missionRunning(m);
-    const parts = [`${(m.entries || []).length} élément(s)`];
-    parts.push(`⏱ <span class="timer${run ? " running" : ""}" data-total="${m.id}">${fmtDuration(total)}</span>`);
-    if (m.companyId) parts.push(esc(companyName(m.companyId)));
-    const start = missionStart(m), last = missionLast(m);
-    const dates = `Début ${start ? esc(fmtDate(start)) : "—"} · Dernier événement ${last ? esc(fmtDate(last)) : "—"}`;
-    return `<div class="row" data-open-mission="${m.id}" style="border-left-color:${run ? "#d23c3c" : "var(--primary)"}">
-      <div class="grow"><div class="r-title">${esc(m.title || "Nouvelle mission")}</div>
-        <div class="r-sub">${parts.join(" · ")}</div>
-        <div class="r-sub">${dates}</div></div>
-      ${run ? '<span class="run-dot" title="Chronomètre en cours"></span>' : ""}
-      <span class="badge ${m.statusCode}">${statusLabel(m.statusCode)}</span></div>`;
-  }).join("");
+  const all = sortedMissions();
+  const nbRunning = all.filter(missionRunning).length;
   const banner = nbRunning
     ? `<div class="run-banner"><span class="run-dot"></span>
         <span class="grow">${nbRunning} chronomètre(s) en cours</span>
         <button class="btn danger small" data-stop-all>■ Tout arrêter</button></div>`
     : "";
-  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Missions</div>
+  const viewChips = [["liste", "Liste"], ["kanban", "Kanban"]]
+    .map(([id, lbl]) => `<button class="chip ${missionView === id ? "active" : ""}" data-mview="${id}">${lbl}</button>`).join("");
+  const sortOpts = MISSION_SORTS.map(([id, lbl]) => `<option value="${id}" ${missionSort === id ? "selected" : ""}>${lbl}</option>`).join("");
+  const head = `<div class="toolbar"><div class="page-title grow" style="margin:0">Missions</div>
       <button class="btn danger small" data-reset>Réinitialiser</button>
       <button class="btn secondary small" data-import>Importer</button>
       <button class="btn secondary small" data-export>Exporter</button>
       <button class="btn" data-add-mission>+ Nouvelle mission</button></div>
-    ${banner}
-    <div class="list">${items.length ? rows : '<div class="center-empty">Aucune mission.</div>'}</div>
-    <button class="btn fab" data-add-mission>+</button>`;
+    <div class="toolbar" style="margin-bottom:12px">
+      <div class="chip-row">${viewChips}</div>
+      <span class="grow"></span>
+      <label class="md-ctl" style="flex-direction:row;align-items:center;gap:6px"><span>Trier par</span>
+        <select id="missionSort" style="width:auto">${sortOpts}</select></label></div>`;
+
+  const meta = (m) => {
+    const parts = [`${(m.entries || []).length} élément(s)`,
+      `⏱ <span class="timer${missionRunning(m) ? " running" : ""}" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span>`];
+    if (m.companyId) parts.push(esc(companyName(m.companyId)));
+    return parts.join(" · ");
+  };
+  const dates = (m) => {
+    const st = missionStart(m), la = missionLast(m);
+    return `Début ${st ? esc(fmtDate(st)) : "—"} · Dernier événement ${la ? esc(fmtDate(la)) : "—"}`;
+  };
+
+  if (missionView === "kanban") {
+    const cols = STATUSES.map((st, idx) => {
+      const items = sortMissions(state.missions.filter((m) => (m.statusCode || "aDemarrer") === st.code));
+      const cards = items.map((m) => {
+        const run = missionRunning(m);
+        return `<div class="kb-card mission-card" data-mission-card="${m.id}" style="border-left-color:${run ? "#d23c3c" : "var(--primary)"}">
+          <div class="kb-title-row"><span class="grow">${esc(m.title || "Nouvelle mission")}</span>${run ? '<span class="run-dot" title="Chronomètre en cours"></span>' : ""}</div>
+          <div class="kb-meta">${meta(m)}</div>
+          <div class="kb-meta">${dates(m)}</div>
+          <div class="kb-actions">
+            <button class="btn ghost small" data-open-mission="${m.id}">Ouvrir</button>
+            <span class="grow"></span>
+            <button class="btn ghost small" data-mission-move="-1" data-m="${m.id}" ${idx === 0 ? "disabled" : ""} title="Colonne précédente">‹</button>
+            <button class="btn ghost small" data-mission-move="1" data-m="${m.id}" ${idx === STATUSES.length - 1 ? "disabled" : ""} title="Colonne suivante">›</button>
+          </div></div>`;
+      }).join("");
+      return `<div class="kb-col" data-mission-col="${st.code}">
+        <div class="kb-head"><span class="grow">${st.label}</span><span class="kb-count">${items.length}</span></div>
+        <div class="kb-body">${cards || '<div class="kb-empty">Aucune mission</div>'}</div></div>`;
+    }).join("");
+    return head + banner
+      + `<div class="muted" style="font-size:11px;margin-bottom:10px">Glisse une mission vers une autre colonne pour changer son statut, ou utilise ‹ ›.</div>
+         <div class="kb-board cols4">${cols}</div>
+         <button class="btn fab" data-add-mission>+</button>`;
+  }
+
+  const rows = all.map((m) => {
+    const run = missionRunning(m);
+    return `<div class="row" data-open-mission="${m.id}" style="border-left-color:${run ? "#d23c3c" : "var(--primary)"}">
+      <div class="grow"><div class="r-title">${esc(m.title || "Nouvelle mission")}</div>
+        <div class="r-sub">${meta(m)}</div>
+        <div class="r-sub">${dates(m)}</div></div>
+      ${run ? '<span class="run-dot" title="Chronomètre en cours"></span>' : ""}
+      <span class="badge ${m.statusCode}">${statusLabel(m.statusCode)}</span></div>`;
+  }).join("");
+  return head + banner
+    + `<div class="list">${all.length ? rows : '<div class="center-empty">Aucune mission.</div>'}</div>
+       <button class="btn fab" data-add-mission>+</button>`;
 }
+
 function renderMissionDetail(id) {
   const m = state.missions.find((x) => x.id === id);
   if (!m) return renderMissions();
@@ -2176,6 +2224,15 @@ function wire() {
   });
   c.querySelectorAll("[data-dur-zero]").forEach((b) => b.onclick = () => applyDuration(b, 0));
   c.querySelectorAll("[data-del-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); if (!m) return; m.entries = m.entries.filter((e) => e.id !== b.dataset.delEntry); save(); render(); });
+  c.querySelectorAll("[data-mview]").forEach((b) => b.onclick = () => { missionView = b.dataset.mview; render(); });
+  const mSort = c.querySelector("#missionSort"); if (mSort) mSort.onchange = () => { missionSort = mSort.value; render(); };
+  c.querySelectorAll("[data-mission-move]").forEach((b) => b.onclick = (ev) => {
+    ev.stopPropagation();
+    const m = findMission(b.dataset.m); if (!m) return;
+    const i = STATUSES.findIndex((s) => s.code === (m.statusCode || "aDemarrer"));
+    const j = Math.max(0, Math.min(STATUSES.length - 1, i + Number(b.dataset.missionMove)));
+    if (j !== i) { m.statusCode = STATUSES[j].code; save(); render(); }
+  });
   const stopAll = c.querySelector("[data-stop-all]");
   if (stopAll) stopAll.onclick = () => {
     let n = 0;
@@ -2224,17 +2281,26 @@ function wire() {
 }
 
 // ---- Kanban : glisser-déposer d'une carte vers une autre colonne ----
-function wireKanban(c) {
-  const cols = Array.from(c.querySelectorAll("[data-kanban-col]"));
+// Glisser-déposer générique entre colonnes d'un tableau (tâches, missions…).
+//   cardAttr : attribut portant l'identifiant de la carte
+//   colAttr  : attribut portant le code de la colonne
+//   label    : libellé affiché pendant le glissement
+//   current  : code de colonne actuel d'un identifiant
+//   onDrop   : appelé si la carte change de colonne
+function wireBoardDnD(c, cardAttr, colAttr, label, current, onDrop) {
+  const cols = Array.from(c.querySelectorAll("[" + colAttr + "]"));
   if (!cols.length) return;
-  c.querySelectorAll("[data-task-card]").forEach((card) => {
+  const colCode = (el) => el.getAttribute(colAttr);
+  c.querySelectorAll("[" + cardAttr + "]").forEach((card) => {
     card.addEventListener("pointerdown", (ev) => {
       // on ne démarre pas de glissement depuis un champ ou un bouton
       if (ev.target.closest("input,select,textarea,button,a")) return;
-      const t = state.tasks.find((x) => x.id === card.dataset.taskCard); if (!t) return;
+      const id = card.getAttribute(cardAttr);
+      const txt = label(id);
+      if (txt == null) return;
       ev.preventDefault(); card.setPointerCapture(ev.pointerId);
       const ghost = document.createElement("div");
-      ghost.className = "tt-ghost"; ghost.textContent = t.title || "Tâche";
+      ghost.className = "tt-ghost"; ghost.textContent = txt;
       ghost.style.left = ev.clientX + 8 + "px"; ghost.style.top = ev.clientY + 8 + "px";
       document.body.appendChild(ghost);
       let moved = false;
@@ -2250,13 +2316,23 @@ function wireKanban(c) {
         ghost.remove(); highlight(null);
         if (!moved) return;
         const target = colAt(e.clientX, e.clientY);
-        if (target && target.dataset.kanbanCol !== (t.status || "aFaire")) {
-          t.status = target.dataset.kanbanCol; save(); render();
-        }
+        if (target && colCode(target) !== current(id)) onDrop(id, colCode(target));
       };
       card.addEventListener("pointermove", onMove); card.addEventListener("pointerup", onUp); card.addEventListener("pointercancel", onUp);
     });
   });
+}
+function wireKanban(c) {
+  // tableau des tâches
+  wireBoardDnD(c, "data-task-card", "data-kanban-col",
+    (id) => { const t = state.tasks.find((x) => x.id === id); return t ? (t.title || "Tâche") : null; },
+    (id) => { const t = state.tasks.find((x) => x.id === id); return t ? (t.status || "aFaire") : ""; },
+    (id, code) => { const t = state.tasks.find((x) => x.id === id); if (t) { t.status = code; save(); render(); } });
+  // tableau des missions
+  wireBoardDnD(c, "data-mission-card", "data-mission-col",
+    (id) => { const m = findMission(id); return m ? (m.title || "Mission") : null; },
+    (id) => { const m = findMission(id); return m ? (m.statusCode || "aDemarrer") : ""; },
+    (id, code) => { const m = findMission(id); if (m) { m.statusCode = code; save(); render(); } });
 }
 
 // ---- Emploi du temps : glisser-déposer, redimensionnement, création ----
