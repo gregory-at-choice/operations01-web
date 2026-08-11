@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v35";
+const APP_VERSION = "v36";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -418,6 +418,19 @@ function mdToHtml(src) {
   }
   return out.join("\n").replace(/\uE000C(\d+)\uE000/g, (m, n) => `<pre><code>${esc(blocks[Number(n)])}</code></pre>`);
 }
+// Impression / export PDF du document en cours de lecture.
+// La police choisie est conservée ; le fond coloré est remplacé par du blanc
+// (un fond sépia ou nuit n'a pas de sens sur papier ni dans un PDF).
+function printCurrentDoc() {
+  const d = currentDoc();
+  if (!d) { toast("Aucun document ouvert."); return; }
+  const txt = readerLib.texts[d.id];
+  if (txt == null) { toast("Document pas encore chargé — ouvre-le d'abord."); return; }
+  const fontCss = (MD_FONTS.find((f) => f.code === reader.font) || MD_FONTS[0]).css;
+  const nom = String(d.name || "Document").replace(/\.(md|markdown|txt)$/i, "");
+  printReport("Operations01 - " + nom, nom,
+    `<div class="md-doc md-print" style="font-family:${fontCss}">${mdToHtml(txt)}</div>`);
+}
 function renderReader() {
   const fontCss = (MD_FONTS.find((f) => f.code === reader.font) || MD_FONTS[0]).css;
   const bg = reader.customBg || (MD_BGS.find((b) => b.code === reader.bg) || MD_BGS[0]).bg;
@@ -463,6 +476,7 @@ function renderReader() {
 
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Lecteur</div>
       <button class="btn ghost small" data-md-refresh>${readerBusy ? "…" : "↻"}</button>
+      ${cur && readerLib.texts[cur.id] != null ? '<button class="btn secondary small" data-md-print>📄 Imprimer / PDF</button>' : ""}
       ${docs.length ? '<button class="btn ghost small" data-md-clear>Tout retirer</button>' : ""}
       <button class="btn" data-md-import>📂 Importer des .md</button></div>
     <div class="md-bar">
@@ -2067,6 +2081,7 @@ function wire() {
   // lecteur Markdown — les documents sont des fichiers sur le Drive
   if (view.section === "reader" && !readerBusy && !readerLib.docs.length && window.DriveSync && DriveSync.isConnected()) refreshDocs();
   const mdRef = c.querySelector("[data-md-refresh]"); if (mdRef) mdRef.onclick = () => refreshDocs(true);
+  const mdPrint = c.querySelector("[data-md-print]"); if (mdPrint) mdPrint.onclick = printCurrentDoc;
   const mdImp = c.querySelector("[data-md-import]");
   if (mdImp) mdImp.onclick = () => {
     if (!(window.DriveSync && DriveSync.isConnected())) { alert("Connecte-toi d'abord à Google Drive : les documents y sont enregistrés pour être disponibles sur tous tes appareils."); return; }

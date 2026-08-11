@@ -333,7 +333,17 @@ textarea { min-height: 72px; resize: vertical; }
 .rep-table td { padding: 6px 10px; border-bottom: 1px solid #e5e9ec; color: #111; }
 .rep-table .num { text-align: right; white-space: nowrap; }
 .rep-table .rep-total td { font-weight: 700; border-top: 2px solid #111; background: #fafafa; }
+/* Version imprimable d'un document du lecteur : fond blanc, pleine largeur */
+.md-print { background: #fff !important; color: #111 !important; box-shadow: none; max-width: none; padding: 0; }
+.md-print a { color: #111; }
+.md-print pre, .md-print code { background: #f1f3f4; }
+.md-print th, .md-print td { border-color: #bbb; }
 @media print {
+  /* éviter les coupures disgracieuses en milieu d'élément */
+  .md-print h1, .md-print h2, .md-print h3, .md-print h4 { break-after: avoid; page-break-after: avoid; }
+  .md-print pre, .md-print table, .md-print blockquote, .md-print img { break-inside: avoid; page-break-inside: avoid; }
+  .md-print p, .md-print li { orphans: 2; widows: 2; }
+  .md-print table { display: table; width: 100%; }
   @page { margin: 15mm; }
   body * { visibility: hidden; }
   #printArea, #printArea * { visibility: visible; }
