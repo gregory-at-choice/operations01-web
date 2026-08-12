@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v36";
+const APP_VERSION = "v37";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -341,9 +341,147 @@ function textOn(bg) {
   const n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
   return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? "#14201f" : "#e8efee";
 }
+// ----------------------------- Formules (LaTeX → MathML) -----------------------------
+// MathML est le format mathématique natif des navigateurs : rendu typographique
+// correct, aucune librairie externe, et impression/PDF propres.
+const TEX_SYM = {
+  alpha:"α",beta:"β",gamma:"γ",delta:"δ",epsilon:"ε",varepsilon:"ε",zeta:"ζ",eta:"η",theta:"θ",vartheta:"ϑ",
+  iota:"ι",kappa:"κ",lambda:"λ",mu:"μ",nu:"ν",xi:"ξ",pi:"π",rho:"ρ",sigma:"σ",tau:"τ",upsilon:"υ",
+  phi:"φ",varphi:"φ",chi:"χ",psi:"ψ",omega:"ω",
+  Gamma:"Γ",Delta:"Δ",Theta:"Θ",Lambda:"Λ",Xi:"Ξ",Pi:"Π",Sigma:"Σ",Upsilon:"Υ",Phi:"Φ",Psi:"Ψ",Omega:"Ω",
+  infty:"∞",partial:"∂",nabla:"∇",forall:"∀",exists:"∃",emptyset:"∅",varnothing:"∅",
+  ell:"ℓ",hbar:"ℏ",Re:"ℜ",Im:"ℑ",aleph:"ℵ",degree:"°",prime:"′"
+};
+const TEX_OP = {
+  cdot:"⋅",times:"×",div:"÷",pm:"±",mp:"∓",ast:"∗",star:"⋆",circ:"∘",bullet:"∙",
+  leq:"≤",le:"≤",geq:"≥",ge:"≥",neq:"≠",ne:"≠",approx:"≈",equiv:"≡",sim:"∼",simeq:"≃",cong:"≅",
+  propto:"∝",ll:"≪",gg:"≫",subset:"⊂",supset:"⊃",subseteq:"⊆",supseteq:"⊇",in:"∈",notin:"∉",ni:"∋",
+  cup:"∪",cap:"∩",setminus:"∖",wedge:"∧",vee:"∨",neg:"¬",oplus:"⊕",otimes:"⊗",
+  rightarrow:"→",to:"→",leftarrow:"←",leftrightarrow:"↔",Rightarrow:"⇒",Leftarrow:"⇐",Leftrightarrow:"⇔",
+  mapsto:"↦",implies:"⟹",iff:"⟺",cdots:"⋯",ldots:"…",dots:"…",vdots:"⋮",ddots:"⋱",
+  sum:"∑",prod:"∏",coprod:"∐",int:"∫",iint:"∬",iiint:"∭",oint:"∮",bigcup:"⋃",bigcap:"⋂",
+  sqrt:"√",angle:"∠",perp:"⊥",parallel:"∥",therefore:"∴",because:"∵",pm2:"±"
+};
+const TEX_BIG = { sum:1, prod:1, coprod:1, int:1, iint:1, iiint:1, oint:1, bigcup:1, bigcap:1, lim:1 };
+const TEX_FUN = ["arcsin","arccos","arctan","sinh","cosh","tanh","sin","cos","tan","cot","sec","csc",
+  "log","ln","exp","lim","max","min","sup","inf","det","dim","gcd","arg","deg","ker","Pr"];
+const TEX_ACCENT = { hat:"^", bar:"‾", vec:"→", tilde:"~", dot:"˙", ddot:"¨", widehat:"^", overline:"‾" };
+const TEX_SPACE = { ",":"0.17em", ":":"0.22em", ";":"0.28em", quad:"1em", qquad:"2em", "!":"-0.17em" };
+const mesc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+function texTokenize(src) {
+  const ts = []; let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (/\s/.test(c)) { i++; continue; }
+    if (c === "\\") {
+      const m = /^\\([a-zA-Z]+|.)/.exec(src.slice(i));
+      if (!m) { i++; continue; }
+      ts.push({ t: "cmd", v: m[1] }); i += m[0].length; continue;
+    }
+    if (/[0-9]/.test(c)) { const m = /^[0-9]+(\.[0-9]+)?/.exec(src.slice(i)); ts.push({ t: "num", v: m[0] }); i += m[0].length; continue; }
+    if (/[a-zA-Z]/.test(c)) { ts.push({ t: "id", v: c }); i++; continue; }
+    if (c === "{" || c === "}" || c === "^" || c === "_") { ts.push({ t: c }); i++; continue; }
+    ts.push({ t: "op", v: c }); i++;
+  }
+  return ts;
+}
+// Analyse une suite de jetons jusqu'à « } » (ou la fin) et renvoie du MathML.
+function texParse(ts, pos, stopAtBrace) {
+  const out = [];
+  let i = pos;
+  const readAtom = () => {
+    const tk = ts[i];
+    if (!tk) return "";
+    if (tk.t === "{") { const r = texParse(ts, i + 1, true); i = r.i; return `<mrow>${r.html}</mrow>`; }
+    return texOne();
+  };
+  const texOne = () => {
+    const tk = ts[i];
+    if (!tk) return "";
+    if (tk.t === "num") { i++; return `<mn>${mesc(tk.v)}</mn>`; }
+    if (tk.t === "id") { i++; return `<mi>${mesc(tk.v)}</mi>`; }
+    if (tk.t === "op") {
+      i++;
+      if (tk.v === "(" || tk.v === ")" || tk.v === "[" || tk.v === "]" || tk.v === "|") return `<mo stretchy="false">${mesc(tk.v)}</mo>`;
+      return `<mo>${mesc(tk.v)}</mo>`;
+    }
+    if (tk.t === "{") { const r = texParse(ts, i + 1, true); i = r.i; return `<mrow>${r.html}</mrow>`; }
+    if (tk.t === "cmd") {
+      const v = tk.v; i++;
+      if (v === "frac" || v === "dfrac" || v === "tfrac") { const a = readAtom(), b = readAtom(); return `<mfrac>${a || "<mi></mi>"}${b || "<mi></mi>"}</mfrac>`; }
+      if (v === "sqrt") {
+        if (ts[i] && ts[i].t === "op" && ts[i].v === "[") {
+          i++; const idx = [];
+          while (ts[i] && !(ts[i].t === "op" && ts[i].v === "]")) { idx.push(texOne()); }
+          if (ts[i]) i++;
+          return `<mroot>${readAtom()}<mrow>${idx.join("")}</mrow></mroot>`;
+        }
+        return `<msqrt>${readAtom()}</msqrt>`;
+      }
+      if (v === "text" || v === "mathrm" || v === "textrm" || v === "mbox") {
+        if (ts[i] && ts[i].t === "{") {
+          i++; let txt = "";
+          while (ts[i] && ts[i].t !== "}") { txt += (ts[i].v != null ? ts[i].v : ts[i].t); i++; }
+          if (ts[i]) i++;
+          return `<mtext>${mesc(txt)}</mtext>`;
+        }
+        return "";
+      }
+      if (v === "mathbf" || v === "bf") { return `<mstyle mathvariant="bold">${readAtom()}</mstyle>`; }
+      if (v === "mathit") { return `<mstyle mathvariant="italic">${readAtom()}</mstyle>`; }
+      if (TEX_ACCENT[v]) { return `<mover accent="true">${readAtom()}<mo>${mesc(TEX_ACCENT[v])}</mo></mover>`; }
+      if (TEX_SPACE[v]) { return `<mspace width="${TEX_SPACE[v]}"/>`; }
+      if (v === "left" || v === "right") {
+        const d = ts[i] ? (ts[i].v || "") : "";
+        i++;
+        if (d === "." || d === "") return "";
+        return `<mo stretchy="true">${mesc(d)}</mo>`;
+      }
+      if (v === "\\") return "";
+      if (TEX_FUN.indexOf(v) > -1) return `<mi>${mesc(v)}</mi><mo>&#8289;</mo>`;
+      if (TEX_OP[v]) return `<mo${TEX_BIG[v] ? ' largeop="true"' : ""}>${mesc(TEX_OP[v])}</mo>`;
+      if (TEX_SYM[v]) return `<mi>${mesc(TEX_SYM[v])}</mi>`;
+      return `<mi>${mesc(v)}</mi>`;
+    }
+    i++; return "";
+  };
+  while (i < ts.length) {
+    if (stopAtBrace && ts[i].t === "}") { i++; break; }
+    if (ts[i].t === "^" || ts[i].t === "_") {
+      const kind = ts[i].t; i++;
+      const arg = readAtom();
+      const base = out.length ? out.pop() : "<mi></mi>";
+      // un exposant qui suit un indice (ou l'inverse) donne msubsup
+      const prev = /^<m(sub|sup)>([\s\S]*)<\/m(?:sub|sup)>$/.exec(base);
+      if (prev && ((prev[1] === "sub" && kind === "^") || (prev[1] === "sup" && kind === "_"))) {
+        const inner = prev[2];
+        out.push(kind === "^" ? `<msubsup>${inner}${arg}</msubsup>` : `<msubsup>${inner}${arg}</msubsup>`);
+      } else {
+        out.push(kind === "^" ? `<msup>${base}${arg}</msup>` : `<msub>${base}${arg}</msub>`);
+      }
+      continue;
+    }
+    const before = i;
+    out.push(texOne());
+    if (i === before) i++;   // sécurité anti-boucle
+  }
+  return { html: out.join(""), i };
+}
+function texToMathML(tex, display) {
+  try {
+    const ts = texTokenize(String(tex));
+    const r = texParse(ts, 0, false);
+    if (!r.html) throw new Error("vide");
+    return `<math xmlns="http://www.w3.org/1998/Math/MathML"${display ? ' display="block"' : ""}><mrow>${r.html}</mrow></math>`;
+  } catch (e) {
+    // en cas d'échec, on montre la formule source plutôt que de casser la page
+    return `<code class="tex-raw">${esc(String(tex))}</code>`;
+  }
+}
+
 const safeUrl = (u) => /^(https?:\/\/|mailto:|#|\/|\.\/)/i.test(String(u).trim());
 function mdInline(t) {
-  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
   t = t.replace(/\*\*\*([^*]+)\*\*\*/g, "<strong><em>$1</em></strong>");
   t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   t = t.replace(/__([^_]+)__/g, "<strong>$1</strong>");
@@ -361,10 +499,21 @@ function mdInline(t) {
   return t;
 }
 function mdToHtml(src) {
-  const blocks = [];
+  const blocks = [];      // blocs de code
+  const inlines = [];     // code en ligne
+  const maths = [];       // formules { tex, display }
   let s = String(src || "").replace(/\r\n?/g, "\n");
-  // les blocs de code sont mis de côté pour ne pas être reformatés
+  // 1) blocs de code : mis de côté pour ne pas être reformatés
   s = s.replace(/```[\w+-]*\n([\s\S]*?)```/g, (m, code) => { blocks.push(code); return `\uE000C${blocks.length - 1}\uE000`; });
+  // 2) code en ligne : protégé avant tout (ni Markdown ni formules à l'intérieur)
+  s = s.replace(/`([^`\n]+)`/g, (m, code) => { inlines.push(code); return `\uE000I${inlines.length - 1}\uE000`; });
+  // 3) formules : extraites AVANT le Markdown, sinon _ et ^ seraient mal interprétés
+  s = s.replace(/\$\$([\s\S]+?)\$\$/g, (m, tex) => { maths.push({ tex, display: true }); return `\uE000D${maths.length - 1}\uE000`; });
+  s = s.replace(/\\\[([\s\S]+?)\\\]/g, (m, tex) => { maths.push({ tex, display: true }); return `\uE000D${maths.length - 1}\uE000`; });
+  s = s.replace(/\\\(([\s\S]+?)\\\)/g, (m, tex) => { maths.push({ tex, display: false }); return `\uE000M${maths.length - 1}\uE000`; });
+  // $...$ : règle prudente — pas d'espace collé aux délimiteurs, pas de retour à la
+  // ligne, et pas de chiffre juste avant (pour ne pas capturer un montant en dollars)
+  s = s.replace(/(^|[^\w$])\$(?!\s)([^$\n]*[^\s$])\$(?!\w)/g, (m, pre, tex) => { maths.push({ tex, display: false }); return `${pre}\uE000M${maths.length - 1}\uE000`; });
   s = esc(s);
   const lines = s.split("\n");
   const out = [];
@@ -374,7 +523,7 @@ function mdToHtml(src) {
   while (i < lines.length) {
     const l = lines[i];
     if (/^\s*$/.test(l)) { i++; continue; }
-    if (/^\uE000C\d+\uE000$/.test(l.trim())) { out.push(l.trim()); i++; continue; }
+    if (/^\uE000[CD]\d+\uE000$/.test(l.trim())) { out.push(l.trim()); i++; continue; }
     let m;
     if ((m = /^(#{1,6})\s+(.*)$/.exec(l))) { out.push(`<h${m[1].length}>${mdInline(m[2].trim())}</h${m[1].length}>`); i++; continue; }
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { out.push("<hr/>"); i++; continue; }
@@ -413,10 +562,16 @@ function mdToHtml(src) {
     const buf = [];
     while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(#{1,6})\s+/.test(lines[i])
       && !/^\s*([-*+])\s+/.test(lines[i]) && !/^\s*\d+[.)]\s+/.test(lines[i]) && !/^\s*&gt;\s?/.test(lines[i])
-      && !/^\uE000C\d+\uE000$/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
+      && !/^\uE000[CD]\d+\uE000$/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
     if (buf.length) out.push(`<p>${mdInline(buf.join("\n")).replace(/\n/g, "<br/>")}</p>`);
   }
-  return out.join("\n").replace(/\uE000C(\d+)\uE000/g, (m, n) => `<pre><code>${esc(blocks[Number(n)])}</code></pre>`);
+  return out.join("\n").replace(/\uE000([CIDM])(\d+)\uE000/g, (m, kind, n) => {
+    const k = Number(n);
+    if (kind === "C") return `<pre><code>${esc(blocks[k])}</code></pre>`;
+    if (kind === "I") return `<code>${esc(inlines[k])}</code>`;
+    const f = maths[k] || { tex: "", display: false };
+    return f.display ? `<div class="math-block">${texToMathML(f.tex, true)}</div>` : texToMathML(f.tex, false);
+  });
 }
 // Impression / export PDF du document en cours de lecture.
 // La police choisie est conservée ; le fond coloré est remplacé par du blanc

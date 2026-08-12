@@ -333,6 +333,12 @@ textarea { min-height: 72px; resize: vertical; }
 .rep-table td { padding: 6px 10px; border-bottom: 1px solid #e5e9ec; color: #111; }
 .rep-table .num { text-align: right; white-space: nowrap; }
 .rep-table .rep-total td { font-weight: 700; border-top: 2px solid #111; background: #fafafa; }
+/* Formules mathématiques (MathML natif) */
+.md-doc math { font-size: 1.06em; }
+.md-doc .math-block { margin: 1.1em 0; text-align: center; overflow-x: auto; }
+.md-doc .math-block math { font-size: 1.18em; }
+.md-doc .tex-raw { color: #b03030; }
+
 /* Version imprimable d'un document du lecteur : fond blanc, pleine largeur */
 .md-print { background: #fff !important; color: #111 !important; box-shadow: none; max-width: none; padding: 0; }
 .md-print a { color: #111; }
