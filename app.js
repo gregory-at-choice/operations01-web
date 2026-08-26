@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v40";
+const APP_VERSION = "v41";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -595,6 +595,7 @@ let pdfBusyR = false;             // chargement en cours
 let pdfOpen = null;               // { id, doc } document pdf.js ouvert
 let pdfPainted = "";              // clé de ce qui est déjà dessiné (id@zoom)
 let pdfError = "";                // dernière erreur, affichée dans la vue
+let pdfPageNow = 1;               // page actuellement visible
 function pdfOrder() { return Array.isArray(state.pdfOrder) ? state.pdfOrder : (state.pdfOrder = []); }
 function orderedPdfs() {
   const ord = pdfOrder();
@@ -616,7 +617,7 @@ async function refreshPdfs() {
 // Télécharge le PDF depuis le Drive et l'ouvre avec pdf.js.
 async function openPdf(id) {
   if (pdfOpen && pdfOpen.id === id) return;
-  pdfBusyR = true; pdfOpen = null; pdfPainted = ""; pdfError = ""; render();
+  pdfBusyR = true; pdfOpen = null; pdfPainted = ""; pdfError = ""; pdfPageNow = 1; render();
   try {
     const pdfjs = await needPdfJs();
     const bytes = await DriveSync.readBinary(id);
@@ -640,6 +641,8 @@ async function paintPdfPages() {
     const vp = page.getViewport({ scale: reader.pdfZoom * (window.devicePixelRatio || 1) });
     const cv = document.createElement("canvas");
     cv.className = "pdf-page";
+    cv.id = "pdfpage-" + i;
+    cv.dataset.page = String(i);
     cv.width = Math.floor(vp.width); cv.height = Math.floor(vp.height);
     cv.style.width = Math.floor(vp.width / (window.devicePixelRatio || 1)) + "px";
     const ctx = cv.getContext("2d");
@@ -647,6 +650,32 @@ async function paintPdfPages() {
     host.appendChild(cv);
     try { await page.render({ canvasContext: ctx, viewport: vp }).promise; }
     catch (e) { pdfError = "Affichage de la page " + i + " : " + (e && e.message ? e.message : e); render(); return; }
+  }
+}
+// Fait défiler jusqu'à une page précise.
+function goToPdfPage(n) {
+  if (!pdfOpen) return;
+  const total = pdfOpen.doc.numPages;
+  const page = Math.max(1, Math.min(total, parseInt(n, 10) || 1));
+  const el = document.getElementById("pdfpage-" + page);
+  if (!el) return;
+  const host = document.getElementById("content");
+  if (host) host.scrollTop += el.getBoundingClientRect().top - host.getBoundingClientRect().top - 8;
+  else el.scrollIntoView({ block: "start" });
+  pdfPageNow = page;
+  const inp = document.getElementById("pdfPageNo"); if (inp) inp.value = String(page);
+}
+// Met à jour le numéro affiché selon la page réellement visible (sans tout redessiner).
+function syncPdfPageNumber() {
+  const host = document.getElementById("content");
+  const pages = document.querySelectorAll("[id^='pdfpage-']");
+  if (!host || !pages.length) return;
+  const top = host.getBoundingClientRect().top;
+  let cur = 1;
+  pages.forEach((el) => { if (el.getBoundingClientRect().top - top <= 60) cur = Number(el.dataset.page) || cur; });
+  if (cur !== pdfPageNow) {
+    pdfPageNow = cur;
+    const inp = document.getElementById("pdfPageNo"); if (inp) inp.value = String(cur);
   }
 }
 function renderPdfReader() {
@@ -685,7 +714,13 @@ function renderPdfReader() {
     <div class="md-bar">
       <label class="md-ctl"><span>Zoom</span>
         <select id="pdfZoom">${[0.75, 1, 1.25, 1.5, 2].map((z) => `<option value="${z}" ${Math.abs(reader.pdfZoom - z) < 0.01 ? "selected" : ""}>${Math.round(z * 100)} %</option>`).join("")}</select></label>
-      ${pdfOpen ? `<div class="md-ctl"><span>Pages</span><div style="font-size:13px;padding:6px 0">${pdfOpen.doc.numPages}</div></div>` : ""}
+      ${pdfOpen ? `<div class="md-ctl"><span>Aller à la page</span>
+        <div class="pdf-goto">
+          <button class="btn ghost small" data-pdf-page="-1" title="Page précédente">‹</button>
+          <input type="number" id="pdfPageNo" min="1" max="${pdfOpen.doc.numPages}" value="${Math.min(pdfPageNow, pdfOpen.doc.numPages)}"/>
+          <span class="muted">/ ${pdfOpen.doc.numPages}</span>
+          <button class="btn ghost small" data-pdf-page="1" title="Page suivante">›</button>
+        </div></div>` : ""}
       <span class="grow"></span>
     </div>
     <div class="md-layout">
@@ -2635,6 +2670,16 @@ function wire() {
   const pdfrNext = c.querySelector("[data-pdfr-next]"); if (pdfrNext) pdfrNext.onclick = () => pdfStep(1);
   const pdfZoomSel = c.querySelector("#pdfZoom");
   if (pdfZoomSel) pdfZoomSel.onchange = () => { reader.pdfZoom = parseFloat(pdfZoomSel.value) || 1; saveReader(); pdfPainted = ""; render(); };
+  const pdfPageNo = c.querySelector("#pdfPageNo");
+  if (pdfPageNo) {
+    pdfPageNo.onchange = () => goToPdfPage(pdfPageNo.value);
+    pdfPageNo.onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); goToPdfPage(pdfPageNo.value); } };
+  }
+  c.querySelectorAll("[data-pdf-page]").forEach((b) => b.onclick = () => goToPdfPage(pdfPageNow + Number(b.dataset.pdfPage)));
+  // suivi de la page visible pendant le défilement
+  const contentEl = document.getElementById("content");
+  if (contentEl) contentEl.onscroll = (view.section === "reader" && reader.kind === "pdf" && pdfOpen) ? syncPdfPageNumber : null;
+
   const pdfrRetry = c.querySelector("[data-pdfr-retry]");
   if (pdfrRetry) pdfrRetry.onclick = () => { pdfError = ""; pdfOpen = null; pdfPainted = ""; const d = currentPdf(); if (d) openPdf(d.id); };
   const pdfrDl = c.querySelector("[data-pdfr-download]");
