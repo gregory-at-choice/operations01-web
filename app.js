@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v39";
+const APP_VERSION = "v40";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -594,6 +594,7 @@ let pdfLib = { docs: [] };        // [{id, name, size}]
 let pdfBusyR = false;             // chargement en cours
 let pdfOpen = null;               // { id, doc } document pdf.js ouvert
 let pdfPainted = "";              // clé de ce qui est déjà dessiné (id@zoom)
+let pdfError = "";                // dernière erreur, affichée dans la vue
 function pdfOrder() { return Array.isArray(state.pdfOrder) ? state.pdfOrder : (state.pdfOrder = []); }
 function orderedPdfs() {
   const ord = pdfOrder();
@@ -615,13 +616,13 @@ async function refreshPdfs() {
 // Télécharge le PDF depuis le Drive et l'ouvre avec pdf.js.
 async function openPdf(id) {
   if (pdfOpen && pdfOpen.id === id) return;
-  pdfBusyR = true; pdfOpen = null; pdfPainted = ""; render();
+  pdfBusyR = true; pdfOpen = null; pdfPainted = ""; pdfError = ""; render();
   try {
     const pdfjs = await needPdfJs();
     const bytes = await DriveSync.readBinary(id);
     const doc = await pdfjs.getDocument({ data: bytes, standardFontDataUrl: "vendor/standard_fonts/" }).promise;
     pdfOpen = { id, doc, bytes };
-  } catch (e) { pdfOpen = null; toast("Ouverture impossible : " + e.message); }
+  } catch (e) { pdfOpen = null; pdfError = e && e.message ? e.message : String(e); }
   pdfBusyR = false; render();
 }
 // Dessine les pages dans le conteneur, après insertion dans le DOM.
@@ -644,7 +645,8 @@ async function paintPdfPages() {
     const ctx = cv.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     host.appendChild(cv);
-    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    try { await page.render({ canvasContext: ctx, viewport: vp }).promise; }
+    catch (e) { pdfError = "Affichage de la page " + i + " : " + (e && e.message ? e.message : e); render(); return; }
   }
 }
 function renderPdfReader() {
@@ -671,6 +673,7 @@ function renderPdfReader() {
   if (!connected) body = `<div class="center-empty">Connecte-toi à Google Drive : tes PDF y sont enregistrés et suivent d'un appareil à l'autre.</div>`;
   else if (pdfBusyR) body = `<div class="center-empty">Chargement…</div>`;
   else if (cur && pdfOpen && pdfOpen.id === cur.id) body = `${nav}<div id="pdfPages" class="pdf-pages"></div>`;
+  else if (cur && pdfError) body = `${nav}<div class="center-empty" style="color:#d23c3c">Impossible d'afficher ce PDF.<br><span style="font-size:12px">${esc(pdfError)}</span><br><br><button class="btn secondary small" data-pdfr-retry>Réessayer</button></div>`;
   else if (cur) body = `${nav}<div class="center-empty">Ouverture du document…</div>`;
   else body = `<div class="center-empty">${docs.length ? "Choisis un PDF dans la liste de lecture." : "Aucun PDF.<br>Clique sur « Importer des PDF » — tu peux en sélectionner plusieurs."}</div>`;
 
@@ -795,11 +798,12 @@ async function needPdfLib() {
 }
 async function needPdfJs() {
   if (!window.pdfjsLib) {
-    pdfSay("Chargement de l'outil…");
-    const mod = await import("./vendor/pdf.min.mjs");
-    mod.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.mjs";
-    window.pdfjsLib = mod;
+    await loadScript("vendor/pdf.min.js");
+    if (!window.pdfjsLib) throw new Error("Moteur PDF indisponible (fichier vendor/pdf.min.js non chargé).");
   }
+  // toujours vérifié : sans worker, pdf.js ne peut rien afficher
+  const opts = window.pdfjsLib.GlobalWorkerOptions;
+  if (opts && !opts.workerSrc) opts.workerSrc = "vendor/pdf.worker.min.js";
   return window.pdfjsLib;
 }
 function downloadBytes(name, bytes, type) {
@@ -2570,7 +2574,7 @@ function wire() {
   if (view.section === "reader" && reader.kind === "pdf") {
     if (!pdfBusyR && !pdfLib.docs.length && window.DriveSync && DriveSync.isConnected()) refreshPdfs();
     const curP = currentPdf();
-    if (curP && (!pdfOpen || pdfOpen.id !== curP.id) && !pdfBusyR) openPdf(curP.id);
+    if (curP && (!pdfOpen || pdfOpen.id !== curP.id) && !pdfBusyR && !pdfError) openPdf(curP.id);
     if (pdfOpen) paintPdfPages();
   }
   const pdfrRef = c.querySelector("[data-pdfr-refresh]"); if (pdfrRef) pdfrRef.onclick = () => refreshPdfs();
@@ -2601,7 +2605,7 @@ function wire() {
   };
   c.querySelectorAll("[data-pdfr-open]").forEach((el) => el.onclick = (ev) => {
     if (ev.target.closest("button")) return;
-    state.pdfCurrent = el.dataset.pdfrOpen; save(); render();
+    state.pdfCurrent = el.dataset.pdfrOpen; pdfError = ""; save(); render();
   });
   c.querySelectorAll("[data-pdfr-del]").forEach((b) => b.onclick = async () => {
     const id = b.dataset.pdfrDel;
@@ -2624,13 +2628,15 @@ function wire() {
     const ids = orderedPdfs().map((d) => d.id);
     const j = ids.indexOf(state.pdfCurrent) + dir;
     if (j < 0 || j >= ids.length) return;
-    state.pdfCurrent = ids[j]; save(); render();
+    state.pdfCurrent = ids[j]; pdfError = ""; save(); render();
     const el = document.getElementById("content"); if (el) el.scrollTop = 0;
   };
   const pdfrPrev = c.querySelector("[data-pdfr-prev]"); if (pdfrPrev) pdfrPrev.onclick = () => pdfStep(-1);
   const pdfrNext = c.querySelector("[data-pdfr-next]"); if (pdfrNext) pdfrNext.onclick = () => pdfStep(1);
   const pdfZoomSel = c.querySelector("#pdfZoom");
   if (pdfZoomSel) pdfZoomSel.onchange = () => { reader.pdfZoom = parseFloat(pdfZoomSel.value) || 1; saveReader(); pdfPainted = ""; render(); };
+  const pdfrRetry = c.querySelector("[data-pdfr-retry]");
+  if (pdfrRetry) pdfrRetry.onclick = () => { pdfError = ""; pdfOpen = null; pdfPainted = ""; const d = currentPdf(); if (d) openPdf(d.id); };
   const pdfrDl = c.querySelector("[data-pdfr-download]");
   if (pdfrDl) pdfrDl.onclick = () => { const d = currentPdf(); if (pdfOpen && d) downloadBytes(d.name, pdfOpen.bytes); };
 
