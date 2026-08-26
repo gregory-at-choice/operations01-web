@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v38";
+const APP_VERSION = "v39";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, updatedAt: 0 };
 }
 function load() {
   try {
@@ -269,14 +269,14 @@ const MD_BGS = [
 const READER_KEY = "operations01_reader";   // préférences d'affichage (propres à l'appareil)
 const READER_CACHE = "operations01_readercache"; // copie locale des documents (lecture hors ligne)
 const READER_MAX = 4.5 * 1024 * 1024;
-function readerDefaults() { return { font: "newyork", bg: "blanc", customBg: "", size: 17 }; }
+function readerDefaults() { return { kind: "md", font: "newyork", bg: "blanc", customBg: "", size: 17, pdfZoom: 1 }; }
 let reader = loadReader();
 let readerLib = loadCache();      // [{id, name, size}] connus
 let readerBusy = false;           // chargement Drive en cours
 function loadReader() {
   try {
     const r = JSON.parse(localStorage.getItem(READER_KEY) || "null");
-    if (r) return Object.assign(readerDefaults(), { font: r.font, bg: r.bg, customBg: r.customBg, size: r.size });
+    if (r) return Object.assign(readerDefaults(), { kind: r.kind, font: r.font, bg: r.bg, customBg: r.customBg, size: r.size, pdfZoom: r.pdfZoom });
   } catch (e) {}
   return readerDefaults();
 }
@@ -587,7 +587,124 @@ function printCurrentDoc() {
   printReport("Operations01 - " + nom, nom,
     `<div class="md-doc md-print" style="font-family:${fontCss}">${mdToHtml(txt)}</div>`);
 }
+// ----------------------------- Lecteur PDF -----------------------------
+// Même principe que le lecteur Markdown : les fichiers vivent sur le Drive,
+// la liste de lecture et le document courant suivent d'un appareil à l'autre.
+let pdfLib = { docs: [] };        // [{id, name, size}]
+let pdfBusyR = false;             // chargement en cours
+let pdfOpen = null;               // { id, doc } document pdf.js ouvert
+let pdfPainted = "";              // clé de ce qui est déjà dessiné (id@zoom)
+function pdfOrder() { return Array.isArray(state.pdfOrder) ? state.pdfOrder : (state.pdfOrder = []); }
+function orderedPdfs() {
+  const ord = pdfOrder();
+  return [...pdfLib.docs].sort((a, b) => {
+    const ia = ord.indexOf(a.id), ib = ord.indexOf(b.id);
+    if (ia > -1 && ib > -1) return ia - ib;
+    if (ia > -1) return -1;
+    if (ib > -1) return 1;
+    return (a.name || "").localeCompare(b.name || "", "fr");
+  });
+}
+const currentPdf = () => orderedPdfs().find((d) => d.id === state.pdfCurrent) || null;
+async function refreshPdfs() {
+  if (!(window.DriveSync && DriveSync.isConnected()) || pdfBusyR) return;
+  pdfBusyR = true; if (view.section === "reader") render();
+  try { pdfLib.docs = await DriveSync.listPdfs(); } catch (e) {}
+  pdfBusyR = false; if (view.section === "reader") render();
+}
+// Télécharge le PDF depuis le Drive et l'ouvre avec pdf.js.
+async function openPdf(id) {
+  if (pdfOpen && pdfOpen.id === id) return;
+  pdfBusyR = true; pdfOpen = null; pdfPainted = ""; render();
+  try {
+    const pdfjs = await needPdfJs();
+    const bytes = await DriveSync.readBinary(id);
+    const doc = await pdfjs.getDocument({ data: bytes, standardFontDataUrl: "vendor/standard_fonts/" }).promise;
+    pdfOpen = { id, doc, bytes };
+  } catch (e) { pdfOpen = null; toast("Ouverture impossible : " + e.message); }
+  pdfBusyR = false; render();
+}
+// Dessine les pages dans le conteneur, après insertion dans le DOM.
+async function paintPdfPages() {
+  const host = document.getElementById("pdfPages");
+  if (!host || !pdfOpen) return;
+  const key = pdfOpen.id + "@" + reader.pdfZoom;
+  if (pdfPainted === key) return;
+  pdfPainted = key;
+  host.innerHTML = "";
+  const doc = pdfOpen.doc;
+  for (let i = 1; i <= doc.numPages; i++) {
+    if (pdfPainted !== key) return;          // un autre rendu a pris le relais
+    const page = await doc.getPage(i);
+    const vp = page.getViewport({ scale: reader.pdfZoom * (window.devicePixelRatio || 1) });
+    const cv = document.createElement("canvas");
+    cv.className = "pdf-page";
+    cv.width = Math.floor(vp.width); cv.height = Math.floor(vp.height);
+    cv.style.width = Math.floor(vp.width / (window.devicePixelRatio || 1)) + "px";
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+    host.appendChild(cv);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  }
+}
+function renderPdfReader() {
+  const docs = orderedPdfs();
+  const cur = currentPdf();
+  const idx = cur ? docs.findIndex((d) => d.id === cur.id) : -1;
+  const connected = window.DriveSync && DriveSync.isConnected();
+  const items = docs.map((d, i) => `<div class="md-item ${d.id === state.pdfCurrent ? "active" : ""}" data-pdfr-open="${d.id}">
+      <span class="md-num">${i + 1}</span>
+      <div class="grow" style="min-width:0">
+        <div class="md-item-t">${esc(d.name || "Document")}</div>
+        <div class="md-item-s">${esc(fmtSize(d.size || 0))}</div></div>
+      <button class="btn ghost small" data-pdfr-move="-1" data-d="${d.id}" ${i === 0 ? "disabled" : ""} title="Monter">↑</button>
+      <button class="btn ghost small" data-pdfr-move="1" data-d="${d.id}" ${i === docs.length - 1 ? "disabled" : ""} title="Descendre">↓</button>
+      <button class="btn ghost small" data-pdfr-del="${d.id}" title="Retirer">✕</button>
+    </div>`).join("");
+  const nav = docs.length > 1 && idx > -1
+    ? `<div class="md-nav">
+        <button class="btn ghost small" data-pdfr-prev ${idx === 0 ? "disabled" : ""}>‹ Précédent</button>
+        <span class="grow" style="text-align:center">${idx + 1} / ${docs.length}</span>
+        <button class="btn ghost small" data-pdfr-next ${idx === docs.length - 1 ? "disabled" : ""}>Suivant ›</button></div>`
+    : "";
+  let body;
+  if (!connected) body = `<div class="center-empty">Connecte-toi à Google Drive : tes PDF y sont enregistrés et suivent d'un appareil à l'autre.</div>`;
+  else if (pdfBusyR) body = `<div class="center-empty">Chargement…</div>`;
+  else if (cur && pdfOpen && pdfOpen.id === cur.id) body = `${nav}<div id="pdfPages" class="pdf-pages"></div>`;
+  else if (cur) body = `${nav}<div class="center-empty">Ouverture du document…</div>`;
+  else body = `<div class="center-empty">${docs.length ? "Choisis un PDF dans la liste de lecture." : "Aucun PDF.<br>Clique sur « Importer des PDF » — tu peux en sélectionner plusieurs."}</div>`;
+
+  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Lecteur</div>
+      <button class="btn ghost small" data-pdfr-refresh>${pdfBusyR ? "…" : "↻"}</button>
+      ${pdfOpen ? '<button class="btn secondary small" data-pdfr-download>⤓ Télécharger</button>' : ""}
+      <button class="btn" data-pdfr-import>📂 Importer des PDF</button></div>
+    ${readerTabs()}
+    <div class="md-bar">
+      <label class="md-ctl"><span>Zoom</span>
+        <select id="pdfZoom">${[0.75, 1, 1.25, 1.5, 2].map((z) => `<option value="${z}" ${Math.abs(reader.pdfZoom - z) < 0.01 ? "selected" : ""}>${Math.round(z * 100)} %</option>`).join("")}</select></label>
+      ${pdfOpen ? `<div class="md-ctl"><span>Pages</span><div style="font-size:13px;padding:6px 0">${pdfOpen.doc.numPages}</div></div>` : ""}
+      <span class="grow"></span>
+    </div>
+    <div class="md-layout">
+      <div class="md-side">
+        <div class="section-h" style="margin-top:0">Liste de lecture <span class="muted">(${docs.length})</span></div>
+        <div class="md-list">${items || '<div class="muted" style="font-size:12px">Vide.</div>'}</div>
+        ${docs.length ? '<div class="muted" style="font-size:11px;margin-top:8px">Enregistrés sur ton Google Drive</div>' : ""}
+      </div>
+      <div class="md-main">${body}</div>
+    </div>`;
+}
+function readerTabs() {
+  return `<div class="chip-row" style="margin-bottom:14px">${
+    [["md", "Markdown"], ["pdf", "PDF"]].map(([id, lbl]) =>
+      `<button class="chip ${reader.kind === id ? "active" : ""}" data-rkind="${id}">${lbl}</button>`).join("")
+  }</div>`;
+}
 function renderReader() {
+  if (reader.kind === "pdf") return renderPdfReader();
+  return renderMdReader();
+}
+function renderMdReader() {
   const fontCss = (MD_FONTS.find((f) => f.code === reader.font) || MD_FONTS[0]).css;
   const bg = reader.customBg || (MD_BGS.find((b) => b.code === reader.bg) || MD_BGS[0]).bg;
   const fg = textOn(bg);
@@ -635,6 +752,7 @@ function renderReader() {
       ${cur && readerLib.texts[cur.id] != null ? '<button class="btn secondary small" data-md-print>📄 Imprimer / PDF</button>' : ""}
       ${docs.length ? '<button class="btn ghost small" data-md-clear>Tout retirer</button>' : ""}
       <button class="btn" data-md-import>📂 Importer des .md</button></div>
+    ${readerTabs()}
     <div class="md-bar">
       <label class="md-ctl"><span>Police</span><select id="mdFont">${fontOpts}</select></label>
       <label class="md-ctl"><span>Taille</span><input type="number" id="mdSize" min="12" max="28" step="1" value="${reader.size}"/></label>
@@ -659,7 +777,6 @@ function renderReader() {
 let pdfTool = "fusion";
 let pdfFiles = [];            // [{name, size, bytes}]
 let pdfBusy = "", pdfLog = "";
-let pdfOpt = { mode: "leger", dpi: 150, quality: 0.72 };
 
 function pdfSay(msg) { pdfLog = msg; if (view.section === "pdftools") render(); }
 function loadScript(src) {
@@ -714,55 +831,7 @@ async function pdfMerge() {
   pdfBusy = ""; render();
 }
 
-// --- 2. Réduire la taille d'un PDF ---
-// « Léger » : réécriture optimisée, le texte reste sélectionnable.
-// « Fort »  : chaque page est rendue en image (le texte n'est plus sélectionnable),
-//             ce qui réduit massivement les PDF scannés ou riches en images.
-async function pdfCompress() {
-  if (pdfFiles.length !== 1) { alert("Choisis un seul fichier PDF à compresser."); return; }
-  pdfBusy = "compression"; render();
-  const f = pdfFiles[0];
-  try {
-    const { PDFDocument } = await needPdfLib();
-    let bytes;
-    if (pdfOpt.mode === "leger") {
-      pdfSay("Réécriture optimisée…");
-      const doc = await PDFDocument.load(f.bytes, { ignoreEncryption: true });
-      doc.setProducer("Operations01"); doc.setCreator("Operations01");
-      bytes = await doc.save({ useObjectStreams: true });
-    } else {
-      const pdfjs = await needPdfJs();
-      const task = pdfjs.getDocument({ data: f.bytes.slice(0), standardFontDataUrl: "vendor/standard_fonts/" });
-      const src = await task.promise;
-      const out = await PDFDocument.create();
-      for (let i = 1; i <= src.numPages; i++) {
-        pdfSay(`Page ${i} / ${src.numPages}…`);
-        const page = await src.getPage(i);
-        const base = page.getViewport({ scale: 1 });
-        const scale = Math.min(pdfOpt.dpi / 72, 4);
-        const vp = page.getViewport({ scale });
-        const cv = document.createElement("canvas");
-        cv.width = Math.max(1, Math.floor(vp.width)); cv.height = Math.max(1, Math.floor(vp.height));
-        const ctx = cv.getContext("2d");
-        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
-        await page.render({ canvasContext: ctx, viewport: vp }).promise;
-        const dataUrl = cv.toDataURL("image/jpeg", pdfOpt.quality);
-        const img = await out.embedJpg(dataUrl);
-        const pg = out.addPage([base.width, base.height]);
-        pg.drawImage(img, { x: 0, y: 0, width: base.width, height: base.height });
-      }
-      bytes = await out.save({ useObjectStreams: true });
-    }
-    const gain = Math.round((1 - bytes.length / f.size) * 100);
-    downloadBytes(f.name.replace(/\.pdf$/i, "") + "-compresse.pdf", bytes);
-    pdfSay(gain > 0
-      ? `Terminé : ${fmtSize(f.size)} → ${fmtSize(bytes.length)} (−${gain} %).`
-      : `Terminé : ${fmtSize(bytes.length)}. Ce PDF était déjà bien optimisé${pdfOpt.mode === "leger" ? " — essaie la compression forte." : "."}`);
-  } catch (e) { pdfSay("Échec : " + e.message); }
-  pdfBusy = ""; render();
-}
-
-// --- 3. Convertir un PDF en Markdown ---
+// --- 2. Convertir un PDF en Markdown ---
 // Le texte est extrait avec ses positions et sa taille de police, ce qui permet de
 // reconstituer titres, paragraphes et listes. Un PDF scanné (image pure) n'a pas de
 // texte à extraire : on le signale au lieu de produire un fichier vide.
@@ -844,7 +913,7 @@ async function pdfToMarkdown() {
 }
 
 function renderPdfTools() {
-  const tabs = [["fusion", "Fusionner"], ["compression", "Réduire la taille"], ["markdown", "PDF → Markdown"]]
+  const tabs = [["fusion", "Fusionner"], ["markdown", "PDF → Markdown"]]
     .map(([id, lbl]) => `<button class="chip ${pdfTool === id ? "active" : ""}" data-pdftab="${id}">${lbl}</button>`).join("");
   const multi = pdfTool === "fusion";
   const files = pdfFiles.map((f, i) => `<div class="md-item" style="cursor:default">
@@ -860,19 +929,6 @@ function renderPdfTools() {
   if (pdfTool === "fusion") {
     panel = `<div class="muted" style="font-size:12px;margin-bottom:10px">Les PDF sont assemblés dans l'ordre de la liste — utilise ↑ ↓ pour le modifier.</div>
       <button class="btn" data-pdf-run ${pdfFiles.length < 2 || pdfBusy ? "disabled" : ""}>${pdfBusy === "fusion" ? "Fusion en cours…" : "Fusionner en un seul PDF"}</button>`;
-  } else if (pdfTool === "compression") {
-    panel = `<label class="field"><span>Méthode</span>
-        <select id="pdfMode">
-          <option value="leger" ${pdfOpt.mode === "leger" ? "selected" : ""}>Légère — le texte reste sélectionnable</option>
-          <option value="fort" ${pdfOpt.mode === "fort" ? "selected" : ""}>Forte — pages converties en images</option>
-        </select></label>
-      ${pdfOpt.mode === "fort" ? `<div class="inline" style="flex-wrap:wrap">
-        <label class="md-ctl"><span>Résolution (DPI)</span><input type="number" id="pdfDpi" min="72" max="300" step="6" value="${pdfOpt.dpi}"/></label>
-        <label class="md-ctl"><span>Qualité (0,3 – 0,95)</span><input type="number" id="pdfQ" min="0.3" max="0.95" step="0.05" value="${pdfOpt.quality}"/></label>
-      </div>
-      <div class="muted" style="font-size:12px;margin:6px 0 10px">⚠️ En mode fort, le texte devient une image : plus de sélection ni de recherche dans le PDF. Idéal pour des scans ou des documents très illustrés.</div>`
-        : `<div class="muted" style="font-size:12px;margin:6px 0 10px">La méthode légère réécrit le fichier de façon compacte. Le gain est réel sur les PDF mal optimisés, faible sur ceux déjà compressés — dans ce cas, essaie la méthode forte.</div>`}
-      <button class="btn" data-pdf-run ${pdfFiles.length !== 1 || pdfBusy ? "disabled" : ""}>${pdfBusy === "compression" ? "Compression en cours…" : "Réduire la taille"}</button>`;
   } else {
     panel = `<div class="muted" style="font-size:12px;margin-bottom:10px">Le texte est extrait avec sa mise en forme approximative : les titres sont déduits de la taille de police, et les paragraphes reconstitués. Un PDF scanné (image pure) ne contient pas de texte à extraire.</div>
       <button class="btn" data-pdf-run ${pdfFiles.length !== 1 || pdfBusy ? "disabled" : ""}>${pdfBusy === "markdown" ? "Conversion en cours…" : "Convertir en Markdown"}</button>`;
@@ -2502,15 +2558,81 @@ function wire() {
     const [x] = pdfFiles.splice(i, 1); pdfFiles.splice(j, 0, x); render();
   });
   const pdfClear = c.querySelector("[data-pdf-clear]"); if (pdfClear) pdfClear.onclick = () => { pdfFiles = []; pdfLog = ""; render(); };
-  const pdfMode = c.querySelector("#pdfMode"); if (pdfMode) pdfMode.onchange = () => { pdfOpt.mode = pdfMode.value; render(); };
-  const pdfDpi = c.querySelector("#pdfDpi"); if (pdfDpi) pdfDpi.onchange = () => { pdfOpt.dpi = Math.max(72, Math.min(300, parseInt(pdfDpi.value, 10) || 150)); };
-  const pdfQ = c.querySelector("#pdfQ"); if (pdfQ) pdfQ.onchange = () => { pdfOpt.quality = Math.max(0.3, Math.min(0.95, parseFloat(pdfQ.value) || 0.72)); };
   const pdfRun = c.querySelector("[data-pdf-run]");
   if (pdfRun) pdfRun.onclick = () => {
-    if (pdfTool === "fusion") pdfMerge();
-    else if (pdfTool === "compression") pdfCompress();
-    else pdfToMarkdown();
+    if (pdfTool === "fusion") pdfMerge(); else pdfToMarkdown();
   };
+
+  // bascule Markdown / PDF du lecteur
+  c.querySelectorAll("[data-rkind]").forEach((b) => b.onclick = () => { reader.kind = b.dataset.rkind; saveReader(); render(); });
+
+  // lecteur PDF
+  if (view.section === "reader" && reader.kind === "pdf") {
+    if (!pdfBusyR && !pdfLib.docs.length && window.DriveSync && DriveSync.isConnected()) refreshPdfs();
+    const curP = currentPdf();
+    if (curP && (!pdfOpen || pdfOpen.id !== curP.id) && !pdfBusyR) openPdf(curP.id);
+    if (pdfOpen) paintPdfPages();
+  }
+  const pdfrRef = c.querySelector("[data-pdfr-refresh]"); if (pdfrRef) pdfrRef.onclick = () => refreshPdfs();
+  const pdfrImp = c.querySelector("[data-pdfr-import]");
+  if (pdfrImp) pdfrImp.onclick = () => {
+    if (!(window.DriveSync && DriveSync.isConnected())) { alert("Connecte-toi d'abord à Google Drive : les PDF y sont enregistrés pour être disponibles sur tous tes appareils."); return; }
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.multiple = true; inp.accept = ".pdf,application/pdf";
+    inp.onchange = async () => {
+      const files = Array.from(inp.files || []);
+      if (!files.length) return;
+      pdfBusyR = true; render();
+      let added = 0, failed = 0;
+      for (const f of files) {
+        try {
+          const bytes = new Uint8Array(await f.arrayBuffer());
+          const id = await DriveSync.uploadPdf(f.name, bytes);
+          pdfLib.docs.push({ id, name: f.name, size: bytes.length });
+          pdfOrder().push(id);
+          if (!state.pdfCurrent) state.pdfCurrent = id;
+          added++;
+        } catch (e) { failed++; }
+      }
+      save(); pdfBusyR = false; render();
+      toast(added + " PDF ajouté(s) sur le Drive" + (failed ? ` · ${failed} en échec` : ""));
+    };
+    inp.click();
+  };
+  c.querySelectorAll("[data-pdfr-open]").forEach((el) => el.onclick = (ev) => {
+    if (ev.target.closest("button")) return;
+    state.pdfCurrent = el.dataset.pdfrOpen; save(); render();
+  });
+  c.querySelectorAll("[data-pdfr-del]").forEach((b) => b.onclick = async () => {
+    const id = b.dataset.pdfrDel;
+    const d = pdfLib.docs.find((x) => x.id === id);
+    if (!confirm(`Retirer « ${d ? d.name : "ce PDF"} » ? Le fichier sera supprimé de ton Drive.`)) return;
+    try { await DriveSync.deleteDoc(id); } catch (e) {}
+    pdfLib.docs = pdfLib.docs.filter((x) => x.id !== id);
+    state.pdfOrder = pdfOrder().filter((x) => x !== id);
+    if (state.pdfCurrent === id) { state.pdfCurrent = pdfLib.docs.length ? orderedPdfs()[0].id : null; pdfOpen = null; pdfPainted = ""; }
+    save(); render();
+  });
+  c.querySelectorAll("[data-pdfr-move]").forEach((b) => b.onclick = () => {
+    const ids = orderedPdfs().map((d) => d.id);
+    const i = ids.indexOf(b.dataset.d), j = i + Number(b.dataset.pdfrMove);
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    const [x] = ids.splice(i, 1); ids.splice(j, 0, x);
+    state.pdfOrder = ids; save(); render();
+  });
+  const pdfStep = (dir) => {
+    const ids = orderedPdfs().map((d) => d.id);
+    const j = ids.indexOf(state.pdfCurrent) + dir;
+    if (j < 0 || j >= ids.length) return;
+    state.pdfCurrent = ids[j]; save(); render();
+    const el = document.getElementById("content"); if (el) el.scrollTop = 0;
+  };
+  const pdfrPrev = c.querySelector("[data-pdfr-prev]"); if (pdfrPrev) pdfrPrev.onclick = () => pdfStep(-1);
+  const pdfrNext = c.querySelector("[data-pdfr-next]"); if (pdfrNext) pdfrNext.onclick = () => pdfStep(1);
+  const pdfZoomSel = c.querySelector("#pdfZoom");
+  if (pdfZoomSel) pdfZoomSel.onchange = () => { reader.pdfZoom = parseFloat(pdfZoomSel.value) || 1; saveReader(); pdfPainted = ""; render(); };
+  const pdfrDl = c.querySelector("[data-pdfr-download]");
+  if (pdfrDl) pdfrDl.onclick = () => { const d = currentPdf(); if (pdfOpen && d) downloadBytes(d.name, pdfOpen.bytes); };
 
   // lecteur Markdown — les documents sont des fichiers sur le Drive
   if (view.section === "reader" && !readerBusy && !readerLib.docs.length && window.DriveSync && DriveSync.isConnected()) refreshDocs();

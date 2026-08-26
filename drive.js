@@ -406,14 +406,16 @@
   // Stockés à part du fichier de données pour ne pas l'alourdir, mais bien
   // sur le Drive : ils suivent donc d'un appareil et d'un navigateur à l'autre.
   const DOC_PREFIX = "operations01-doc-";
-  async function listDocs() {
+  const PDF_PREFIX = "operations01-pdf-";
+  async function listDocs(prefix) {
+    const P = prefix || DOC_PREFIX;
     if (!hasSession()) return [];
-    const q = encodeURIComponent(`name contains '${DOC_PREFIX}' and trashed=false`);
+    const q = encodeURIComponent(`name contains '${P}' and trashed=false`);
     const r = await api(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&orderBy=name&pageSize=200&fields=files(id,name,size,modifiedTime)`);
     const j = await r.json();
     return (j.files || []).map((f) => ({
       id: f.id,
-      name: String(f.name).indexOf(DOC_PREFIX) === 0 ? String(f.name).slice(DOC_PREFIX.length) : f.name,
+      name: String(f.name).indexOf(P) === 0 ? String(f.name).slice(P.length) : f.name,
       size: Number(f.size) || 0,
       modifiedTime: f.modifiedTime
     }));
@@ -424,6 +426,35 @@
   }
   const readDoc = (id) => download(id);
   const deleteDoc = (id) => deleteFile(id);
+
+  // --- Fichiers binaires (PDF) : multipart avec contenu encodé en base64 ---
+  function bytesToBase64(bytes) {
+    let bin = "";
+    const chunk = 0x8000;   // par tranches, pour ne pas saturer la pile d'appels
+    for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    return btoa(bin);
+  }
+  async function uploadBinary(name, bytes, mime, prefix) {
+    const type = mime || "application/pdf";
+    const boundary = "op01" + Math.random().toString(36).slice(2);
+    const meta = JSON.stringify({ name: (prefix || PDF_PREFIX) + name, mimeType: type });
+    const body =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}` +
+      `\r\n--${boundary}\r\nContent-Type: ${type}\r\nContent-Transfer-Encoding: base64\r\n\r\n${bytesToBase64(bytes)}` +
+      `\r\n--${boundary}--`;
+    const r = await api("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,size", {
+      method: "POST",
+      headers: { "Content-Type": "multipart/related; boundary=" + boundary },
+      body
+    });
+    return (await r.json()).id;
+  }
+  async function readBinary(id) {
+    const r = await api(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`);
+    return new Uint8Array(await r.arrayBuffer());
+  }
+  const listPdfs = () => listDocs(PDF_PREFIX);
+  const uploadPdf = (name, bytes) => uploadBinary(name, bytes, "application/pdf", PDF_PREFIX);
 
   window.DriveSync = {
     ready,
@@ -448,6 +479,9 @@
     listDocs,
     uploadDoc,
     readDoc,
-    deleteDoc
+    deleteDoc,
+    listPdfs,
+    uploadPdf,
+    readBinary
   };
 })();
