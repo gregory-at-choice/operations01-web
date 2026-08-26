@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v37";
+const APP_VERSION = "v38";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -157,6 +157,7 @@ const SECTIONS = [
   { id: "groupe", label: "Groupe", ic: "🏢", fn: renderGroupe },
   { id: "dashboard", label: "Tableau de bord", ic: "🎛️", fn: renderDashboard },
   { id: "reader", label: "Lecteur", ic: "📖", fn: renderReader },
+  { id: "pdftools", label: "Outils PDF", ic: "🧰", fn: renderPdfTools },
 ];
 let view = { section: "missions", detailId: null };
 function go(section) { view = { section, detailId: null }; render(); }
@@ -648,6 +649,249 @@ function renderReader() {
         ${docs.length ? `<div class="muted" style="font-size:11px;margin-top:8px">Enregistrés sur ton Google Drive</div>` : ""}
       </div>
       <div class="md-main">${body}</div>
+    </div>`;
+}
+
+// ----------------------------- Outils PDF -----------------------------
+// Tout se fait dans le navigateur : aucun fichier n'est envoyé sur un serveur.
+// Les bibliothèques (pdf-lib, pdf.js) sont embarquées dans le site et chargées
+// seulement quand cette section est utilisée, pour ne pas alourdir l'app.
+let pdfTool = "fusion";
+let pdfFiles = [];            // [{name, size, bytes}]
+let pdfBusy = "", pdfLog = "";
+let pdfOpt = { mode: "leger", dpi: 150, quality: 0.72 };
+
+function pdfSay(msg) { pdfLog = msg; if (view.section === "pdftools") render(); }
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[data-src="${src}"]`)) return resolve();
+    const el = document.createElement("script");
+    el.src = src; el.async = true; el.setAttribute("data-src", src);
+    el.onload = () => resolve(); el.onerror = () => reject(new Error("Chargement impossible : " + src));
+    document.head.appendChild(el);
+  });
+}
+async function needPdfLib() {
+  if (!window.PDFLib) { pdfSay("Chargement de l'outil…"); await loadScript("vendor/pdf-lib.min.js"); }
+  if (!window.PDFLib) throw new Error("Bibliothèque PDF indisponible.");
+  return window.PDFLib;
+}
+async function needPdfJs() {
+  if (!window.pdfjsLib) {
+    pdfSay("Chargement de l'outil…");
+    const mod = await import("./vendor/pdf.min.mjs");
+    mod.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.mjs";
+    window.pdfjsLib = mod;
+  }
+  return window.pdfjsLib;
+}
+function downloadBytes(name, bytes, type) {
+  const blob = new Blob([bytes], { type: type || "application/pdf" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+// --- 1. Fusionner plusieurs PDF ---
+async function pdfMerge() {
+  if (pdfFiles.length < 2) { alert("Ajoute au moins deux fichiers PDF."); return; }
+  pdfBusy = "fusion"; render();
+  try {
+    const { PDFDocument } = await needPdfLib();
+    const out = await PDFDocument.create();
+    let pages = 0;
+    for (const f of pdfFiles) {
+      pdfSay(`Lecture de ${f.name}…`);
+      const src = await PDFDocument.load(f.bytes, { ignoreEncryption: true });
+      const copied = await out.copyPages(src, src.getPageIndices());
+      copied.forEach((pg) => { out.addPage(pg); pages++; });
+    }
+    pdfSay("Assemblage…");
+    const bytes = await out.save({ useObjectStreams: true });
+    downloadBytes("operations01-fusion.pdf", bytes);
+    pdfSay(`Fusion terminée : ${pages} page(s), ${fmtSize(bytes.length)}.`);
+  } catch (e) { pdfSay("Échec : " + e.message); }
+  pdfBusy = ""; render();
+}
+
+// --- 2. Réduire la taille d'un PDF ---
+// « Léger » : réécriture optimisée, le texte reste sélectionnable.
+// « Fort »  : chaque page est rendue en image (le texte n'est plus sélectionnable),
+//             ce qui réduit massivement les PDF scannés ou riches en images.
+async function pdfCompress() {
+  if (pdfFiles.length !== 1) { alert("Choisis un seul fichier PDF à compresser."); return; }
+  pdfBusy = "compression"; render();
+  const f = pdfFiles[0];
+  try {
+    const { PDFDocument } = await needPdfLib();
+    let bytes;
+    if (pdfOpt.mode === "leger") {
+      pdfSay("Réécriture optimisée…");
+      const doc = await PDFDocument.load(f.bytes, { ignoreEncryption: true });
+      doc.setProducer("Operations01"); doc.setCreator("Operations01");
+      bytes = await doc.save({ useObjectStreams: true });
+    } else {
+      const pdfjs = await needPdfJs();
+      const task = pdfjs.getDocument({ data: f.bytes.slice(0), standardFontDataUrl: "vendor/standard_fonts/" });
+      const src = await task.promise;
+      const out = await PDFDocument.create();
+      for (let i = 1; i <= src.numPages; i++) {
+        pdfSay(`Page ${i} / ${src.numPages}…`);
+        const page = await src.getPage(i);
+        const base = page.getViewport({ scale: 1 });
+        const scale = Math.min(pdfOpt.dpi / 72, 4);
+        const vp = page.getViewport({ scale });
+        const cv = document.createElement("canvas");
+        cv.width = Math.max(1, Math.floor(vp.width)); cv.height = Math.max(1, Math.floor(vp.height));
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        const dataUrl = cv.toDataURL("image/jpeg", pdfOpt.quality);
+        const img = await out.embedJpg(dataUrl);
+        const pg = out.addPage([base.width, base.height]);
+        pg.drawImage(img, { x: 0, y: 0, width: base.width, height: base.height });
+      }
+      bytes = await out.save({ useObjectStreams: true });
+    }
+    const gain = Math.round((1 - bytes.length / f.size) * 100);
+    downloadBytes(f.name.replace(/\.pdf$/i, "") + "-compresse.pdf", bytes);
+    pdfSay(gain > 0
+      ? `Terminé : ${fmtSize(f.size)} → ${fmtSize(bytes.length)} (−${gain} %).`
+      : `Terminé : ${fmtSize(bytes.length)}. Ce PDF était déjà bien optimisé${pdfOpt.mode === "leger" ? " — essaie la compression forte." : "."}`);
+  } catch (e) { pdfSay("Échec : " + e.message); }
+  pdfBusy = ""; render();
+}
+
+// --- 3. Convertir un PDF en Markdown ---
+// Le texte est extrait avec ses positions et sa taille de police, ce qui permet de
+// reconstituer titres, paragraphes et listes. Un PDF scanné (image pure) n'a pas de
+// texte à extraire : on le signale au lieu de produire un fichier vide.
+// Reconstitue un Markdown à partir des lignes extraites (texte, taille, ordonnée).
+// La taille de police dominante sert de référence : au-dessus, c'est un titre.
+function linesToMarkdown(lines, title) {
+  const sizes = lines.filter((l) => l.text).map((l) => Math.round(l.size));
+  const freq = {}; sizes.forEach((v) => { freq[v] = (freq[v] || 0) + 1; });
+  const body = Number(Object.keys(freq).sort((a, b) => freq[b] - freq[a])[0]) || 10;
+  const isList = (t) => /^([-*+]|\d+[.)])\s+/.test(t);
+  const isHead = (t) => /^#{1,6}\s/.test(t);
+  const blocks = [];            // un bloc = un paragraphe, un titre ou une liste
+  let prev = null;
+  lines.forEach((l) => {
+    if (l.brk) { blocks.push("---"); prev = null; return; }
+    if (!l.text) return;
+    const t = l.text, ratio = l.size / body;
+    let out;
+    if (ratio >= 1.6) out = "# " + t;
+    else if (ratio >= 1.3) out = "## " + t;
+    else if (ratio >= 1.15) out = "### " + t;
+    else if (/^([-•·▪–]|\d+[.)])\s+/.test(t)) out = t.replace(/^[•·▪–]\s+/, "- ");
+    else out = t;
+    // éléments de liste consécutifs : même bloc, une ligne chacun
+    if (prev && isList(out) && isList(prev.last)) {
+      blocks[blocks.length - 1] += "\n" + out;
+      prev = { last: out, ratio, y: l.y };
+      return;
+    }
+    // lignes d'un même paragraphe : on recolle (corps de texte, sans ponctuation finale)
+    if (prev && ratio < 1.15 && prev.ratio < 1.15 && !isList(out) && !isList(prev.last) && !isHead(prev.last)
+        && Math.abs(prev.y - l.y) < body * 2.2 && !/[.!?:;»)]$/.test(prev.last)) {
+      blocks[blocks.length - 1] += " " + out;
+      prev = { last: blocks[blocks.length - 1], ratio, y: l.y };
+      return;
+    }
+    blocks.push(out);
+    prev = { last: out, ratio, y: l.y };
+  });
+  return `# ${title}\n\n` + blocks.join("\n\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+}
+async function pdfToMarkdown() {
+  if (pdfFiles.length !== 1) { alert("Choisis un seul fichier PDF à convertir."); return; }
+  pdfBusy = "markdown"; render();
+  const f = pdfFiles[0];
+  try {
+    const pdfjs = await needPdfJs();
+    const src = await pdfjs.getDocument({ data: f.bytes.slice(0), standardFontDataUrl: "vendor/standard_fonts/" }).promise;
+    const lines = [];
+    for (let i = 1; i <= src.numPages; i++) {
+      pdfSay(`Page ${i} / ${src.numPages}…`);
+      const page = await src.getPage(i);
+      const tc = await page.getTextContent();
+      // regroupement des fragments par ligne (même ordonnée, à la tolérance près)
+      const rows = [];
+      tc.items.forEach((it) => {
+        if (!it.str) return;
+        const y = Math.round(it.transform[5]);
+        const size = Math.abs(it.transform[0]) || 10;
+        let row = rows.find((r) => Math.abs(r.y - y) <= Math.max(2, size * 0.4));
+        if (!row) { row = { y, size, parts: [] }; rows.push(row); }
+        row.size = Math.max(row.size, size);
+        row.parts.push({ x: it.transform[4], s: it.str });
+      });
+      rows.sort((a, b) => b.y - a.y);
+      rows.forEach((r) => {
+        r.parts.sort((a, b) => a.x - b.x);
+        const text = r.parts.map((p) => p.s).join("").replace(/\s+/g, " ").trim();
+        if (text) lines.push({ text, size: r.size, y: r.y, page: i });
+      });
+      if (i < src.numPages) lines.push({ text: "", size: 0, y: 0, page: i, brk: true });
+    }
+    if (!lines.some((l) => l.text)) throw new Error("Aucun texte trouvé : ce PDF est probablement un scan (image). Une reconnaissance de caractères serait nécessaire.");
+    const text = linesToMarkdown(lines, f.name.replace(/\.pdf$/i, ""));
+    downloadBytes(f.name.replace(/\.pdf$/i, "") + ".md", text, "text/markdown;charset=utf-8");
+    pdfSay(`Conversion terminée : ${src.numPages} page(s), ${fmtSize(text.length)} de Markdown.`);
+  } catch (e) { pdfSay("Échec : " + e.message); }
+  pdfBusy = ""; render();
+}
+
+function renderPdfTools() {
+  const tabs = [["fusion", "Fusionner"], ["compression", "Réduire la taille"], ["markdown", "PDF → Markdown"]]
+    .map(([id, lbl]) => `<button class="chip ${pdfTool === id ? "active" : ""}" data-pdftab="${id}">${lbl}</button>`).join("");
+  const multi = pdfTool === "fusion";
+  const files = pdfFiles.map((f, i) => `<div class="md-item" style="cursor:default">
+      <span class="md-num">${i + 1}</span>
+      <div class="grow" style="min-width:0"><div class="md-item-t">${esc(f.name)}</div>
+        <div class="md-item-s">${esc(fmtSize(f.size))}</div></div>
+      ${multi ? `<button class="btn ghost small" data-pdf-move="-1" data-i="${i}" ${i === 0 ? "disabled" : ""} title="Monter">↑</button>
+      <button class="btn ghost small" data-pdf-move="1" data-i="${i}" ${i === pdfFiles.length - 1 ? "disabled" : ""} title="Descendre">↓</button>` : ""}
+      <button class="btn ghost small" data-pdf-del="${i}" title="Retirer">✕</button>
+    </div>`).join("");
+
+  let panel = "";
+  if (pdfTool === "fusion") {
+    panel = `<div class="muted" style="font-size:12px;margin-bottom:10px">Les PDF sont assemblés dans l'ordre de la liste — utilise ↑ ↓ pour le modifier.</div>
+      <button class="btn" data-pdf-run ${pdfFiles.length < 2 || pdfBusy ? "disabled" : ""}>${pdfBusy === "fusion" ? "Fusion en cours…" : "Fusionner en un seul PDF"}</button>`;
+  } else if (pdfTool === "compression") {
+    panel = `<label class="field"><span>Méthode</span>
+        <select id="pdfMode">
+          <option value="leger" ${pdfOpt.mode === "leger" ? "selected" : ""}>Légère — le texte reste sélectionnable</option>
+          <option value="fort" ${pdfOpt.mode === "fort" ? "selected" : ""}>Forte — pages converties en images</option>
+        </select></label>
+      ${pdfOpt.mode === "fort" ? `<div class="inline" style="flex-wrap:wrap">
+        <label class="md-ctl"><span>Résolution (DPI)</span><input type="number" id="pdfDpi" min="72" max="300" step="6" value="${pdfOpt.dpi}"/></label>
+        <label class="md-ctl"><span>Qualité (0,3 – 0,95)</span><input type="number" id="pdfQ" min="0.3" max="0.95" step="0.05" value="${pdfOpt.quality}"/></label>
+      </div>
+      <div class="muted" style="font-size:12px;margin:6px 0 10px">⚠️ En mode fort, le texte devient une image : plus de sélection ni de recherche dans le PDF. Idéal pour des scans ou des documents très illustrés.</div>`
+        : `<div class="muted" style="font-size:12px;margin:6px 0 10px">La méthode légère réécrit le fichier de façon compacte. Le gain est réel sur les PDF mal optimisés, faible sur ceux déjà compressés — dans ce cas, essaie la méthode forte.</div>`}
+      <button class="btn" data-pdf-run ${pdfFiles.length !== 1 || pdfBusy ? "disabled" : ""}>${pdfBusy === "compression" ? "Compression en cours…" : "Réduire la taille"}</button>`;
+  } else {
+    panel = `<div class="muted" style="font-size:12px;margin-bottom:10px">Le texte est extrait avec sa mise en forme approximative : les titres sont déduits de la taille de police, et les paragraphes reconstitués. Un PDF scanné (image pure) ne contient pas de texte à extraire.</div>
+      <button class="btn" data-pdf-run ${pdfFiles.length !== 1 || pdfBusy ? "disabled" : ""}>${pdfBusy === "markdown" ? "Conversion en cours…" : "Convertir en Markdown"}</button>`;
+  }
+
+  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Outils PDF</div>
+      ${pdfFiles.length ? '<button class="btn ghost small" data-pdf-clear>Vider</button>' : ""}
+      <button class="btn secondary" data-pdf-add>📂 Choisir des PDF</button></div>
+    <div class="chip-row" style="margin-bottom:14px">${tabs}</div>
+    <div class="md-layout">
+      <div class="md-side">
+        <div class="section-h" style="margin-top:0">Fichiers <span class="muted">(${pdfFiles.length})</span></div>
+        <div class="md-list">${files || '<div class="muted" style="font-size:12px">Aucun fichier sélectionné.</div>'}</div>
+      </div>
+      <div class="md-main">
+        <div class="card">${panel}
+          ${pdfLog ? `<div class="muted" style="font-size:12px;margin-top:10px">${esc(pdfLog)}</div>` : ""}</div>
+        <div class="muted" style="font-size:11px;margin-top:12px;line-height:1.5">🔒 Le traitement a lieu entièrement dans ton navigateur : aucun fichier n'est envoyé sur Internet.</div>
+      </div>
     </div>`;
 }
 
@@ -2232,6 +2476,41 @@ function wire() {
   const lvS = c.querySelector("[data-leave-settings]"); if (lvS) lvS.onclick = leaveSettings;
   const lvA = c.querySelector("[data-leave-adjust]"); if (lvA) lvA.onclick = leaveAdjust;
   onclick("[data-export-factures]", exportFacturesCSV);
+
+  // outils PDF
+  c.querySelectorAll("[data-pdftab]").forEach((b) => b.onclick = () => { pdfTool = b.dataset.pdftab; pdfLog = ""; render(); });
+  const pdfAdd = c.querySelector("[data-pdf-add]");
+  if (pdfAdd) pdfAdd.onclick = () => {
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = ".pdf,application/pdf"; inp.multiple = (pdfTool === "fusion");
+    inp.onchange = async () => {
+      const files = Array.from(inp.files || []);
+      if (!files.length) return;
+      if (pdfTool !== "fusion") pdfFiles = [];
+      for (const f of files) {
+        const buf = new Uint8Array(await f.arrayBuffer());
+        pdfFiles.push({ name: f.name, size: buf.length, bytes: buf });
+      }
+      pdfLog = ""; render();
+    };
+    inp.click();
+  };
+  c.querySelectorAll("[data-pdf-del]").forEach((b) => b.onclick = () => { pdfFiles.splice(Number(b.dataset.pdfDel), 1); render(); });
+  c.querySelectorAll("[data-pdf-move]").forEach((b) => b.onclick = () => {
+    const i = Number(b.dataset.i), j = i + Number(b.dataset.pdfMove);
+    if (j < 0 || j >= pdfFiles.length) return;
+    const [x] = pdfFiles.splice(i, 1); pdfFiles.splice(j, 0, x); render();
+  });
+  const pdfClear = c.querySelector("[data-pdf-clear]"); if (pdfClear) pdfClear.onclick = () => { pdfFiles = []; pdfLog = ""; render(); };
+  const pdfMode = c.querySelector("#pdfMode"); if (pdfMode) pdfMode.onchange = () => { pdfOpt.mode = pdfMode.value; render(); };
+  const pdfDpi = c.querySelector("#pdfDpi"); if (pdfDpi) pdfDpi.onchange = () => { pdfOpt.dpi = Math.max(72, Math.min(300, parseInt(pdfDpi.value, 10) || 150)); };
+  const pdfQ = c.querySelector("#pdfQ"); if (pdfQ) pdfQ.onchange = () => { pdfOpt.quality = Math.max(0.3, Math.min(0.95, parseFloat(pdfQ.value) || 0.72)); };
+  const pdfRun = c.querySelector("[data-pdf-run]");
+  if (pdfRun) pdfRun.onclick = () => {
+    if (pdfTool === "fusion") pdfMerge();
+    else if (pdfTool === "compression") pdfCompress();
+    else pdfToMarkdown();
+  };
 
   // lecteur Markdown — les documents sont des fichiers sur le Drive
   if (view.section === "reader" && !readerBusy && !readerLib.docs.length && window.DriveSync && DriveSync.isConnected()) refreshDocs();
