@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v42";
+const APP_VERSION = "v43";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2215,6 +2215,7 @@ const CAL_CACHE = "op01_calendar";
 const CAL_PAST_DAYS = 60;     // profondeur d'historique chargée
 const CAL_AHEAD_DAYS = 180;   // horizon chargé
 const CAL_FRESH = 5 * 60000;  // au-delà, on redemande l'agenda à Google
+const CAL_RETRY = 30 * 60000; // après une erreur, on n'insiste qu'au bout d'une demi-heure
 let calendar = loadCalCache();  // { events, at, error }
 let calBusy = false;
 
@@ -2266,9 +2267,18 @@ function calError(e) {
   if (/insufficient|scope|ACCESS_TOKEN|unauthorized/i.test(msg) || (e && (e.status === 401 || e.status === 403))) return { code: "scope", msg };
   return { code: "other", msg };
 }
+// Prochaine tentative autorisée : après une erreur on n'insiste pas à chaque
+// rendu, sinon un refus de Google relance une autorisation en boucle.
+let calNextTry = 0;
 async function loadCalendar(force) {
   if (!(window.DriveSync && DriveSync.listEvents && DriveSync.isConnected())) return;
+  // L'agenda n'est lu que si l'utilisateur l'a explicitement relié.
+  if (!DriveSync.calendarGranted || !DriveSync.calendarGranted()) {
+    if (!calendar.error) { calendar = { events: [], at: calendar.at, error: { code: "off", msg: "" } }; if (calVisible()) render(); }
+    return;
+  }
   if (calBusy) return;
+  if (!force && Date.now() < calNextTry) return;
   if (!force && calendar.at && Date.now() - calendar.at < CAL_FRESH && !calendar.error) return;
   calBusy = true; if (calVisible()) render();
   try {
@@ -2276,10 +2286,14 @@ async function loadCalendar(force) {
     const to = new Date(); to.setDate(to.getDate() + CAL_AHEAD_DAYS);
     const raw = await DriveSync.listEvents(from.toISOString(), to.toISOString());
     calendar = { events: raw.map(normEvent).filter((e) => e.date), at: Date.now(), error: null };
+    calNextTry = 0;
     saveCalCache();
   } catch (e) {
     // On garde les événements déjà connus : mieux vaut un agenda un peu daté que rien.
     calendar = { events: calendar.events, at: calendar.at, error: calError(e) };
+    // On attend une action de l'utilisateur (« Réessayer ») plutôt que de relancer
+    // Google à chaque rendu.
+    calNextTry = Date.now() + CAL_RETRY;
   }
   calBusy = false;
   if (calVisible()) render();
@@ -2327,16 +2341,22 @@ function calSynthesis() {
   return { up, meetings, contacts, noGuests, waiting, prep };
 }
 // Bandeau d'explication quand l'agenda n'est pas (encore) lisible.
-function calNotice() {
+function calNotice(quiet) {
   const err = calendar.error;
   if (!err) return "";
+  if (quiet && err.code === "off") return "";
   const box = (title, body, btn) => `<div class="card cal-notice">
     <strong>${title}</strong><div class="muted" style="font-size:13px;margin-top:4px">${body}</div>
     <div style="margin-top:10px">${btn}</div></div>`;
+  if (err.code === "off") {
+    return box("Relier ton agenda Google",
+      "Operations01 peut afficher ici les événements de ton agenda Google, <strong>en lecture seule</strong> : rien n'y sera jamais modifié. Tu peux délier l'agenda à tout moment.",
+      '<button class="btn small" data-cal-enable>Relier mon agenda Google</button>');
+  }
   if (err.code === "scope") {
     return box("Agenda Google : autorisation à renouveler",
-      "L'application demande maintenant l'accès <strong>en lecture seule</strong> à ton agenda Google. Appuie sur « Reconnecter », puis laisse la case « Consulter les événements de votre agenda » cochée.",
-      '<button class="btn small" data-cal-reconnect>Reconnecter Google</button>');
+      "Google n'a pas accordé l'accès en lecture à l'agenda. Appuie sur « Relier mon agenda », puis laisse la case « Consulter les événements de votre agenda » cochée.",
+      '<button class="btn small" data-cal-enable>Relier mon agenda Google</button>');
   }
   if (err.code === "api") {
     return box("Agenda Google : API à activer",
@@ -2345,11 +2365,40 @@ function calNotice() {
   }
   return box("Agenda Google indisponible", esc(err.msg), '<button class="btn small" data-cal-refresh>Réessayer</button>');
 }
+const calLinked = () => !!(window.DriveSync && DriveSync.calendarGranted && DriveSync.calendarGranted());
 function calFooter() {
+  if (!calLinked()) return "";
   const when = calendar.at ? new Date(calendar.at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : null;
   return `<div class="inline muted" style="font-size:12px;margin-top:12px">
     <span class="grow">${calBusy ? "Lecture de l'agenda Google…" : (when ? `Agenda synchronisé à ${when}.` : "Agenda Google non chargé.")}</span>
-    <button class="btn ghost small" data-cal-refresh>↻ Actualiser l'agenda</button></div>`;
+    <button class="btn ghost small" data-cal-refresh>↻ Actualiser l'agenda</button>
+    <button class="btn ghost small" data-cal-unlink>Délier l'agenda</button></div>`;
+}
+// Demande d'autorisation de l'agenda : uniquement sur un clic de l'utilisateur.
+function enableCalendar() {
+  if (!(window.DriveSync && DriveSync.enableCalendar)) return;
+  Promise.resolve(DriveSync.enableCalendar()).then((ok) => {
+    if (ok === null) return;          // redirection vers Google en cours (iOS)
+    calNextTry = 0;
+    calendar = { events: calendar.events, at: 0, error: null };
+    loadCalendar(true);
+    toast("Agenda Google relié ✓");
+  }).catch((e) => {
+    calNextTry = 0;
+    calendar = { events: [], at: calendar.at, error: { code: "off", msg: "" } };
+    render();
+    alert("Impossible de relier l'agenda : " + e.message
+      + "\n\nSur iPhone (Safari), autorise les fenêtres surgissantes pour ce site, puis réessaie.");
+  });
+}
+function unlinkCalendar() {
+  if (!(window.DriveSync && DriveSync.disableCalendar)) return;
+  DriveSync.disableCalendar();
+  calNextTry = 0;
+  calendar = { events: [], at: 0, error: { code: "off", msg: "" } };
+  saveCalCache();
+  render();
+  toast("Agenda Google délié.");
 }
 // Fiche d'un événement (lecture seule) affichée depuis Rendez-vous ou Planning.
 function renderCalEventDetail(eid) {
@@ -2402,7 +2451,8 @@ function renderCalSummary() {
   const s = calSynthesis();
   const notice = calNotice();
   if (!calendar.events.length) {
-    return `${notice}<div class="center-empty">${calBusy ? "Lecture de l'agenda Google…" : "Aucun événement d'agenda chargé."}</div>${calFooter()}`;
+    const empty = !calLinked() ? "" : `<div class="center-empty">${calBusy ? "Lecture de l'agenda Google…" : "Aucun événement d'agenda chargé."}</div>`;
+    return `${notice}${empty}${calFooter()}`;
   }
   const evRow = (e, sub) => `<div class="row" data-cal-open="${esc(e.id)}" style="border-left-color:var(--positive)">
     <span class="ic">🗓️</span>
@@ -2485,10 +2535,10 @@ function renderRendezvous() {
     ${calNotice()}
     <div class="section-h">À venir <span class="muted">(${upcoming.length})</span></div>
     <div class="list">${upcoming.length ? upcoming.map(card).join("") : '<div class="muted" style="padding:4px 2px">Aucun rendez-vous à venir.</div>'}</div>
-    <div class="section-h">🗓️ Agenda Google · à venir <span class="muted">(${gUp.length})</span></div>
-    <div class="list">${gUp.length ? gUp.map(gCard).join("") : `<div class="muted" style="padding:4px 2px;font-size:13px">${calBusy ? "Lecture de l'agenda Google…" : "Aucun événement à venir dans l'agenda Google."}</div>`}</div>
+    ${calLinked() ? `<div class="section-h">🗓️ Agenda Google · à venir <span class="muted">(${gUp.length})</span></div>
+    <div class="list">${gUp.length ? gUp.map(gCard).join("") : `<div class="muted" style="padding:4px 2px;font-size:13px">${calBusy ? "Lecture de l'agenda Google…" : "Aucun événement à venir dans l'agenda Google."}</div>`}</div>` : ""}
     ${past.length ? `<div class="section-h">Passés <span class="muted">(${past.length})</span></div><div class="list">${past.map(card).join("")}</div>` : ""}
-    ${gPast.length ? `<div class="section-h">🗓️ Agenda Google · passés <span class="muted">(${gPast.length})</span></div><div class="list">${gPast.slice(0, 60).map(gCard).join("")}</div>` : ""}
+    ${calLinked() && gPast.length ? `<div class="section-h">🗓️ Agenda Google · passés <span class="muted">(${gPast.length})</span></div><div class="list">${gPast.slice(0, 60).map(gCard).join("")}</div>` : ""}
     ${calFooter()}
     <button class="btn fab" data-add-rdv>+</button>`;
 }
@@ -2707,7 +2757,7 @@ function renderTimetable() {
       <button class="btn secondary small" data-day-today>Aujourd'hui</button>
       <button class="btn small" data-add-slot>+ Créneau</button></div>
     <div class="tt-help muted">Glisse une tâche dans la grille pour la planifier · clique un créneau vide pour en créer un (45 min) · glisse un créneau pour le déplacer, sa base pour le redimensionner (pas de 5 min). Les blocs 🗓️ viennent de ton agenda Google (lecture seule).</div>
-    ${calNotice()}${allDayHtml}
+    ${calNotice(true)}${allDayHtml}
     <div class="tt-layout">
       <div class="tt-side">
         <div class="section-h" style="margin-top:0">À planifier <span class="muted">(${unscheduledTasks().length})</span></div>
@@ -3209,7 +3259,8 @@ function wire() {
     ev.stopPropagation(); openDetail("rendezvous", "gcal:" + el.dataset.calSlot);
   }));
   c.querySelectorAll("[data-cal-refresh]").forEach((b) => b.onclick = () => loadCalendar(true));
-  c.querySelectorAll("[data-cal-reconnect]").forEach((b) => b.onclick = () => reconnectDrive());
+  c.querySelectorAll("[data-cal-enable]").forEach((b) => b.onclick = () => enableCalendar());
+  c.querySelectorAll("[data-cal-unlink]").forEach((b) => b.onclick = () => unlinkCalendar());
   const calImp = c.querySelector("[data-cal-import]");
   if (calImp) calImp.onclick = () => importCalEvent(calImp.dataset.calImport);
   wireTimetable(c);

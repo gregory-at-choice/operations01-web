@@ -10,9 +10,16 @@
      sauvegarde « conflit » — on ne perd jamais le travail d'un autre appareil. */
 (function () {
   const cfg = window.OPERATIONS01_CONFIG || {};
-  // drive.file : l'app n'accède qu'aux fichiers qu'elle crée.
-  // calendar.readonly : lecture seule de l'agenda Google (affichage dans Planning).
-  const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.readonly";
+  // Portée de base : l'app n'accède qu'aux fichiers qu'elle crée.
+  const SCOPE = "https://www.googleapis.com/auth/drive.file";
+  // Portée facultative, demandée seulement si l'utilisateur relie son agenda.
+  // Elle n'est JAMAIS ajoutée d'office : sinon la session existante (qui ne porte
+  // que drive.file) deviendrait insuffisante et Google redemanderait sans cesse
+  // l'autorisation au lancement.
+  const CAL_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+  const CAL_KEY = "op01_calendarScope";
+  const calGranted = () => { try { return localStorage.getItem(CAL_KEY) === "1"; } catch (e) { return false; } };
+  const askedScope = () => (calGranted() ? SCOPE + " " + CAL_SCOPE : SCOPE);
   const FILE_NAME = cfg.driveFileName || "operations01-data.json";
   const BACKUP_PREFIX = "operations01-backup-";
   const CONFLICT_PREFIX = "operations01-conflit-";
@@ -22,6 +29,7 @@
   const SESSION_KEY = "op01_driveSession"; // mémorise qu'on a déjà autorisé l'app
 
   let tokenClient = null;
+  let tokenClientScope = null;  // portée avec laquelle tokenClient a été créé
   let accessToken = null;
   let tokenExpiry = 0;         // date (ms) d'expiration du jeton, avec marge
   let tokenPromise = null;     // demande de jeton en cours (évite les doublons)
@@ -58,7 +66,7 @@
       client_id: cfg.googleClientId,
       redirect_uri: redirectURI(),
       response_type: "token",
-      scope: SCOPE,
+      scope: askedScope(),
       include_granted_scopes: "true",
       state: nonce,
       prompt: "consent"
@@ -100,9 +108,13 @@
     let p;
     p = new Promise((resolve, reject) => {
       if (!ready()) { reject(new Error("Google Drive indisponible (identifiant manquant ou script Google bloqué).")); return; }
-      if (!tokenClient) {
+      // La portée peut changer en cours de session (agenda relié) : dans ce cas
+      // le client de jeton doit être reconstruit, sinon Google redonne un jeton
+      // avec l'ancienne portée.
+      if (!tokenClient || tokenClientScope !== askedScope()) {
+        tokenClientScope = askedScope();
         tokenClient = google.accounts.oauth2.initTokenClient({
-          client_id: cfg.googleClientId, scope: SCOPE, callback: () => {}
+          client_id: cfg.googleClientId, scope: tokenClientScope, callback: () => {}
         });
       }
       let settled = false;
@@ -182,7 +194,19 @@
         headers: Object.assign({ Authorization: "Bearer " + accessToken }, o.headers || {})
       }));
     } finally { if (timer) clearTimeout(timer); }
-    if ((r.status === 401 || r.status === 403) && !retried) {
+    // Un 403 n'est pas forcément un problème de jeton : « API non activée »,
+    // « quota dépassé »… Jeter le jeton dans ces cas-là relance une autorisation
+    // Google à chaque appel, en boucle. On ne rejoue que sur un vrai refus
+    // d'authentification.
+    let authProblem = r.status === 401;
+    if (r.status === 403 && !authProblem) {
+      try {
+        const j = await r.clone().json();
+        const m = (j.error && (j.error.message || "")) || "";
+        authProblem = /insufficient authentication scopes|invalid credentials|invalid_token|access token/i.test(m);
+      } catch (e) {}
+    }
+    if (authProblem && !retried) {
       // jeton révoqué ou expiré côté Google : on en redemande un et on rejoue une fois
       accessToken = null; tokenExpiry = 0;
       await getToken(false);
@@ -265,8 +289,22 @@
   // ---- Agenda Google (lecture seule) -------------------------------------
   // Les occurrences des séries sont dépliées (singleEvents) pour que chaque
   // événement affiché dans Planning corresponde à une date réelle.
+  // Relie l'agenda : demande explicite de l'utilisateur, jamais au lancement.
+  // On repart d'un jeton neuf, car l'ancien ne porte que drive.file.
+  async function enableCalendar() {
+    try { localStorage.setItem(CAL_KEY, "1"); } catch (e) {}
+    accessToken = null; tokenExpiry = 0; tokenPromise = null; tokenClient = null; tokenClientScope = null;
+    if (isIOS()) { setStatus("redirection vers Google…"); startRedirectAuth(); return null; }
+    try { await getToken(true); return true; }
+    catch (e) { disableCalendar(); throw e; }
+  }
+  function disableCalendar() {
+    try { localStorage.removeItem(CAL_KEY); } catch (e) {}
+    tokenClient = null; tokenClientScope = null;
+  }
+
   async function listEvents(fromISO, toISO) {
-    if (!hasSession()) return [];
+    if (!hasSession() || !calGranted()) return [];
     const p = new URLSearchParams({
       timeMin: fromISO,
       timeMax: toISO,
@@ -510,6 +548,9 @@
     backupNow,
     readMails,
     listEvents,
+    calendarGranted: calGranted,
+    enableCalendar,
+    disableCalendar,
     listDocs,
     uploadDoc,
     readDoc,
