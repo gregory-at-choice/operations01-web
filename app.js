@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v43";
+const APP_VERSION = "v44";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2307,20 +2307,63 @@ function calWhen(e) {
 }
 const calGuestName = (g) => g.name || g.email || "?";
 
-// Faut-il préparer cet événement ? On renvoie les raisons, pour rester explicable.
-const PREP_WORDS = ["prépa", "prepa", "préparer", "preparer", "présentation", "presentation", "atelier", "workshop",
-  "comité", "comite", "board", "conseil", "assemblée", "assemblee", "soutenance", "pitch", "entretien", "revue",
-  "review", "bilan", "formation", "séminaire", "seminaire", "ordre du jour", "kick-off", "kickoff", "démo", "demo",
-  "négociation", "negociation", "audit", "restitution", "rapport"];
-function calPrepReasons(e) {
-  const hay = ((e.title || "") + " " + (e.notes || "")).toLowerCase();
-  const reasons = [];
-  const w = PREP_WORDS.find((x) => hay.indexOf(x) > -1);
-  if (w) reasons.push(`sujet « ${w} »`);
-  if (e.mins >= 90) reasons.push(`durée ${fmtDurationShort(e.mins * 60)}`);
-  if (e.guests.length >= 3) reasons.push(`${e.guests.length} participants`);
-  return reasons;
+// Nature de l'événement, déduite du titre et de la description. C'est elle qui
+// commande la préparation : un trajet en voiture ne demande rien, un trajet en
+// transport demande des billets, un rendez-vous client demande un dossier…
+// La comparaison se fait sans accent ni majuscule, sur des mots entiers.
+const noAccents = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const EVENT_KINDS = [
+  { id: "client", label: "Rendez-vous client", ic: "🤝",
+    re: /\b(client|clients|clientele|prospect|prospects|closing|negociation|devis|contrat|proposition commerciale|appel d'offres?|appel d offres?)\b/ },
+  { id: "commercial", label: "Événement commercial", ic: "📣",
+    re: /\b(salon|foire|congres|forum|networking|afterwork|prospection|demarchage|commercial|commerciale|business|pitch|stand|exposant|convention|meetup)\b/ },
+  { id: "transport", label: "Trajet en transport", ic: "🚆",
+    re: /\b(avion|vol|aeroport|autocar|bus|taxi|vtc|uber|train|tgv|gare|ferry|bateau|metro|tramway|navette|eurostar|thalys|ouigo|intercites)\b/ },
+  { id: "sport", label: "Sport", ic: "🏀",
+    re: /\b(match|basket|basketball|foot|football|tennis|entrainement|tournoi|championnat|handball|rugby|volley|padel|squash)\b/ },
+  { id: "voiture", label: "Trajet en voiture", ic: "🚗",
+    re: /\b(voiture|covoiturage|autoroute|conduite|au volant)\b/ }
+];
+function calKinds(e) {
+  const hay = noAccents((e.title || "") + " " + (e.notes || ""));
+  let ids = EVENT_KINDS.filter((k) => k.re.test(hay)).map((k) => k.id);
+  // Le trajet en voiture ne demande rien en lui-même : s'il accompagne autre
+  // chose (un client, un salon), c'est cette autre nature qui commande.
+  if (ids.length > 1) ids = ids.filter((id) => id !== "voiture");
+  return ids;
 }
+const calKindLabel = (id) => { const k = EVENT_KINDS.find((x) => x.id === id); return k ? k.ic + " " + k.label : id; };
+
+// Repères généraux, utilisés seulement quand aucune nature n'est reconnue.
+const PREP_WORDS = ["prépa", "préparer", "présentation", "atelier", "workshop",
+  "comité", "board", "conseil", "assemblée", "soutenance", "entretien", "revue",
+  "review", "bilan", "formation", "séminaire", "ordre du jour", "kick-off", "kickoff", "démo",
+  "audit", "restitution", "rapport"];
+// Que faut-il préparer ? On renvoie la nature et la liste des choses à faire,
+// pour que l'app dise quoi faire plutôt que seulement « à préparer ».
+function calPrep(e) {
+  const kinds = calKinds(e);
+  const has = (id) => kinds.indexOf(id) > -1;
+  const todo = [];
+  if (has("transport")) todo.push("réserver / récupérer les billets");
+  if (has("commercial")) todo.push("préparer les supports commerciaux");
+  if (has("client")) todo.push("relire le dossier et préparer l'entretien");
+  if (has("sport")) {
+    // « un ou deux invités à trouver » : l'équipe n'est pas complète.
+    const missing = e.guests.filter((g) => g.status !== "accepted").length;
+    if (!e.guests.length) todo.push("trouver des joueurs");
+    else if (missing >= 1 && missing <= 2) todo.push(`compléter l'équipe (${missing} invité${missing > 1 ? "s" : ""} à trouver)`);
+  }
+  // Nature reconnue (y compris « voiture », qui ne demande rien) : on s'y tient.
+  if (kinds.length) return { kinds, todo };
+  const hay = noAccents((e.title || "") + " " + (e.notes || ""));
+  const w = PREP_WORDS.find((x) => hay.indexOf(noAccents(x)) > -1);
+  if (w) todo.push(`sujet « ${w} »`);
+  if (e.mins >= 90) todo.push(`durée ${fmtDurationShort(e.mins * 60)}`);
+  if (e.guests.length >= 3) todo.push(`${e.guests.length} participants`);
+  return { kinds, todo };
+}
+const calPrepReasons = (e) => calPrep(e).todo;
 // Synthèse des événements à venir : avec qui, invités à trouver, préparation.
 function calSynthesis() {
   const up = calUpcoming();
@@ -2337,7 +2380,7 @@ function calSynthesis() {
   const contacts = [...people.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name, "fr"));
   const noGuests = meetings.filter((e) => !e.guests.length);
   const waiting = up.filter((e) => e.guests.length && e.guests.some((g) => g.status === "needsAction" || g.status === "declined"));
-  const prep = up.map((e) => ({ e, reasons: calPrepReasons(e) })).filter((x) => x.reasons.length);
+  const prep = up.map((e) => ({ e, reasons: calPrep(e).todo })).filter((x) => x.reasons.length);
   return { up, meetings, contacts, noGuests, waiting, prep };
 }
 // Bandeau d'explication quand l'agenda n'est pas (encore) lisible.
@@ -2409,7 +2452,7 @@ function renderCalEventDetail(eid) {
         <div class="grow"><div class="r-title">${esc(calGuestName(g))}</div>
         <div class="r-sub">${esc(g.email || "")}${g.status ? ` · ${esc(calStatusLabel(g.status))}` : ""}</div></div></div>`).join("")
     : '<div class="muted" style="padding:4px 2px;font-size:13px">Aucun invité — c\'est peut-être un événement pour lequel il reste des invités à trouver.</div>';
-  const reasons = calPrepReasons(e);
+  const prep = calPrep(e);
   const links = [
     e.meet ? `<a class="btn secondary small" href="${esc(e.meet)}" target="_blank" rel="noopener">Rejoindre la visio</a>` : "",
     e.link ? `<a class="btn ghost small" href="${esc(e.link)}" target="_blank" rel="noopener">Ouvrir dans Google Agenda</a>` : ""
@@ -2421,7 +2464,10 @@ function renderCalEventDetail(eid) {
       <div><strong>${esc(calWhen(e))}</strong>${e.mins ? ` <span class="muted">· ${fmtDurationShort(e.mins * 60)}</span>` : ""}</div>
       ${e.location ? `<div class="muted" style="margin-top:6px">📍 ${esc(e.location)}</div>` : ""}
       ${e.organizer ? `<div class="muted" style="margin-top:6px">Organisé par ${esc(e.organizer)}</div>` : ""}
-      ${reasons.length ? `<div style="margin-top:8px"><span class="cal-tag">À préparer · ${esc(reasons.join(" · "))}</span></div>` : ""}
+      ${prep.kinds.length ? `<div style="margin-top:8px">${prep.kinds.map((k) => `<span class="cal-kind">${esc(calKindLabel(k))}</span>`).join(" ")}</div>` : ""}
+      ${prep.todo.length
+        ? `<div style="margin-top:8px"><span class="cal-tag">À préparer</span><ul class="cal-todo">${prep.todo.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`
+        : (prep.kinds.length ? `<div class="muted" style="margin-top:8px;font-size:13px">Rien à préparer.</div>` : "")}
       ${links ? `<div class="inline" style="margin-top:10px">${links}</div>` : ""}
     </div>
     ${e.notes ? `<div class="section-h">Description</div><div class="card"><div class="cal-notes">${esc(e.notes)}</div></div>` : ""}
@@ -2493,7 +2539,7 @@ function renderCalSummary() {
     <div class="list">${invit}</div>
     ${s.waiting.length ? `<div class="section-h">⏳ Réponses en attente <span class="muted">(${s.waiting.length})</span></div><div class="list">${wait}</div>` : ""}
     <div class="section-h">📝 À préparer <span class="muted">(${s.prep.length})</span></div>
-    <div class="muted" style="font-size:12px;margin-bottom:6px">Événements longs, à plusieurs, ou dont le sujet demande un support.</div>
+    <div class="muted" style="font-size:12px;margin-bottom:6px">Ce qu'il reste à faire avant chaque événement : billets, dossier, supports, joueurs manquants…</div>
     <div class="list">${prep}</div>
     ${calFooter()}`;
 }
