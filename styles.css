@@ -295,6 +295,21 @@ textarea { min-height: 72px; resize: vertical; }
 .tt-done:hover { background: rgba(24,193,216,.15); color: var(--primary); }
 .tt-slot.done .tt-done { color: var(--positive); }
 .tt-slot-t, .tt-slot-h { padding-right: 20px; }
+/* Événements de l'agenda Google : lecture seule, donc ni glisser ni redimensionner. */
+.tt-slot.tt-cal { border-left-color: var(--positive); border-style: dashed; cursor: pointer;
+  background: var(--bg); background: color-mix(in srgb, var(--positive) 12%, var(--card)); }
+.tt-slot.tt-cal:active { cursor: pointer; }
+.tt-allday { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.tt-allday-i { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--positive);
+  border-radius: 8px; padding: 5px 10px; font-size: 12px; cursor: pointer; box-shadow: var(--shadow); }
+.cal-notice { border-left: 4px solid var(--alert); margin-bottom: 12px; }
+.cal-notes { white-space: pre-wrap; font-size: 13px; line-height: 1.5; }
+.cal-tag { display: inline-block; background: var(--bg); background: color-mix(in srgb, var(--alert) 30%, var(--card));
+  border-radius: 999px; padding: 3px 10px; font-size: 12px; }
+.cal-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 6px; }
+.cal-stat { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; }
+.cal-stat-n { font-size: 24px; font-weight: 700; line-height: 1.1; }
+.cal-stat-l { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .toast { position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%); z-index: 300;
   background: #222; color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 13px;
   box-shadow: 0 6px 20px rgba(0,0,0,.3); max-width: 88vw; text-align: center; }

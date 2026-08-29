@@ -10,7 +10,9 @@
      sauvegarde « conflit » — on ne perd jamais le travail d'un autre appareil. */
 (function () {
   const cfg = window.OPERATIONS01_CONFIG || {};
-  const SCOPE = "https://www.googleapis.com/auth/drive.file";
+  // drive.file : l'app n'accède qu'aux fichiers qu'elle crée.
+  // calendar.readonly : lecture seule de l'agenda Google (affichage dans Planning).
+  const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.readonly";
   const FILE_NAME = cfg.driveFileName || "operations01-data.json";
   const BACKUP_PREFIX = "operations01-backup-";
   const CONFLICT_PREFIX = "operations01-conflit-";
@@ -92,7 +94,11 @@
   function getToken(interactive) {
     if (!interactive && tokenPromise) return tokenPromise;
     if (interactive) tokenPromise = null;   // on abandonne toute demande silencieuse en cours
-    const p = new Promise((resolve, reject) => {
+    // `p` est déclaré avant d'être construit : la fonction `done` ci-dessous s'y
+    // réfère, et un rappel Google qui répondrait immédiatement la lirait sinon
+    // avant son initialisation (erreur silencieuse, demande de jeton bloquée).
+    let p;
+    p = new Promise((resolve, reject) => {
       if (!ready()) { reject(new Error("Google Drive indisponible (identifiant manquant ou script Google bloqué).")); return; }
       if (!tokenClient) {
         tokenClient = google.accounts.oauth2.initTokenClient({
@@ -182,7 +188,16 @@
       await getToken(false);
       return api(url, opts, true);
     }
-    if (!r.ok) throw new Error("Drive API " + r.status);
+    if (!r.ok) {
+      // On remonte le message de Google : c'est lui qui explique les cas
+      // particuliers (« Calendar API has not been used… », portée manquante, etc.).
+      let detail = "";
+      try { const j = await r.clone().json(); detail = (j.error && (j.error.message || j.error.status)) || ""; } catch (e) {}
+      const err = new Error(detail ? detail + " (HTTP " + r.status + ")" : "API Google " + r.status);
+      err.status = r.status;
+      err.detail = detail;
+      throw err;
+    }
     return r;
   }
 
@@ -245,6 +260,24 @@
       return null;
     }
     try { return JSON.parse(await download(f.id)); } catch (e) { return null; }
+  }
+
+  // ---- Agenda Google (lecture seule) -------------------------------------
+  // Les occurrences des séries sont dépliées (singleEvents) pour que chaque
+  // événement affiché dans Planning corresponde à une date réelle.
+  async function listEvents(fromISO, toISO) {
+    if (!hasSession()) return [];
+    const p = new URLSearchParams({
+      timeMin: fromISO,
+      timeMax: toISO,
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: "250",
+      fields: "items(id,summary,description,location,start,end,attendees(email,displayName,self,organizer,responseStatus),organizer(email,displayName,self),hangoutLink,htmlLink,status,eventType)"
+    });
+    const r = await api("https://www.googleapis.com/calendar/v3/calendars/primary/events?" + p.toString());
+    const j = await r.json();
+    return (j.items || []).filter((e) => e.status !== "cancelled");
   }
 
   async function deleteFile(id) {
@@ -476,6 +509,7 @@
     restore,
     backupNow,
     readMails,
+    listEvents,
     listDocs,
     uploadDoc,
     readDoc,

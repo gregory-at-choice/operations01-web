@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v41";
+const APP_VERSION = "v42";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -182,8 +182,10 @@ function navCount(id) {
   if (id === "missions") return state.missions.filter((m) => (m.statusCode || "aDemarrer") !== "terminee").length || null;
   if (id === "tasks") return state.tasks.filter((t) => (t.status || "aFaire") !== "termine").length || null;
   if (id === "actions") return state.actions.filter((a) => !a.closed).length || null;
-  if (id === "rendezvous") return state.rendezvous.filter((r) => (r.date || "9999") >= today).length || null;
-  if (id === "planning") return state.slots.filter((s) => s.date === today).length || null;
+  if (id === "rendezvous") return (state.rendezvous.filter((r) => (r.date || "9999") >= today).length
+    + calendar.events.filter((e) => e.date >= today).length) || null;
+  if (id === "planning") return (state.slots.filter((s) => s.date === today).length
+    + calendar.events.filter((e) => e.date === today).length) || null;
   if (id === "time") { const t = weekWorkedSeconds(); return t > 0 ? fmtDurationShort(t) : null; }
   return null;
 }
@@ -2206,17 +2208,270 @@ function renderActionDetail(id) {
     <div style="margin-top:18px"><button class="btn danger small" data-del-action="${a.id}">Supprimer l'action</button></div>`;
 }
 
+// ----------------------------- Agenda Google (lecture seule) -----------------------------
+// L'agenda Google alimente Planning (emploi du temps + agenda) et Rendez-vous.
+// L'app ne demande que la portée « calendar.readonly » : elle ne modifie jamais l'agenda.
+const CAL_CACHE = "op01_calendar";
+const CAL_PAST_DAYS = 60;     // profondeur d'historique chargée
+const CAL_AHEAD_DAYS = 180;   // horizon chargé
+const CAL_FRESH = 5 * 60000;  // au-delà, on redemande l'agenda à Google
+let calendar = loadCalCache();  // { events, at, error }
+let calBusy = false;
+
+function loadCalCache() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CAL_CACHE) || "null");
+    if (raw && Array.isArray(raw.events)) return { events: raw.events, at: raw.at || 0, error: null };
+  } catch (e) {}
+  return { events: [], at: 0, error: null };
+}
+function saveCalCache() {
+  try { localStorage.setItem(CAL_CACHE, JSON.stringify({ events: calendar.events, at: calendar.at })); } catch (e) {}
+}
+// Les sections qui affichent l'agenda : on ne redessine que si l'une est ouverte.
+const calVisible = () => view.section === "planning" || view.section === "rendezvous" || view.section === "dashboard";
+
+const calHHMM = (iso) => { const d = new Date(iso); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+const calDay = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+
+// Convertit un événement Google en fiche simple, indépendante de l'API.
+function normEvent(e) {
+  const st = e.start || {}, en = e.end || {};
+  const allDay = !st.dateTime;
+  const guests = (e.attendees || [])
+    .filter((a) => a && !a.self && !a.resource && (a.email || a.displayName))
+    .map((a) => ({ email: (a.email || "").toLowerCase(), name: a.displayName || "", status: a.responseStatus || "" }));
+  const org = e.organizer || {};
+  return {
+    id: e.id,
+    date: allDay ? (st.date || "") : calDay(st.dateTime),
+    time: allDay ? "" : calHHMM(st.dateTime),
+    endTime: (!allDay && en.dateTime) ? calHHMM(en.dateTime) : "",
+    allDay,
+    mins: (!allDay && st.dateTime && en.dateTime) ? Math.max(0, Math.round((new Date(en.dateTime) - new Date(st.dateTime)) / 60000)) : 0,
+    title: e.summary || "(sans titre)",
+    location: e.location || "",
+    notes: e.description || "",
+    link: e.htmlLink || "",
+    meet: e.hangoutLink || "",
+    guests,
+    organizer: org.self ? "" : (org.displayName || org.email || ""),
+    mine: !!org.self
+  };
+}
+// Traduit l'erreur Google en cas que l'utilisateur peut corriger lui-même.
+function calError(e) {
+  const msg = (e && (e.detail || e.message)) || "Erreur inconnue";
+  if (/has not been used|SERVICE_DISABLED|is disabled|not been enabled/i.test(msg)) return { code: "api", msg };
+  if (/insufficient|scope|ACCESS_TOKEN|unauthorized/i.test(msg) || (e && (e.status === 401 || e.status === 403))) return { code: "scope", msg };
+  return { code: "other", msg };
+}
+async function loadCalendar(force) {
+  if (!(window.DriveSync && DriveSync.listEvents && DriveSync.isConnected())) return;
+  if (calBusy) return;
+  if (!force && calendar.at && Date.now() - calendar.at < CAL_FRESH && !calendar.error) return;
+  calBusy = true; if (calVisible()) render();
+  try {
+    const from = new Date(); from.setDate(from.getDate() - CAL_PAST_DAYS);
+    const to = new Date(); to.setDate(to.getDate() + CAL_AHEAD_DAYS);
+    const raw = await DriveSync.listEvents(from.toISOString(), to.toISOString());
+    calendar = { events: raw.map(normEvent).filter((e) => e.date), at: Date.now(), error: null };
+    saveCalCache();
+  } catch (e) {
+    // On garde les événements déjà connus : mieux vaut un agenda un peu daté que rien.
+    calendar = { events: calendar.events, at: calendar.at, error: calError(e) };
+  }
+  calBusy = false;
+  if (calVisible()) render();
+}
+const calSorted = () => [...calendar.events].sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));
+const calUpcoming = () => { const t = todayISO(); return calSorted().filter((e) => e.date >= t); };
+function calWhen(e) {
+  if (!e.date) return "";
+  if (e.allDay) return fmtDate(e.date) + " · journée entière";
+  return fmtDate(e.date) + (e.time ? ` · ${e.time}${e.endTime ? "–" + e.endTime : ""}` : "");
+}
+const calGuestName = (g) => g.name || g.email || "?";
+
+// Faut-il préparer cet événement ? On renvoie les raisons, pour rester explicable.
+const PREP_WORDS = ["prépa", "prepa", "préparer", "preparer", "présentation", "presentation", "atelier", "workshop",
+  "comité", "comite", "board", "conseil", "assemblée", "assemblee", "soutenance", "pitch", "entretien", "revue",
+  "review", "bilan", "formation", "séminaire", "seminaire", "ordre du jour", "kick-off", "kickoff", "démo", "demo",
+  "négociation", "negociation", "audit", "restitution", "rapport"];
+function calPrepReasons(e) {
+  const hay = ((e.title || "") + " " + (e.notes || "")).toLowerCase();
+  const reasons = [];
+  const w = PREP_WORDS.find((x) => hay.indexOf(x) > -1);
+  if (w) reasons.push(`sujet « ${w} »`);
+  if (e.mins >= 90) reasons.push(`durée ${fmtDurationShort(e.mins * 60)}`);
+  if (e.guests.length >= 3) reasons.push(`${e.guests.length} participants`);
+  return reasons;
+}
+// Synthèse des événements à venir : avec qui, invités à trouver, préparation.
+function calSynthesis() {
+  const up = calUpcoming();
+  const meetings = up.filter((e) => !e.allDay);
+  const people = new Map();
+  up.forEach((e) => e.guests.forEach((g) => {
+    const key = g.email || calGuestName(g).toLowerCase();
+    if (!key) return;
+    const p = people.get(key) || { key, name: calGuestName(g), email: g.email, n: 0, next: null };
+    if (!p.name || p.name === p.email) p.name = calGuestName(g);
+    p.n++; if (!p.next) p.next = e;
+    people.set(key, p);
+  }));
+  const contacts = [...people.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name, "fr"));
+  const noGuests = meetings.filter((e) => !e.guests.length);
+  const waiting = up.filter((e) => e.guests.length && e.guests.some((g) => g.status === "needsAction" || g.status === "declined"));
+  const prep = up.map((e) => ({ e, reasons: calPrepReasons(e) })).filter((x) => x.reasons.length);
+  return { up, meetings, contacts, noGuests, waiting, prep };
+}
+// Bandeau d'explication quand l'agenda n'est pas (encore) lisible.
+function calNotice() {
+  const err = calendar.error;
+  if (!err) return "";
+  const box = (title, body, btn) => `<div class="card cal-notice">
+    <strong>${title}</strong><div class="muted" style="font-size:13px;margin-top:4px">${body}</div>
+    <div style="margin-top:10px">${btn}</div></div>`;
+  if (err.code === "scope") {
+    return box("Agenda Google : autorisation à renouveler",
+      "L'application demande maintenant l'accès <strong>en lecture seule</strong> à ton agenda Google. Appuie sur « Reconnecter », puis laisse la case « Consulter les événements de votre agenda » cochée.",
+      '<button class="btn small" data-cal-reconnect>Reconnecter Google</button>');
+  }
+  if (err.code === "api") {
+    return box("Agenda Google : API à activer",
+      "L'API Google Calendar n'est pas encore activée pour le projet Google de l'application. Une fois activée (console Google Cloud → « API et services » → Google Calendar API → Activer), appuie sur « Réessayer ».",
+      '<button class="btn small" data-cal-refresh>Réessayer</button>');
+  }
+  return box("Agenda Google indisponible", esc(err.msg), '<button class="btn small" data-cal-refresh>Réessayer</button>');
+}
+function calFooter() {
+  const when = calendar.at ? new Date(calendar.at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : null;
+  return `<div class="inline muted" style="font-size:12px;margin-top:12px">
+    <span class="grow">${calBusy ? "Lecture de l'agenda Google…" : (when ? `Agenda synchronisé à ${when}.` : "Agenda Google non chargé.")}</span>
+    <button class="btn ghost small" data-cal-refresh>↻ Actualiser l'agenda</button></div>`;
+}
+// Fiche d'un événement (lecture seule) affichée depuis Rendez-vous ou Planning.
+function renderCalEventDetail(eid) {
+  const e = calendar.events.find((x) => x.id === eid);
+  if (!e) { view.detailId = null; return renderRendezvous(); }
+  const guests = e.guests.length
+    ? e.guests.map((g) => `<div class="row" style="cursor:default;border-left-color:var(--positive)">
+        <div class="grow"><div class="r-title">${esc(calGuestName(g))}</div>
+        <div class="r-sub">${esc(g.email || "")}${g.status ? ` · ${esc(calStatusLabel(g.status))}` : ""}</div></div></div>`).join("")
+    : '<div class="muted" style="padding:4px 2px;font-size:13px">Aucun invité — c\'est peut-être un événement pour lequel il reste des invités à trouver.</div>';
+  const reasons = calPrepReasons(e);
+  const links = [
+    e.meet ? `<a class="btn secondary small" href="${esc(e.meet)}" target="_blank" rel="noopener">Rejoindre la visio</a>` : "",
+    e.link ? `<a class="btn ghost small" href="${esc(e.link)}" target="_blank" rel="noopener">Ouvrir dans Google Agenda</a>` : ""
+  ].filter(Boolean).join(" ");
+  return `<button class="back" data-back-rdv>‹ Rendez-vous</button>
+    <div class="page-title">${esc(e.title)}</div>
+    <div class="muted" style="font-size:12px;margin:-8px 0 12px">Événement de ton agenda Google — lecture seule.</div>
+    <div class="card">
+      <div><strong>${esc(calWhen(e))}</strong>${e.mins ? ` <span class="muted">· ${fmtDurationShort(e.mins * 60)}</span>` : ""}</div>
+      ${e.location ? `<div class="muted" style="margin-top:6px">📍 ${esc(e.location)}</div>` : ""}
+      ${e.organizer ? `<div class="muted" style="margin-top:6px">Organisé par ${esc(e.organizer)}</div>` : ""}
+      ${reasons.length ? `<div style="margin-top:8px"><span class="cal-tag">À préparer · ${esc(reasons.join(" · "))}</span></div>` : ""}
+      ${links ? `<div class="inline" style="margin-top:10px">${links}</div>` : ""}
+    </div>
+    ${e.notes ? `<div class="section-h">Description</div><div class="card"><div class="cal-notes">${esc(e.notes)}</div></div>` : ""}
+    <div class="section-h">Participants <span class="muted">(${e.guests.length})</span></div>
+    <div class="list">${guests}</div>
+    <div style="margin-top:18px"><button class="btn secondary small" data-cal-import="${esc(e.id)}">+ Créer un rendez-vous Operations01 à partir de cet événement</button></div>`;
+}
+function calStatusLabel(s) {
+  return s === "accepted" ? "a accepté" : s === "declined" ? "a décliné" : s === "tentative" ? "peut-être" : "sans réponse";
+}
+// Reprend un événement Google dans les rendez-vous de l'app (pour y ajouter mission/notes).
+function importCalEvent(eid) {
+  const e = calendar.events.find((x) => x.id === eid);
+  if (!e) return;
+  const r = {
+    id: uid(), title: e.title, date: e.date, time: e.time || "",
+    location: e.location || e.meet || "", withName: e.guests.map(calGuestName).join(", "),
+    contactId: null, missionId: null, notes: e.notes || "", createdAt: Date.now()
+  };
+  state.rendezvous.push(r);
+  save();
+  openDetail("rendezvous", r.id);
+  toast("Rendez-vous créé depuis l'agenda ✓");
+}
+// Synthèse affichée dans Planning.
+function renderCalSummary() {
+  const s = calSynthesis();
+  const notice = calNotice();
+  if (!calendar.events.length) {
+    return `${notice}<div class="center-empty">${calBusy ? "Lecture de l'agenda Google…" : "Aucun événement d'agenda chargé."}</div>${calFooter()}`;
+  }
+  const evRow = (e, sub) => `<div class="row" data-cal-open="${esc(e.id)}" style="border-left-color:var(--positive)">
+    <span class="ic">🗓️</span>
+    <div class="grow"><div class="r-title">${esc(e.title)}</div><div class="r-sub">${esc(sub || calWhen(e))}</div></div>
+    <span class="muted">›</span></div>`;
+  const people = s.contacts.length
+    ? s.contacts.map((p) => `<div class="row" data-cal-open="${esc(p.next ? p.next.id : "")}" style="border-left-color:var(--primary)">
+        <div class="grow"><div class="r-title">${esc(p.name)}</div>
+          <div class="r-sub">${p.n} rendez-vous à venir${p.next ? ` · prochain le ${esc(fmtDate(p.next.date))}` : ""}</div></div>
+        <span class="muted">›</span></div>`).join("")
+    : '<div class="muted" style="padding:4px 2px;font-size:13px">Aucun participant identifié dans les événements à venir.</div>';
+  const invit = s.noGuests.length
+    ? s.noGuests.map((e) => evRow(e, calWhen(e) + " · aucun invité")).join("")
+    : '<div class="muted" style="padding:4px 2px;font-size:13px">Tous les rendez-vous à venir ont au moins un invité. 👌</div>';
+  const wait = s.waiting.length
+    ? s.waiting.map((e) => {
+        const n = e.guests.filter((g) => g.status === "needsAction").length;
+        const d = e.guests.filter((g) => g.status === "declined").length;
+        const bits = [n ? `${n} sans réponse` : null, d ? `${d} a décliné` : null].filter(Boolean).join(" · ");
+        return evRow(e, calWhen(e) + " · " + bits);
+      }).join("")
+    : "";
+  const prep = s.prep.length
+    ? s.prep.map((x) => evRow(x.e, calWhen(x.e) + " · " + x.reasons.join(" · "))).join("")
+    : '<div class="muted" style="padding:4px 2px;font-size:13px">Rien qui demande une préparation particulière.</div>';
+  const stat = (n, lbl) => `<div class="cal-stat"><div class="cal-stat-n">${n}</div><div class="cal-stat-l">${lbl}</div></div>`;
+  return `${notice}
+    <div class="cal-stats">
+      ${stat(s.meetings.length, "rendez-vous à venir")}
+      ${stat(s.contacts.length, "interlocuteurs")}
+      ${stat(s.noGuests.length, "invités à trouver")}
+      ${stat(s.prep.length, "à préparer")}
+    </div>
+    <div class="section-h">👥 Avec qui ? <span class="muted">(${s.contacts.length})</span></div>
+    <div class="list">${people}</div>
+    <div class="section-h">🙋 Invités à trouver <span class="muted">(${s.noGuests.length})</span></div>
+    <div class="muted" style="font-size:12px;margin-bottom:6px">Rendez-vous à venir sans aucun participant invité.</div>
+    <div class="list">${invit}</div>
+    ${s.waiting.length ? `<div class="section-h">⏳ Réponses en attente <span class="muted">(${s.waiting.length})</span></div><div class="list">${wait}</div>` : ""}
+    <div class="section-h">📝 À préparer <span class="muted">(${s.prep.length})</span></div>
+    <div class="muted" style="font-size:12px;margin-bottom:6px">Événements longs, à plusieurs, ou dont le sujet demande un support.</div>
+    <div class="list">${prep}</div>
+    ${calFooter()}`;
+}
+
 // ----------------------------- Rendez-vous -----------------------------
 function rdvWhen(r) {
   if (!r.date) return "Date à définir";
   return fmtDate(r.date) + (r.time ? ` · ${r.time}` : "");
 }
 function renderRendezvous() {
+  if (view.detailId && String(view.detailId).indexOf("gcal:") === 0) return renderCalEventDetail(String(view.detailId).slice(5));
   if (view.detailId) return renderRendezvousDetail(view.detailId);
   const today = todayISO();
   const sorted = [...state.rendezvous].sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999") || (a.time || "").localeCompare(b.time || ""));
   const upcoming = sorted.filter((r) => (r.date || "9999") >= today);
   const past = sorted.filter((r) => (r.date || "0") < today).reverse();
+  // Événements de l'agenda Google (lecture seule), à côté des rendez-vous saisis ici.
+  const gAll = calSorted();
+  const gUp = gAll.filter((e) => e.date >= today);
+  const gPast = gAll.filter((e) => e.date < today).reverse();
+  const gCard = (e) => {
+    const who = e.guests.length ? e.guests.map(calGuestName).join(", ") : (e.organizer || "");
+    const sub = [calWhen(e), who, e.location ? `📍 ${e.location}` : null].filter(Boolean).join(" · ");
+    return `<div class="row" data-cal-open="${esc(e.id)}" style="border-left-color:var(--positive)">
+      <span class="ic">🗓️</span>
+      <div class="grow"><div class="r-title">${esc(e.title)}</div><div class="r-sub">${esc(sub)}</div></div>
+      <span class="muted">›</span></div>`;
+  };
   const card = (r) => {
     const who = r.withName || (r.contactId ? contactName(state.contacts.find((c) => c.id === r.contactId) || {}) : "");
     const sub = [who, r.location ? `📍 ${esc(r.location)}` : null, r.missionId ? esc(missionTitle(r.missionId)) : null].filter(Boolean).join(" · ");
@@ -2227,9 +2482,14 @@ function renderRendezvous() {
   };
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Rendez-vous</div>
       <button class="btn" data-add-rdv>+ Nouveau rendez-vous</button></div>
+    ${calNotice()}
     <div class="section-h">À venir <span class="muted">(${upcoming.length})</span></div>
     <div class="list">${upcoming.length ? upcoming.map(card).join("") : '<div class="muted" style="padding:4px 2px">Aucun rendez-vous à venir.</div>'}</div>
+    <div class="section-h">🗓️ Agenda Google · à venir <span class="muted">(${gUp.length})</span></div>
+    <div class="list">${gUp.length ? gUp.map(gCard).join("") : `<div class="muted" style="padding:4px 2px;font-size:13px">${calBusy ? "Lecture de l'agenda Google…" : "Aucun événement à venir dans l'agenda Google."}</div>`}</div>
     ${past.length ? `<div class="section-h">Passés <span class="muted">(${past.length})</span></div><div class="list">${past.map(card).join("")}</div>` : ""}
+    ${gPast.length ? `<div class="section-h">🗓️ Agenda Google · passés <span class="muted">(${gPast.length})</span></div><div class="list">${gPast.slice(0, 60).map(gCard).join("")}</div>` : ""}
+    ${calFooter()}
     <button class="btn fab" data-add-rdv>+</button>`;
 }
 function renderRendezvousDetail(id) {
@@ -2268,13 +2528,23 @@ function planningEvents() {
     if (!r.date) return;
     ev.push({ date: r.date, time: r.time || "", kind: "RDV", ic: "📅", title: r.title || "Rendez-vous", color: "var(--primary)", section: "rendezvous", detailId: r.id });
   });
+  // Agenda Google : uniquement à partir d'aujourd'hui, pour ne pas gonfler « En retard ».
+  const today = todayISO();
+  calendar.events.forEach((e) => {
+    if (!e.date || e.date < today) return;
+    const who = e.guests.length ? e.guests.map(calGuestName).join(", ") : "";
+    ev.push({
+      date: e.date, time: e.time || "", kind: who ? `Agenda · ${who}` : "Agenda", ic: "🗓️",
+      title: e.title, color: "var(--positive)", section: "rendezvous", detailId: "gcal:" + e.id
+    });
+  });
   return ev.sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));
 }
 let planningTab = "grille", planningDate = todayISO();
 function renderPlanning() {
-  const tabs = [["grille", "Emploi du temps"], ["agenda", "Agenda"]]
+  const tabs = [["grille", "Emploi du temps"], ["agenda", "Agenda"], ["synthese", "Synthèse agenda"]]
     .map(([id, lbl]) => `<button class="chip ${planningTab === id ? "active" : ""}" data-ptab="${id}">${lbl}</button>`).join("");
-  const body = planningTab === "grille" ? renderTimetable() : renderAgenda();
+  const body = planningTab === "grille" ? renderTimetable() : planningTab === "synthese" ? renderCalSummary() : renderAgenda();
   return `<div class="page-title">Planning</div><div class="chip-row" style="margin-bottom:14px">${tabs}</div>${body}`;
 }
 function renderAgenda() {
@@ -2300,9 +2570,11 @@ function renderAgenda() {
   const empty = !all.length ? '<div class="center-empty">Rien de planifié.<br>Ajoute des échéances aux tâches/actions ou crée des rendez-vous.</div>' : "";
   return `<div class="toolbar"><span class="grow"></span>
       <button class="btn" data-add-rdv>+ Rendez-vous</button></div>
-    <div class="muted" style="font-size:12px;margin-bottom:12px">Échéances des tâches et des actions ouvertes, et rendez-vous — par ordre chronologique.</div>
+    <div class="muted" style="font-size:12px;margin-bottom:12px">Échéances des tâches et des actions ouvertes, rendez-vous et événements de l'agenda Google — par ordre chronologique.</div>
+    ${calNotice()}
     ${empty}${overdueHtml}
-    ${upcoming.length ? `<div class="section-h">À venir <span class="muted">(${upcoming.length})</span></div>${groupsHtml}` : ""}`;
+    ${upcoming.length ? `<div class="section-h">À venir <span class="muted">(${upcoming.length})</span></div>${groupsHtml}` : ""}
+    ${calFooter()}`;
 }
 
 // ----------------------------- Emploi du temps (grille + glisser-déposer) -----------------------------
@@ -2360,10 +2632,25 @@ function unscheduledTasks() {
   return state.tasks.filter((t) => (t.status || "aFaire") !== "termine" && !planned.has(t.id))
     .sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999"));
 }
+// Pseudo-créneaux (non modifiables) construits à partir de l'agenda Google,
+// pour que les événements se placent dans la grille sans recouvrir les créneaux.
+function calDaySlots(date) {
+  return calendar.events
+    .filter((e) => e.date === date && !e.allDay && e.time)
+    .map((e) => {
+      const [h, mn] = e.time.split(":").map(Number);
+      const start = clampStart(snap(h * 60 + mn));
+      const duration = Math.max(MIN_DUR, Math.min(snap(e.mins || DEFAULT_DUR), DAY_END - start));
+      return { id: "gcal:" + e.id, cal: e, start, duration, title: e.title };
+    })
+    .sort((a, b) => a.start - b.start);
+}
+const calAllDay = (date) => calendar.events.filter((e) => e.date === date && e.allDay);
 function renderTimetable() {
   const date = planningDate, today = todayISO();
   const slots = daySlots(date);
-  const laid = layoutSlots(slots);
+  const gslots = calDaySlots(date);
+  const laid = layoutSlots([...slots, ...gslots].sort((a, b) => (a.start || 0) - (b.start || 0)));
   const height = Math.round((DAY_END - DAY_START) * PX_PER_MIN);
   // lignes et libellés horaires
   let lines = "", labels = "";
@@ -2378,6 +2665,13 @@ function renderTimetable() {
     const top = Math.round(((s.start || DAY_START) - DAY_START) * PX_PER_MIN);
     const h = Math.max(Math.round((s.duration || DEFAULT_DUR) * PX_PER_MIN), 12);
     const w = 100 / cols, left = col * w;
+    if (s.cal) {
+      const e = s.cal;
+      const who = e.guests.length ? e.guests.map(calGuestName).join(", ") : (e.organizer || "");
+      return `<div class="tt-slot tt-cal" data-cal-slot="${esc(e.id)}" style="top:${top}px;height:${h}px;left:calc(${left}% + 2px);width:calc(${w}% - 4px)">
+        <div class="tt-slot-t">🗓️ ${esc(e.title)}</div>
+        <div class="tt-slot-h">${esc(e.time)}${e.endTime ? "–" + esc(e.endTime) : ""}${who ? " · " + esc(who) : ""}</div></div>`;
+    }
     const t = slotTask(s), done = !!t && (t.status || "aFaire") === "termine";
     const color = done ? "var(--positive)" : (s.taskId ? "var(--primary)" : "var(--activity)");
     const tick = t ? `<button class="tt-done" data-slot-done="${s.id}" title="${done ? "Rouvrir la tâche" : "Marquer la tâche terminée"}">${done ? "✓" : "○"}</button>` : "";
@@ -2400,14 +2694,20 @@ function renderTimetable() {
   const total = slots.reduce((t, s) => t + (s.duration || 0), 0);
   const d = new Date(date + "T12:00:00");
   const dLabel = d.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "long" });
+  const allDay = calAllDay(date);
+  const allDayHtml = allDay.length
+    ? `<div class="tt-allday">${allDay.map((e) => `<div class="tt-allday-i" data-cal-slot="${esc(e.id)}">🗓️ ${esc(e.title)}</div>`).join("")}</div>`
+    : "";
+  const gCount = gslots.length + allDay.length;
   return `<div class="toolbar">
       <button class="btn ghost small" data-day="-1">‹</button>
       <div class="grow" style="text-align:center"><strong style="text-transform:capitalize">${esc(dLabel)}</strong>
-        <div class="muted" style="font-size:11px">${slots.length} créneau(x) · ${fmtDuration(total * 60)}</div></div>
+        <div class="muted" style="font-size:11px">${slots.length} créneau(x) · ${fmtDuration(total * 60)}${gCount ? ` · ${gCount} événement(s) d'agenda` : ""}</div></div>
       <button class="btn ghost small" data-day="1">›</button>
       <button class="btn secondary small" data-day-today>Aujourd'hui</button>
       <button class="btn small" data-add-slot>+ Créneau</button></div>
-    <div class="tt-help muted">Glisse une tâche dans la grille pour la planifier · clique un créneau vide pour en créer un (45 min) · glisse un créneau pour le déplacer, sa base pour le redimensionner (pas de 5 min).</div>
+    <div class="tt-help muted">Glisse une tâche dans la grille pour la planifier · clique un créneau vide pour en créer un (45 min) · glisse un créneau pour le déplacer, sa base pour le redimensionner (pas de 5 min). Les blocs 🗓️ viennent de ton agenda Google (lecture seule).</div>
+    ${calNotice()}${allDayHtml}
     <div class="tt-layout">
       <div class="tt-side">
         <div class="section-h" style="margin-top:0">À planifier <span class="muted">(${unscheduledTasks().length})</span></div>
@@ -2899,6 +3199,19 @@ function wire() {
   // Planning : ouvrir l'élément dans sa section
   c.querySelectorAll("[data-plan-open]").forEach((r) => r.onclick = () => { const sec = r.dataset.planOpen, id = r.dataset.planId; if (id) openDetail(sec, id); else go(sec); });
   c.querySelectorAll("[data-ptab]").forEach((b) => b.onclick = () => { planningTab = b.dataset.ptab; render(); });
+
+  // ---- Agenda Google -----------------------------------------------------
+  if (calVisible() && !calBusy && window.DriveSync && DriveSync.isConnected()) loadCalendar(false);
+  c.querySelectorAll("[data-cal-open]").forEach((r) => r.onclick = () => {
+    const id = r.dataset.calOpen; if (id) openDetail("rendezvous", "gcal:" + id);
+  });
+  c.querySelectorAll("[data-cal-slot]").forEach((el) => el.addEventListener("click", (ev) => {
+    ev.stopPropagation(); openDetail("rendezvous", "gcal:" + el.dataset.calSlot);
+  }));
+  c.querySelectorAll("[data-cal-refresh]").forEach((b) => b.onclick = () => loadCalendar(true));
+  c.querySelectorAll("[data-cal-reconnect]").forEach((b) => b.onclick = () => reconnectDrive());
+  const calImp = c.querySelector("[data-cal-import]");
+  if (calImp) calImp.onclick = () => importCalEvent(calImp.dataset.calImport);
   wireTimetable(c);
 }
 
@@ -3013,7 +3326,7 @@ function wireTimetable(c) {
 
   // Cliquer une zone vide → nouveau créneau de 45 min
   grid.addEventListener("click", (ev) => {
-    if (ev.target.closest("[data-slot]")) return;
+    if (ev.target.closest("[data-slot],[data-cal-slot]")) return;
     const st = minFromY(ev.clientY);
     const s = newSlot(planningDate, Math.min(st, DAY_END - DEFAULT_DUR), DEFAULT_DUR, "Créneau");
     save(); render(); slotEditor(s.id);
@@ -3198,7 +3511,7 @@ function reconnectDrive() {
       state = Object.assign(blankState(), remote);
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
     } else DriveSync.push(state);
-    renderDriveBar(); render(); loadMails();
+    renderDriveBar(); render(); loadMails(); loadCalendar(true);
     toast("Google Drive reconnecté ✓");
   }).catch((e) => {
     renderDriveBar();
@@ -3214,7 +3527,7 @@ async function connectDrive() {
     if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) { state = Object.assign(blankState(), remote); localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
     if (generateRecurrences() > 0) save(); else DriveSync.push(state);
     renderDriveBar(); render();
-    loadMails();
+    loadMails(); loadCalendar(true);
   } catch (e) { alert("Connexion Google Drive impossible : " + e.message); }
 }
 
@@ -3407,6 +3720,6 @@ if (window.DriveSync) DriveSync.onStatus((s) => {
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
     }
     if (generateRecurrences() > 0) save();
-    renderDriveBar(); render(); loadMails();
+    renderDriveBar(); render(); loadMails(); loadCalendar(true);
   }).catch(() => { renderDriveBar(); });
 })();
