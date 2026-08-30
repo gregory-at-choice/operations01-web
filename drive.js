@@ -307,9 +307,18 @@
   // s'arrêter à la première page tronquerait silencieusement l'agenda. On suit
   // les pages jusqu'au bout, avec une limite haute par sécurité.
   const CAL_MAX_EVENTS = 2500;
-  async function listEvents(fromISO, toISO) {
+
+  // Les agendas de l'utilisateur, hors ceux qu'il a décochés dans Google.
+  // Ne lire que « primary » laisserait de côté les jours fériés, les agendas
+  // partagés et les agendas repris d'un collègue.
+  async function listCalendars() {
     if (!hasSession() || !calGranted()) return [];
-    const out = [];
+    const r = await api("https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader&maxResults=250");
+    const j = await r.json();
+    return (j.items || []).filter((c) => c.id && c.selected !== false);
+  }
+
+  async function eventsOf(calId, fromISO, toISO, out, seen) {
     let pageToken = null;
     do {
       const p = new URLSearchParams({
@@ -320,11 +329,40 @@
         maxResults: "250"
       });
       if (pageToken) p.set("pageToken", pageToken);
-      const r = await api("https://www.googleapis.com/calendar/v3/calendars/primary/events?" + p.toString());
+      const r = await api("https://www.googleapis.com/calendar/v3/calendars/"
+        + encodeURIComponent(calId) + "/events?" + p.toString());
       const j = await r.json();
-      (j.items || []).forEach((e) => { if (e.status !== "cancelled") out.push(e); });
+      (j.items || []).forEach((e) => {
+        if (e.status === "cancelled") return;
+        // Un même événement peut figurer sur deux agendas (invitation partagée).
+        const key = e.id + "|" + ((e.start && (e.start.dateTime || e.start.date)) || "");
+        if (seen[key]) return;
+        seen[key] = 1;
+        e.calendarId = calId;
+        e.calendarName = j.summary || "";
+        out.push(e);
+      });
       pageToken = j.nextPageToken || null;
     } while (pageToken && out.length < CAL_MAX_EVENTS);
+  }
+
+  async function listEvents(fromISO, toISO) {
+    if (!hasSession() || !calGranted()) return [];
+    let cals = [];
+    try { cals = await listCalendars(); } catch (e) { cals = []; }
+    // Repli : si la liste des agendas est inaccessible, on lit au moins le principal.
+    const ids = cals.length ? cals.map((c) => c.id) : ["primary"];
+    const out = [], seen = {};
+    let firstError = null;
+    for (let i = 0; i < ids.length && out.length < CAL_MAX_EVENTS; i++) {
+      // Un agenda en erreur (droits retirés, agenda supprimé) ne doit pas
+      // empêcher de lire les autres.
+      try { await eventsOf(ids[i], fromISO, toISO, out, seen); }
+      catch (e) { if (!firstError) firstError = e; }
+    }
+    // En revanche, si rien n'a pu être lu, c'est une panne à expliquer
+    // (API désactivée, autorisation insuffisante) : on la laisse remonter.
+    if (!out.length && firstError) throw firstError;
     return out;
   }
 
@@ -558,6 +596,7 @@
     backupNow,
     readMails,
     listEvents,
+    listCalendars,
     calendarGranted: calGranted,
     enableCalendar,
     disableCalendar,

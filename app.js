@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v46";
+const APP_VERSION = "v47";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2271,7 +2271,8 @@ function normEvent(e) {
     meet: e.hangoutLink || "",
     guests,
     organizer: org.self ? "" : (org.displayName || org.email || ""),
-    mine: !!org.self
+    mine: !!org.self,
+    calName: e.calendarName || ""
   };
 }
 // Traduit l'erreur Google en cas que l'utilisateur peut corriger lui-même.
@@ -2358,31 +2359,88 @@ function calPrep(e) {
   const kinds = calKinds(e);
   const has = (id) => kinds.indexOf(id) > -1;
   const todo = [];
+  const find = calGuestsToFind(e);
+  if (find) todo.push(`trouver ${find} invité${find > 1 ? "s" : ""}`);
   if (has("transport")) todo.push("réserver / récupérer les billets");
   if (has("commercial")) todo.push("préparer les supports commerciaux");
   if (has("client")) todo.push("relire le dossier et préparer l'entretien");
-  if (has("sport")) {
+  if (has("sport") && !find) {
     // « un ou deux invités à trouver » : l'équipe n'est pas complète.
     const missing = e.guests.filter((g) => g.status !== "accepted").length;
     if (!e.guests.length) todo.push("trouver des joueurs");
     else if (missing >= 1 && missing <= 2) todo.push(`compléter l'équipe (${missing} invité${missing > 1 ? "s" : ""} à trouver)`);
   }
-  // Nature reconnue (y compris « voiture », qui ne demande rien) : on s'y tient.
-  if (kinds.length) return { kinds, todo };
+  // Nature reconnue (y compris « voiture », qui ne demande rien) ou consigne
+  // explicite : on s'y tient, sans y ajouter les repères généraux.
+  if (kinds.length || find) return { kinds, todo };
   const hay = noAccents((e.title || "") + " " + (e.notes || ""));
   const w = PREP_WORDS.find((x) => hay.indexOf(noAccents(x)) > -1);
   if (w) todo.push(`sujet « ${w} »`);
-  if (e.mins >= 90) todo.push(`durée ${fmtDurationShort(e.mins * 60)}`);
-  if (e.guests.length >= 3) todo.push(`${e.guests.length} participants`);
+  const people = calPeople(e);
+  // La durée n'est qu'un indice de repli : dès qu'on sait avec qui on est, elle
+  // ne dit plus rien — un match de trois heures avec Alix n'est pas à préparer.
+  if (e.mins >= 90 && !people.length) todo.push(`durée ${fmtDurationShort(e.mins * 60)}`);
+  if (people.length >= 3) todo.push(`${people.length} participants`);
   return { kinds, todo };
 }
 const calPrepReasons = (e) => calPrep(e).todo;
+
+// Beaucoup d'agendas ne comportent aucun invité Google : l'information est
+// écrite à la main dans le titre. On lit donc les parenthèses.
+//   « ADA - Orléans (Trouver un invité) » → 1 invité à trouver
+//   « ADA - Denain (Alix) »               → rendez-vous avec Alix
+const FIND_RE = /\(\s*trouver\s+(un|une|deux|trois|quatre|cinq|\d+)\s+invit\w*\s*\)/;
+const NUM_WORDS = { un: 1, une: 1, deux: 2, trois: 3, quatre: 4, cinq: 5 };
+function calGuestsToFind(e) {
+  const m = FIND_RE.exec(noAccents(e.title || ""));
+  if (!m) return 0;
+  return NUM_WORDS[m[1]] || parseInt(m[1], 10) || 1;
+}
+// Noms écrits dans le titre : entre parenthèses, ou après « avec ».
+// On écarte les parenthèses qui ne nomment personne (consignes, lieu, visio…).
+const NOT_A_NAME = /trouver|invit|annul|report|visio|tel|distanciel|presentiel|confirm|attente|option|domicile|exterieur/;
+function calNamesFromTitle(e) {
+  const out = [];
+  const push = (chunk) => String(chunk).split(/\s*(?:,|&|\+|\bet\b)\s*/i).forEach((x) => {
+    const v = x.trim();
+    if (v && v.length <= 40 && !/^\d+$/.test(v)) out.push(v);
+  });
+  const re = /\(([^)]+)\)/g;
+  let m;
+  while ((m = re.exec(e.title || ""))) {
+    const raw = m[1].trim();
+    if (raw && !NOT_A_NAME.test(noAccents(raw))) push(raw);
+  }
+  const av = /\bavec\s+([^(),;]+)/i.exec(e.title || "");
+  if (av) push(av[1]);
+  return out;
+}
+// Personnes rencontrées : invités Google d'abord, noms du titre ensuite.
+function calPeople(e) {
+  const out = [], seen = {};
+  e.guests.forEach((g) => {
+    const name = calGuestName(g);
+    const key = g.email || noAccents(name);
+    if (!key || seen[key]) return;
+    // On retient aussi le nom affiché : le titre écrit « (Anne) » là où Google
+    // connaît « anne@… », il ne faut pas compter la personne deux fois.
+    seen[key] = 1; seen[noAccents(name)] = 1;
+    out.push({ key, name, email: g.email });
+  });
+  calNamesFromTitle(e).forEach((n) => {
+    const key = noAccents(n);
+    if (!key || seen[key]) return;
+    seen[key] = 1; out.push({ key, name: n, email: "" });
+  });
+  return out;
+}
 
 // Un événement solitaire n'est pas forcément un rendez-vous à peupler : un
 // trajet, un créneau de travail ou un rappel n'attendent personne. On ne signale
 // « invités à trouver » que si l'événement suppose quelqu'un en face.
 const MEETING_RE = /\b(rdv|rendez-vous|reunion|point|entretien|call|visio|dejeuner|diner|cafe|brief|debrief|interview|entrevue)\b/;
 function calNeedsGuests(e) {
+  if (calGuestsToFind(e) > 0) return true;   // consigne explicite dans le titre
   if (e.allDay || e.guests.length) return false;
   const kinds = calKinds(e);
   // Un match se joue à plusieurs ; un rendez-vous client suppose le client.
@@ -2396,13 +2454,11 @@ function calSynthesis() {
   const up = calUpcoming();
   const meetings = up.filter((e) => !e.allDay);
   const people = new Map();
-  up.forEach((e) => e.guests.forEach((g) => {
-    const key = g.email || calGuestName(g).toLowerCase();
-    if (!key) return;
-    const p = people.get(key) || { key, name: calGuestName(g), email: g.email, n: 0, next: null };
-    if (!p.name || p.name === p.email) p.name = calGuestName(g);
+  up.forEach((e) => calPeople(e).forEach((g) => {
+    const p = people.get(g.key) || { key: g.key, name: g.name, email: g.email, n: 0, next: null };
+    if (!p.email && g.email) p.email = g.email;
     p.n++; if (!p.next) p.next = e;
-    people.set(key, p);
+    people.set(g.key, p);
   }));
   const contacts = [...people.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name, "fr"));
   const noGuests = meetings.filter(calNeedsGuests);
@@ -2474,11 +2530,20 @@ function unlinkCalendar() {
 function renderCalEventDetail(eid) {
   const e = calendar.events.find((x) => x.id === eid);
   if (!e) { view.detailId = null; return renderRendezvous(); }
-  const guests = e.guests.length
-    ? e.guests.map((g) => `<div class="row" style="cursor:default;border-left-color:var(--positive)">
-        <div class="grow"><div class="r-title">${esc(calGuestName(g))}</div>
-        <div class="r-sub">${esc(g.email || "")}${g.status ? ` · ${esc(calStatusLabel(g.status))}` : ""}</div></div></div>`).join("")
-    : '<div class="muted" style="padding:4px 2px;font-size:13px">Aucun invité — c\'est peut-être un événement pour lequel il reste des invités à trouver.</div>';
+  const people = calPeople(e);
+  const byEmail = {};
+  e.guests.forEach((g) => { byEmail[g.email || noAccents(calGuestName(g))] = g; });
+  const toFind = calGuestsToFind(e);
+  const guests = people.length
+    ? people.map((p) => {
+        const g = byEmail[p.key];
+        const sub = g ? [g.email || "", g.status ? calStatusLabel(g.status) : ""].filter(Boolean).join(" · ")
+                      : "nom lu dans le titre de l'événement";
+        return `<div class="row" style="cursor:default;border-left-color:var(--positive)">
+          <div class="grow"><div class="r-title">${esc(p.name)}</div>
+          <div class="r-sub">${esc(sub)}</div></div></div>`;
+      }).join("")
+    : `<div class="muted" style="padding:4px 2px;font-size:13px">Personne d'identifié${toFind ? "" : " — ni invité Google, ni nom dans le titre"}.</div>`;
   const prep = calPrep(e);
   const links = [
     e.meet ? `<a class="btn secondary small" href="${esc(e.meet)}" target="_blank" rel="noopener">Rejoindre la visio</a>` : "",
@@ -2491,6 +2556,7 @@ function renderCalEventDetail(eid) {
       <div><strong>${esc(calWhen(e))}</strong>${e.mins ? ` <span class="muted">· ${fmtDurationShort(e.mins * 60)}</span>` : ""}</div>
       ${e.location ? `<div class="muted" style="margin-top:6px">📍 ${esc(e.location)}</div>` : ""}
       ${e.organizer ? `<div class="muted" style="margin-top:6px">Organisé par ${esc(e.organizer)}</div>` : ""}
+      ${e.calName ? `<div class="muted" style="margin-top:6px">Agenda : ${esc(e.calName)}</div>` : ""}
       ${prep.kinds.length ? `<div style="margin-top:8px">${prep.kinds.map((k) => `<span class="cal-kind">${esc(calKindLabel(k))}</span>`).join(" ")}</div>` : ""}
       ${prep.todo.length
         ? `<div style="margin-top:8px"><span class="cal-tag">À préparer</span><ul class="cal-todo">${prep.todo.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`
@@ -2498,7 +2564,7 @@ function renderCalEventDetail(eid) {
       ${links ? `<div class="inline" style="margin-top:10px">${links}</div>` : ""}
     </div>
     ${e.notes ? `<div class="section-h">Description</div><div class="card"><div class="cal-notes">${esc(e.notes)}</div></div>` : ""}
-    <div class="section-h">Participants <span class="muted">(${e.guests.length})</span></div>
+    <div class="section-h">Participants <span class="muted">(${people.length}${toFind ? ` · ${toFind} à trouver` : ""})</span></div>
     <div class="list">${guests}</div>
     <div style="margin-top:18px"><button class="btn secondary small" data-cal-import="${esc(e.id)}">+ Créer un rendez-vous Operations01 à partir de cet événement</button></div>`;
 }
@@ -2511,7 +2577,7 @@ function importCalEvent(eid) {
   if (!e) return;
   const r = {
     id: uid(), title: e.title, date: e.date, time: e.time || "",
-    location: e.location || e.meet || "", withName: e.guests.map(calGuestName).join(", "),
+    location: e.location || e.meet || "", withName: calPeople(e).map((p) => p.name).join(", "),
     contactId: null, missionId: null, notes: e.notes || "", createdAt: Date.now()
   };
   state.rendezvous.push(r);
@@ -2591,7 +2657,7 @@ function renderRendezvous() {
   const gUp = gAll.filter((e) => e.date >= today);
   const gPast = gAll.filter((e) => e.date < today).reverse();
   const gCard = (e) => {
-    const who = e.guests.length ? e.guests.map(calGuestName).join(", ") : (e.organizer || "");
+    const who = calPeople(e).map((p) => p.name).join(", ") || e.organizer || "";
     const sub = [calWhen(e), who, e.location ? `📍 ${e.location}` : null].filter(Boolean).join(" · ");
     return `<div class="row" data-cal-open="${esc(e.id)}" style="border-left-color:var(--positive)">
       <span class="ic">🗓️</span>
@@ -2658,7 +2724,7 @@ function planningEvents() {
   const today = todayISO();
   calendar.events.forEach((e) => {
     if (!e.date || e.date < today) return;
-    const who = e.guests.length ? e.guests.map(calGuestName).join(", ") : "";
+    const who = calPeople(e).map((p) => p.name).join(", ");
     ev.push({
       date: e.date, time: e.time || "", kind: who ? `Agenda · ${who}` : "Agenda", ic: "🗓️",
       title: e.title, color: "var(--positive)", section: "rendezvous", detailId: "gcal:" + e.id
@@ -2793,7 +2859,7 @@ function renderTimetable() {
     const w = 100 / cols, left = col * w;
     if (s.cal) {
       const e = s.cal;
-      const who = e.guests.length ? e.guests.map(calGuestName).join(", ") : (e.organizer || "");
+      const who = calPeople(e).map((p) => p.name).join(", ") || e.organizer || "";
       return `<div class="tt-slot tt-cal" data-cal-slot="${esc(e.id)}" style="top:${top}px;height:${h}px;left:calc(${left}% + 2px);width:calc(${w}% - 4px)">
         <div class="tt-slot-t">🗓️ ${esc(e.title)}</div>
         <div class="tt-slot-h">${esc(e.time)}${e.endTime ? "–" + esc(e.endTime) : ""}${who ? " · " + esc(who) : ""}</div></div>`;
