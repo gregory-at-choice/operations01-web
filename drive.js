@@ -303,18 +303,29 @@
     tokenClient = null; tokenClientScope = null;
   }
 
+  // Google renvoie les événements par pages : sur une fenêtre de plusieurs mois,
+  // s'arrêter à la première page tronquerait silencieusement l'agenda. On suit
+  // les pages jusqu'au bout, avec une limite haute par sécurité.
+  const CAL_MAX_EVENTS = 2500;
   async function listEvents(fromISO, toISO) {
     if (!hasSession() || !calGranted()) return [];
-    const p = new URLSearchParams({
-      timeMin: fromISO,
-      timeMax: toISO,
-      singleEvents: "true",
-      orderBy: "startTime",
-      maxResults: "250"
-    });
-    const r = await api("https://www.googleapis.com/calendar/v3/calendars/primary/events?" + p.toString());
-    const j = await r.json();
-    return (j.items || []).filter((e) => e.status !== "cancelled");
+    const out = [];
+    let pageToken = null;
+    do {
+      const p = new URLSearchParams({
+        timeMin: fromISO,
+        timeMax: toISO,
+        singleEvents: "true",
+        orderBy: "startTime",
+        maxResults: "250"
+      });
+      if (pageToken) p.set("pageToken", pageToken);
+      const r = await api("https://www.googleapis.com/calendar/v3/calendars/primary/events?" + p.toString());
+      const j = await r.json();
+      (j.items || []).forEach((e) => { if (e.status !== "cancelled") out.push(e); });
+      pageToken = j.nextPageToken || null;
+    } while (pageToken && out.length < CAL_MAX_EVENTS);
+    return out;
   }
 
   async function deleteFile(id) {

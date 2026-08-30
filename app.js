@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v45";
+const APP_VERSION = "v46";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2213,7 +2213,21 @@ function renderActionDetail(id) {
 // L'app ne demande que la portée « calendar.readonly » : elle ne modifie jamais l'agenda.
 const CAL_CACHE = "op01_calendar";
 const CAL_PAST_DAYS = 60;     // profondeur d'historique chargée
-const CAL_AHEAD_DAYS = 180;   // horizon chargé
+// Horizon de la synthèse : jusqu'à cette date incluse. Un horizon fixe finit par
+// être dépassé, d'où le plancher : passé cette date, on garde six mois d'avance
+// plutôt que de ne plus rien afficher.
+const CAL_HORIZON = "2027-06-30";
+const CAL_MIN_AHEAD_DAYS = 180;
+// Date d'horizon au format ISO (yyyy-mm-dd), pour l'affichage.
+function calHorizonISO() {
+  const d = calHorizonDate();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function calHorizonDate() {
+  const floor = new Date(); floor.setDate(floor.getDate() + CAL_MIN_AHEAD_DAYS);
+  const fixed = new Date(CAL_HORIZON + "T23:59:59");
+  return fixed > floor ? fixed : floor;
+}
 const CAL_FRESH = 5 * 60000;  // au-delà, on redemande l'agenda à Google
 const CAL_RETRY = 30 * 60000; // après une erreur, on n'insiste qu'au bout d'une demi-heure
 let calendar = loadCalCache();  // { events, at, error }
@@ -2283,8 +2297,7 @@ async function loadCalendar(force) {
   calBusy = true; if (calVisible()) render();
   try {
     const from = new Date(); from.setDate(from.getDate() - CAL_PAST_DAYS);
-    const to = new Date(); to.setDate(to.getDate() + CAL_AHEAD_DAYS);
-    const raw = await DriveSync.listEvents(from.toISOString(), to.toISOString());
+    const raw = await DriveSync.listEvents(from.toISOString(), calHorizonDate().toISOString());
     calendar = { events: raw.map(normEvent).filter((e) => e.date), at: Date.now(), error: null };
     calNextTry = 0;
     saveCalCache();
@@ -2548,6 +2561,7 @@ function renderCalSummary() {
       ${stat(s.noGuests.length, "invités à trouver")}
       ${stat(s.prep.length, "à préparer")}
     </div>
+    <div class="muted" style="font-size:12px;margin:2px 0 10px">Synthèse des événements d'aujourd'hui jusqu'au ${esc(fmtDate(calHorizonISO()))}.</div>
     <div class="section-h">👥 Avec qui ? <span class="muted">(${s.contacts.length})</span></div>
     <div class="list">${people}</div>
     <div class="section-h">🙋 Invités à trouver <span class="muted">(${s.noGuests.length})</span></div>
