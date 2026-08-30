@@ -310,8 +310,7 @@
       timeMax: toISO,
       singleEvents: "true",
       orderBy: "startTime",
-      maxResults: "250",
-      fields: "items(id,summary,description,location,start,end,attendees(email,displayName,self,organizer,responseStatus),organizer(email,displayName,self),hangoutLink,htmlLink,status,eventType)"
+      maxResults: "250"
     });
     const r = await api("https://www.googleapis.com/calendar/v3/calendars/primary/events?" + p.toString());
     const j = await r.json();

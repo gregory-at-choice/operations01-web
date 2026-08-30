@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v44";
+const APP_VERSION = "v45";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2364,6 +2364,20 @@ function calPrep(e) {
   return { kinds, todo };
 }
 const calPrepReasons = (e) => calPrep(e).todo;
+
+// Un événement solitaire n'est pas forcément un rendez-vous à peupler : un
+// trajet, un créneau de travail ou un rappel n'attendent personne. On ne signale
+// « invités à trouver » que si l'événement suppose quelqu'un en face.
+const MEETING_RE = /\b(rdv|rendez-vous|reunion|point|entretien|call|visio|dejeuner|diner|cafe|brief|debrief|interview|entrevue)\b/;
+function calNeedsGuests(e) {
+  if (e.allDay || e.guests.length) return false;
+  const kinds = calKinds(e);
+  // Un match se joue à plusieurs ; un rendez-vous client suppose le client.
+  if (kinds.indexOf("client") > -1 || kinds.indexOf("sport") > -1) return true;
+  // Trajet, salon, conférence : on peut parfaitement y aller seul.
+  if (kinds.length) return false;
+  return MEETING_RE.test(noAccents(e.title || ""));
+}
 // Synthèse des événements à venir : avec qui, invités à trouver, préparation.
 function calSynthesis() {
   const up = calUpcoming();
@@ -2378,7 +2392,7 @@ function calSynthesis() {
     people.set(key, p);
   }));
   const contacts = [...people.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name, "fr"));
-  const noGuests = meetings.filter((e) => !e.guests.length);
+  const noGuests = meetings.filter(calNeedsGuests);
   const waiting = up.filter((e) => e.guests.length && e.guests.some((g) => g.status === "needsAction" || g.status === "declined"));
   const prep = up.map((e) => ({ e, reasons: calPrep(e).todo })).filter((x) => x.reasons.length);
   return { up, meetings, contacts, noGuests, waiting, prep };
@@ -2509,7 +2523,9 @@ function renderCalSummary() {
         <div class="grow"><div class="r-title">${esc(p.name)}</div>
           <div class="r-sub">${p.n} rendez-vous à venir${p.next ? ` · prochain le ${esc(fmtDate(p.next.date))}` : ""}</div></div>
         <span class="muted">›</span></div>`).join("")
-    : '<div class="muted" style="padding:4px 2px;font-size:13px">Aucun participant identifié dans les événements à venir.</div>';
+    : `<div class="muted" style="padding:4px 2px;font-size:13px">Aucun participant dans les événements à venir.
+        Google ne connaît des participants que si tu invites les gens par e-mail depuis ton agenda ;
+        un rendez-vous noté pour toi seul n'en a aucun — écris alors le nom dans le titre.</div>`;
   const invit = s.noGuests.length
     ? s.noGuests.map((e) => evRow(e, calWhen(e) + " · aucun invité")).join("")
     : '<div class="muted" style="padding:4px 2px;font-size:13px">Tous les rendez-vous à venir ont au moins un invité. 👌</div>';
@@ -2527,7 +2543,7 @@ function renderCalSummary() {
   const stat = (n, lbl) => `<div class="cal-stat"><div class="cal-stat-n">${n}</div><div class="cal-stat-l">${lbl}</div></div>`;
   return `${notice}
     <div class="cal-stats">
-      ${stat(s.meetings.length, "rendez-vous à venir")}
+      ${stat(s.up.length, "événements à venir")}
       ${stat(s.contacts.length, "interlocuteurs")}
       ${stat(s.noGuests.length, "invités à trouver")}
       ${stat(s.prep.length, "à préparer")}
