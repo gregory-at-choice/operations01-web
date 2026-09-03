@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v48";
+const APP_VERSION = "v49";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1341,7 +1341,7 @@ function renderMissionDetail(id) {
     : `<div class="inline" style="margin-bottom:12px;flex-wrap:wrap">
         <button class="btn" data-project-timer="${m.id}">▶ Suivi du projet</button>
         <span class="muted" style="font-size:12px">Temps total : <span class="timer" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span> · cette semaine : ${fmtDuration(projectWeekSeconds(m))}</span></div>`;
-  const tabs = PROJECT_TABS.map(([tid, lbl]) => `<button class="chip ${projectTab === tid ? "active" : ""}" data-ptab="${tid}">${lbl}</button>`).join("");
+  const tabs = PROJECT_TABS.map(([tid, lbl]) => `<button class="chip ${projectTab === tid ? "active" : ""}" data-projtab="${tid}">${lbl}</button>`).join("");
   const body = projectTab === "gestion" ? renderProjectGestion(m) : projectTab === "courrier" ? renderProjectCourrier(m) : renderProjectResume(m);
   return `<button class="back" data-back>‹ Projets</button>
     <div class="toolbar">
@@ -3614,7 +3614,9 @@ function wire() {
   c.querySelectorAll("[data-mailbox-help]").forEach((b) => b.onclick = () => { const mb = (state.mailboxes || []).find((x) => x.id === b.dataset.mailboxHelp); if (mb) mailboxHelp(mb); });
 
   // ---- Projet : onglets, chronos, gestion, correspondance --------------------
-  c.querySelectorAll("[data-ptab]").forEach((b) => b.onclick = () => { projectTab = b.dataset.ptab; render(); });
+  // Attribut distinct de celui des onglets de Planning : les deux gestionnaires
+  // écrivaient sinon sur le même onclick, et le dernier l'emportait.
+  c.querySelectorAll("[data-projtab]").forEach((b) => b.onclick = () => { projectTab = b.dataset.projtab; render(); });
   c.querySelectorAll("[data-goto-gestion]").forEach((r) => r.onclick = () => { projectTab = "gestion"; render(); });
   c.querySelectorAll("[data-project-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.projectTimer); if (!m) return; startProjectTimer(m, null); save(); render(); toast("Chrono lancé sur le projet ▶"); });
   c.querySelectorAll("[data-task-timer]").forEach((b) => b.onclick = () => {
