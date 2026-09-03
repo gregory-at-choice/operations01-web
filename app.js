@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v50";
+const APP_VERSION = "v51";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -1602,9 +1602,28 @@ function mailboxLabel(id) {
 // ou un participant parmi les adresses du projet / des contacts de sa société.
 function projectMailEmails(m) {
   const set = {};
-  state.contacts.forEach((c) => { if (m.companyId && c.companyId === m.companyId && c.email) set[String(c.email).toLowerCase()] = 1; });
-  String(m.mailEmails || "").split(/[,;\s]+/).forEach((e) => { e = e.trim().toLowerCase(); if (e) set[e] = 1; });
+  String(m.mailEmails || "").split(/[,;\s]+/).forEach((e) => { e = e.trim().toLowerCase(); if (e && e.indexOf("@") > -1) set[e] = 1; });
   return set;
+}
+// Adresses des contacts de la société du projet : proposées, jamais imposées.
+function companyEmailSuggestions(m) {
+  const have = projectMailEmails(m);
+  return state.contacts
+    .filter((c) => m.companyId && c.companyId === m.companyId && c.email && !have[String(c.email).toLowerCase()])
+    .map((c) => ({ email: String(c.email).toLowerCase(), name: contactName(c) }));
+}
+// Mes propres adresses (boîtes lues) : un fil ne doit jamais être rattaché à un
+// projet parce que j'y figure.
+function ownAddresses() {
+  const set = {};
+  Object.keys(mailStore).forEach((k) => { const d = mailStore[k]; if (d && d.mailbox) set[String(d.mailbox).toLowerCase()] = 1; });
+  (state.mailboxes || []).forEach((b) => { if (b.email) set[String(b.email).toLowerCase()] = 1; });
+  return set;
+}
+// Un mot-clé compte s'il apparaît comme mot entier (« feder » ne prend pas « fédération »).
+function hasKeyword(hay, kw) {
+  const esc = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp("(^|[^a-z0-9])" + esc + "($|[^a-z0-9])").test(hay);
 }
 function projectKeywords(m) {
   const src = String(m.mailKeywords || "").trim() || String(m.title || "");
@@ -1617,58 +1636,92 @@ function projectTitleWords(m) {
   const w = noAccents(m.title || "").split(/[^a-z0-9]+/).filter((x) => x.length >= 4);
   return w.length >= 2 ? w : [];
 }
-function projectThreads(m) {
-  const kws = projectKeywords(m), words = projectTitleWords(m), emails = projectMailEmails(m);
+// Un fil correspond automatiquement au projet si un mot-clé y figure (objet ou
+// extrait) ou si un participant, autre que moi, est une adresse du projet.
+function threadMatches(m, th) {
+  const kws = projectKeywords(m), words = projectTitleWords(m), emails = projectMailEmails(m), mine = ownAddresses();
+  const hay = noAccents((th.subject || "") + " " + (th.snippet || ""));
+  if (kws.some((k) => hasKeyword(hay, k))) return true;
+  if (words.length && words.every((w) => hasKeyword(hay, w))) return true;
+  const from = (th.from || "").toLowerCase();
+  if (!mine[from] && emails[from]) return true;
+  return (th.people || []).some((p) => { const e = (p.email || "").toLowerCase(); return e && !mine[e] && emails[e]; });
+}
+// Classement explicite d'un fil : id de projet, "" pour « aucun », undefined si non classé.
+const mailLinkOf = (id) => (state.mailLinks || {})[id];
+function setMailLink(id, missionId) {
+  state.mailLinks = state.mailLinks || {};
+  if (missionId === undefined) delete state.mailLinks[id]; else state.mailLinks[id] = missionId;
+}
+// Fils du projet : ceux qu'on y a classés à la main, plus les suggestions
+// automatiques (non classées ailleurs). `only` = "linked" | "suggested" | undefined.
+function projectThreads(m, only) {
   const excluded = m.mailExclude || [];
   return mailThreads().filter((th) => {
+    const link = mailLinkOf(th.id);
+    if (link !== undefined) return link === m.id && only !== "suggested";
+    if (only === "linked") return false;
     if (excluded.indexOf(th.id) > -1) return false;
-    const hay = noAccents((th.subject || "") + " " + (th.snippet || ""));
-    if (kws.some((k) => hay.indexOf(k) > -1)) return true;
-    if (words.length && words.every((w) => hay.indexOf(w) > -1)) return true;
-    if (emails[(th.from || "").toLowerCase()]) return true;
-    return (th.people || []).some((p) => emails[(p.email || "").toLowerCase()]);
+    return threadMatches(m, th);
   }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 function renderProjectCourrier(m) {
-  const threads = projectThreads(m);
+  const linked = projectThreads(m, "linked");
+  const suggested = projectThreads(m, "suggested");
   const anyIndex = mailThreads().length > 0;
   const emailEntries = (m.entries || []).filter((e) => e.kind === "email").sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  const linkedIds = {};
-  state.tasks.forEach((t) => { if (t.mailThreadId) linkedIds[t.mailThreadId] = 1; });
-  const row = (th) => {
+  const taskLinked = {};
+  state.tasks.forEach((t) => { if (t.mailThreadId) taskLinked[t.mailThreadId] = 1; });
+  const others = sortedMissions().filter((x) => x.id !== m.id);
+  const row = (th, isLinked) => {
     const d = th.date ? new Date(th.date) : null;
     const when = d ? d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" }) : "";
     const sub = [th.mine ? "📤 moi" : esc(th.fromName || th.from || ""), when, th.count > 1 ? `${th.count} messages` : null, `<span class="pm-tag">${esc(th.box)}</span>`].filter(Boolean).join(" · ");
-    return `<div class="row mail-row" style="cursor:default;border-left-color:${th.unread ? "var(--primary)" : "var(--line)"}">
+    const sel = `<select class="mail-sel" data-mail-assign="${esc(th.id)}" data-m="${m.id}" title="Classer ce fil">
+        ${isLinked ? "" : '<option value="" selected>Classer…</option>'}
+        <option value="${m.id}" ${isLinked ? "selected" : ""}>✓ Ce projet</option>
+        <option value="none">— Aucun projet</option>
+        ${others.map((x) => `<option value="${x.id}">→ ${esc(x.title || "Sans titre")}</option>`).join("")}
+      </select>`;
+    return `<div class="row mail-row" style="cursor:default;border-left-color:${isLinked ? "var(--positive)" : (th.unread ? "var(--primary)" : "var(--line)")}">
       <span class="ic">✉️</span>
-      <div class="grow"><div class="r-title">${esc(th.subject)}${linkedIds[th.id] ? ' <span class="pm-tag">✅ tâche créée</span>' : ""}</div>
+      <div class="grow"><div class="r-title">${esc(th.subject)}${taskLinked[th.id] ? ' <span class="pm-tag">✅ tâche créée</span>' : ""}${isLinked ? "" : ' <span class="pm-tag">suggestion</span>'}</div>
         <div class="r-sub">${sub}</div>
         ${th.snippet ? `<div class="mail-snippet">${esc(th.snippet)}</div>` : ""}</div>
       <div class="mail-actions">
+        ${sel}
         ${th.link ? `<a class="btn ghost small" href="${esc(th.link)}" target="_blank" rel="noopener">Ouvrir</a>` : ""}
         <button class="btn ghost small" data-mail-task="${esc(th.id)}" data-m="${m.id}" title="Créer une tâche à partir de ce mail">→ Tâche</button>
         <button class="btn ghost small" data-mail-entry="${esc(th.id)}" data-m="${m.id}" title="Ajouter à l'historique du projet">→ Historique</button>
-        <button class="btn ghost small" data-mail-exclude="${esc(th.id)}" data-m="${m.id}" title="Ce mail ne concerne pas ce projet">✕</button>
       </div></div>`;
   };
+  const sugg = companyEmailSuggestions(m);
+  const suggHtml = sugg.length
+    ? `<div class="muted" style="font-size:12px;margin-top:6px">Contacts de ${esc(companyName(m.companyId))} : ${sugg.slice(0, 12).map((x) => `<button class="chip" data-mail-addemail="${esc(x.email)}" data-m="${m.id}" title="Ajouter ${esc(x.email)} aux adresses du projet">+ ${esc(x.name)}</button>`).join(" ")}${sugg.length > 12 ? ` <span>… (${sugg.length - 12} de plus)</span>` : ""}</div>`
+    : "";
   const conf = `<div class="card" style="margin-bottom:12px">
-      <label class="field"><span>Mots-clés (séparés par des virgules) — par défaut, le titre du projet</span>
+      <label class="field"><span>Mots-clés (séparés par des virgules), cherchés comme mots entiers dans l'objet et l'extrait — à défaut, les mots du titre du projet</span>
         <input data-bind="missions|${m.id}|mailKeywords" data-rerender value="${esc(m.mailKeywords || "")}" placeholder="${esc(m.title || "mot-clé")}"/></label>
-      <label class="field"><span>Adresses e-mail liées au projet (en plus des contacts de la société)</span>
+      <label class="field"><span>Adresses e-mail liées au projet (un fil est suggéré si l'une d'elles y participe)</span>
         <input data-bind="missions|${m.id}|mailEmails" data-rerender value="${esc(m.mailEmails || "")}" placeholder="prenom@client.fr, autre@partenaire.com"/></label>
-      <div class="muted" style="font-size:12px">${Object.keys(projectMailEmails(m)).length} adresse(s) suivie(s) · ${projectKeywords(m).length} mot(s)-clé(s). ${(state.mailboxes || []).length + 1} boîte(s) mail lue(s) — gérer dans Relances → Boîtes mail.</div>
+      ${suggHtml}
+      <div class="muted" style="font-size:12px;margin-top:8px">${Object.keys(projectMailEmails(m)).length} adresse(s) · ${projectKeywords(m).length} mot(s)-clé(s) · ${(state.mailboxes || []).length + 1} boîte(s) mail lue(s). Mes propres adresses ne comptent jamais comme critère.</div>
     </div>`;
-  let list;
-  if (!(window.DriveSync && DriveSync.isConnected())) list = '<div class="center-empty">Connecte-toi à Google Drive pour lire la correspondance.</div>';
-  else if (!anyIndex) list = `<div class="center-empty">${mailLoading ? "Lecture des boîtes mail…" : "Aucun index de mails disponible.<br>Installe (ou mets à jour) le script « Mails » dans chaque boîte : il indexe les fils récents toutes les heures. Voir Relances → Boîtes mail."}</div>`;
-  else list = threads.length ? `<div class="list">${threads.map(row).join("")}</div>` : '<div class="center-empty">Aucun mail ne correspond aux mots-clés ni aux adresses de ce projet.</div>';
+  let body;
+  if (!(window.DriveSync && DriveSync.isConnected())) body = '<div class="center-empty">Connecte-toi à Google Drive pour lire la correspondance.</div>';
+  else if (!anyIndex) body = `<div class="center-empty">${mailLoading ? "Lecture des boîtes mail…" : "Aucun index de mails disponible.<br>Installe (ou mets à jour) le script « Mails » dans chaque boîte : il indexe les fils récents toutes les heures. Voir Relances → Boîtes mail."}</div>`;
+  else body = `<div class="section-h">✓ Classés dans ce projet <span class="muted">(${linked.length})</span></div>
+      ${linked.length ? `<div class="list">${linked.map((th) => row(th, true)).join("")}</div>` : '<div class="muted" style="padding:4px 2px;font-size:13px">Aucun fil classé pour l\'instant : confirme une suggestion ci-dessous avec « ✓ Ce projet ».</div>'}
+      <div class="section-h">Suggestions <span class="muted">(${suggested.length})</span></div>
+      <div class="muted" style="font-size:12px;margin-bottom:6px">Fils qui contiennent un mot-clé ou impliquent une adresse du projet. Classe chacun : ce projet, un autre projet, ou aucun.</div>
+      ${suggested.length ? `<div class="list">${suggested.map((th) => row(th, false)).join("")}</div>` : '<div class="muted" style="padding:4px 2px;font-size:13px">Aucune suggestion : précise des mots-clés ou des adresses ci-dessus.</div>'}`;
   const manual = emailEntries.length
     ? `<div class="section-h">Mails notés dans l'historique <span class="muted">(${emailEntries.length})</span></div><div class="list">${emailEntries.map((e) => renderEntry(m.id, e)).join("")}</div>`
     : "";
   return `${conf}
-    <div class="section-h">✉️ Correspondance <span class="muted">(${threads.length})</span>
+    <div class="section-h">✉️ Correspondance <span class="muted">(${linked.length + suggested.length})</span>
       <button class="btn ghost small" data-mail-refresh style="margin-left:8px">${mailLoading ? "…" : "↻ Rafraîchir"}</button></div>
-    ${list}${manual}`;
+    ${body}${manual}`;
 }
 
 function renderEntry(mid, e) {
@@ -3791,6 +3844,19 @@ function wire() {
     m.entries = m.entries || [];
     m.entries.push({ id: uid(), kind: "email", title: th.subject || "Mail", content: th.snippet || "", date: (th.date || "").slice(0, 10) || todayISO(), url: th.link || "", accumulatedSeconds: 0, timerStartedAt: null, createdAt: Date.now() });
     save(); render(); toast("Mail ajouté à l'historique ✓");
+  });
+  c.querySelectorAll("[data-mail-assign]").forEach((el) => el.onchange = () => {
+    const v = el.value; if (!v) return;
+    const id = el.dataset.mailAssign;
+    if (v === "none") { setMailLink(id, ""); toast("Fil écarté de tous les projets"); }
+    else { setMailLink(id, v); const target = findMission(v); toast(v === el.dataset.m ? "Fil classé dans ce projet ✓" : `Fil classé dans « ${target ? target.title : "?"} »`); }
+    save(); render();
+  });
+  c.querySelectorAll("[data-mail-addemail]").forEach((b) => b.onclick = () => {
+    const m = findMission(b.dataset.m); if (!m) return;
+    const cur = String(m.mailEmails || "").trim();
+    m.mailEmails = cur ? cur.replace(/[,\s]+$/, "") + ", " + b.dataset.mailAddemail : b.dataset.mailAddemail;
+    save(); render();
   });
   c.querySelectorAll("[data-mail-exclude]").forEach((b) => b.onclick = () => {
     const m = findMission(b.dataset.m); if (!m) return;

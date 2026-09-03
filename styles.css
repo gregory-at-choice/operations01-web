@@ -446,6 +446,7 @@ a.pm-tag { color: var(--primary); }
 .kb-mission.flat-input { font-size: 11px; color: var(--muted); padding: 0; margin-top: 2px; width: 100%; }
 .mail-row { align-items: flex-start; }
 .mail-snippet { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+.mail-sel { width: auto; max-width: 220px; padding: 5px 8px; font-size: 12px; }
 .mail-actions { display: flex; flex-direction: column; gap: 2px; align-items: flex-end; }
 .mb-steps { padding-left: 20px; font-size: 14px; line-height: 1.6; }
 .mb-steps code { background: var(--bg); padding: 2px 6px; border-radius: 6px; font-size: 12px; word-break: break-all; }
