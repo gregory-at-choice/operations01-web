@@ -42,6 +42,10 @@ var MAX_THREADS = 80;             // plafond de sécurité par recherche (alerte
 var INDEX_JOURS = 120;            // profondeur de l'index de correspondance
 var INDEX_MAX = 400;              // nombre maximal de fils indexés
 var EXTRAIT_CARACTERES = 160;     // longueur de l'extrait conservé (0 = aucun)
+// Dossier de rangement des fichiers JSON de l'app (boîte principale uniquement).
+// La web app n'a le droit d'écrire que « là où elle est » (portée drive.file) :
+// c'est ce script, qui a accès à tout le Drive, qui range ses fichiers.
+var DOSSIER_JSON = "soft/src-json";
 
 function installerAnalyseMails() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
@@ -139,6 +143,36 @@ function analyserMails() {
     unread: unread, relance: relance, nouveau: nouveau, rdvPrep: rdvPrep, threads: threads };
   cible.setContent(JSON.stringify(out));
   Logger.log(unread.length + " non lus, " + relance.length + " à relancer, " + nouveau.length + " nouveaux, " + rdvPrep.length + " RDV, " + threads.length + " fils indexés.");
+  try { rangerFichiersJson(); } catch (e) { Logger.log("Rangement des JSON impossible : " + e); }
+}
+
+// Range dans DOSSIER_JSON tous les fichiers « operations01-*.json » que possède ce
+// compte (données, sauvegardes, conflits, analyses de mails). Boîte principale
+// seulement : les boîtes secondaires n'ont pas ces fichiers.
+function rangerFichiersJson() {
+  if (FICHIER_MAILS_ID || !DOSSIER_JSON) return;
+  var dossier = dossierParChemin(DOSSIER_JSON);
+  var it = DriveApp.searchFiles("title contains 'operations01-' and mimeType = 'application/json' and trashed = false and 'me' in owners");
+  var n = 0;
+  while (it.hasNext()) {
+    var f = it.next();
+    if (!/^operations01-.*\.json$/.test(f.getName())) continue;
+    var parents = f.getParents(), deja = false;
+    while (parents.hasNext()) { if (parents.next().getId() === dossier.getId()) { deja = true; break; } }
+    if (deja) continue;
+    f.moveTo(dossier); n++;
+  }
+  if (n) Logger.log(n + " fichier(s) JSON rangé(s) dans « " + DOSSIER_JSON + " ».");
+}
+// Dossier désigné par un chemin « a/b/c » depuis la racine du Drive ; créé s'il manque.
+function dossierParChemin(chemin) {
+  var cur = DriveApp.getRootFolder();
+  chemin.split("/").forEach(function (nom) {
+    if (!nom) return;
+    var it = cur.getFoldersByName(nom);
+    cur = it.hasNext() ? it.next() : cur.createFolder(nom);
+  });
+  return cur;
 }
 
 // ---- Utilitaires ----
