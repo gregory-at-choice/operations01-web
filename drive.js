@@ -276,14 +276,42 @@
   // Portée drive.file : l'app doit avoir créé le fichier pour le voir ; on le crée
   // vide s'il n'existe pas encore, afin que le script puisse ensuite le remplir.
   const MAILS_FILE = "operations01-mails.json";
-  async function readMails() {
+  const EMPTY_MAILS = () => JSON.stringify({ updatedAt: 0, unread: [], relance: [], nouveau: [], rdvPrep: [], threads: [] });
+  async function readMails() { return readMailbox(MAILS_FILE); }
+
+  // Chaque boîte mail a son propre fichier d'analyse, rempli par le script
+  // Apps Script installé dans le compte correspondant. L'app crée le fichier
+  // (portée drive.file), puis le partage avec ce compte pour qu'il puisse y écrire.
+  async function readMailbox(fileName) {
     if (!accessToken) return null;
-    const f = await findByName(MAILS_FILE);
+    const f = await findByName(fileName);
     if (!f) {
-      try { await createNamed(MAILS_FILE, JSON.stringify({ updatedAt: 0, unread: [], relance: [], nouveau: [], rdvPrep: [] })); } catch (e) {}
+      try { await createNamed(fileName, EMPTY_MAILS()); } catch (e) {}
       return null;
     }
-    try { return JSON.parse(await download(f.id)); } catch (e) { return null; }
+    try { const j = JSON.parse(await download(f.id)); j._fileId = f.id; return j; } catch (e) { return null; }
+  }
+  // Crée le fichier d'une boîte (s'il n'existe pas) et renvoie son identifiant.
+  async function ensureMailbox(fileName) {
+    const f = await findByName(fileName);
+    if (f) return f.id;
+    const made = await createNamed(fileName, EMPTY_MAILS());
+    return made.id;
+  }
+  // Partage un fichier créé par l'app avec un autre compte (en écriture), sans
+  // e-mail de notification : c'est l'utilisateur lui-même, sur un autre compte.
+  async function shareFile(id, email, role) {
+    await api(`https://www.googleapis.com/drive/v3/files/${id}/permissions?sendNotificationEmail=false&fields=id`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: role || "writer", type: "user", emailAddress: email })
+    });
+  }
+  // Identifiant du fichier de données (pour le partager en lecture avec une
+  // autre boîte : son script peut alors connaître les contacts).
+  async function dataFileId() {
+    if (fileId) return fileId;
+    const f = await findFile();
+    return f ? f.id : null;
   }
 
   // ---- Agenda Google (lecture seule) -------------------------------------
@@ -595,6 +623,10 @@
     restore,
     backupNow,
     readMails,
+    readMailbox,
+    ensureMailbox,
+    shareFile,
+    dataFileId,
     listEvents,
     listCalendars,
     calendarGranted: calGranted,

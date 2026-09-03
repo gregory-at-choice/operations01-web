@@ -15,7 +15,7 @@ const statusRank = (c) => (STATUSES.find((s) => s.code === c) || STATUSES[1]).ra
 const KINDS = [
   { code: "note", label: "Note", ic: "📝" }, { code: "email", label: "E-mail", ic: "✉️" },
   { code: "visio", label: "Visio", ic: "🎥" }, { code: "action", label: "Action", ic: "✅" },
-  { code: "deliverable", label: "Livrable", ic: "📦" },
+  { code: "deliverable", label: "Livrable", ic: "📦" }, { code: "suivi", label: "Suivi du projet", ic: "⏱️" },
 ];
 const kindMeta = (c) => KINDS.find((k) => k.code === c) || KINDS[0];
 
@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v47";
+const APP_VERSION = "v48";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], updatedAt: 0 };
 }
 function load() {
   try {
@@ -146,7 +146,7 @@ const sumAmount = (arr) => arr.reduce((t, v) => t + (v.amount || 0), 0);
 const SECTIONS = [
   { id: "search", label: "Recherche", ic: "🔎", fn: renderSearch },
   { id: "relances", label: "Relances", ic: "📨", fn: renderRelances },
-  { id: "missions", label: "Missions", ic: "🏁", fn: renderMissions },
+  { id: "missions", label: "Projets", ic: "📁", fn: renderMissions },
   { id: "tasks", label: "Tâches", ic: "✅", fn: renderTasks },
   { id: "actions", label: "Actions", ic: "🎫", fn: renderActions },
   { id: "rendezvous", label: "Rendez-vous", ic: "📅", fn: renderRendezvous },
@@ -999,7 +999,7 @@ function renderSearch() {
   const results = [];
   if (q) {
     const has = (s) => String(s || "").toLowerCase().includes(q);
-    state.missions.forEach((m) => { if (has(m.title) || has(companyName(m.companyId))) results.push({ sec: "missions", id: m.id, ic: "🏁", title: m.title || "Mission", sub: companyName(m.companyId) }); });
+    state.missions.forEach((m) => { if (has(m.title) || has(companyName(m.companyId))) results.push({ sec: "missions", id: m.id, ic: "📁", title: m.title || "Projet", sub: companyName(m.companyId) }); });
     state.contacts.forEach((c) => { if (has(contactName(c)) || has(c.organization) || has(c.email) || has(c.jobTitle)) results.push({ sec: "contacts", id: c.id, ic: "👥", title: contactName(c), sub: [c.jobTitle, c.organization].filter(Boolean).join(" · ") }); });
     state.companies.forEach((c) => { if (has(c.name)) results.push({ sec: "groupe", id: c.id, ic: "🏢", title: c.name || "Société", sub: "" }); });
     state.invoices.forEach((v) => { if (has(v.title) || has(v.categoryName) || has(companyName(v.companyId))) results.push({ sec: "finances", id: v.id, ic: "€", title: v.title || "Facture", sub: `${euros(v.amount)} · ${companyName(v.companyId)}` }); });
@@ -1010,17 +1010,84 @@ function renderSearch() {
   const rows = results.map((r) => `<div class="row" data-search-open="${r.sec}" data-search-id="${r.id || ""}" style="border-left-color:var(--primary)">
     <span class="ic">${r.ic}</span><div class="grow"><div class="r-title">${esc(r.title)}</div><div class="r-sub">${esc(r.sub)}</div></div></div>`).join("");
   return `<div class="page-title">Recherche</div>
-    <input id="globalSearch" placeholder="Rechercher une mission, un contact, une facture…" value="${esc(searchQ)}" style="margin-bottom:14px"/>
+    <input id="globalSearch" placeholder="Rechercher un projet, un contact, une facture…" value="${esc(searchQ)}" style="margin-bottom:14px"/>
     ${q ? `<div class="muted" style="font-size:12px;margin-bottom:8px">${results.length} résultat(s)</div><div class="list">${rows || '<div class="center-empty">Aucun résultat.</div>'}</div>` : '<div class="center-empty">Tape un mot-clé pour chercher dans toutes les sections.</div>'}`;
 }
 
 // ----------------------------- Relances (analyse des mails) -----------------------------
-let mailData = null, mailLoading = false;
+// Une entrée par boîte mail : « main » pour le compte relié, puis les boîtes
+// secondaires déclarées dans state.mailboxes (chacune a son fichier d'analyse).
+let mailStore = {};
+let mailData = null, mailLoading = false, mailLoadedAt = 0;
+const MAIL_RETRY = 5 * 60000;
+const mailVisible = () => view.section === "relances" || (view.section === "missions" && view.detailId);
 async function loadMails() {
   if (!(window.DriveSync && DriveSync.isConnected())) return;
-  mailLoading = true; if (view.section === "relances") render();
-  try { mailData = await DriveSync.readMails(); } catch (e) { mailData = null; }
-  mailLoading = false; if (view.section === "relances") render();
+  if (mailLoading) return;
+  mailLoadedAt = Date.now();
+  mailLoading = true; if (mailVisible()) render();
+  try { mailStore.main = await DriveSync.readMails(); } catch (e) { mailStore.main = null; }
+  mailData = mailStore.main;
+  for (const b of (state.mailboxes || [])) {
+    try { mailStore[b.id] = await DriveSync.readMailbox(b.fileName); } catch (e) { mailStore[b.id] = null; }
+  }
+  mailLoading = false; if (mailVisible()) render();
+}
+// Ajoute une boîte secondaire : crée son fichier d'analyse, le partage avec ce
+// compte (écriture) ainsi que le fichier de données (lecture, pour les contacts).
+async function addMailbox(label, email) {
+  email = String(email || "").trim().toLowerCase();
+  if (!email || email.indexOf("@") === -1) { alert("Adresse e-mail invalide."); return; }
+  if ((state.mailboxes || []).some((b) => b.email === email)) { alert("Cette boîte est déjà déclarée."); return; }
+  const slug = email.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const fileName = `operations01-mails-${slug}.json`;
+  mailLoading = true; render();
+  try {
+    const fileId = await DriveSync.ensureMailbox(fileName);
+    let shared = true, dataShared = true;
+    try { await DriveSync.shareFile(fileId, email, "writer"); } catch (e) { shared = false; }
+    try { const did = await DriveSync.dataFileId(); if (did) await DriveSync.shareFile(did, email, "reader"); else dataShared = false; } catch (e) { dataShared = false; }
+    state.mailboxes = state.mailboxes || [];
+    state.mailboxes.push({ id: uid(), label: label || email, email, fileName, fileId, shared, dataShared, createdAt: Date.now() });
+    save();
+    mailLoading = false; render();
+    mailboxHelp(state.mailboxes[state.mailboxes.length - 1]);
+  } catch (e) {
+    mailLoading = false; render();
+    alert("Impossible de préparer cette boîte : " + e.message);
+  }
+}
+function mailboxHelp(b) {
+  showModal(`<div class="modal-head"><strong class="grow">Relier la boîte ${esc(b.email)}</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <ol class="mb-steps">
+      <li>Connecte-toi à Google avec <strong>${esc(b.email)}</strong>, puis ouvre <a href="https://script.google.com" target="_blank" rel="noopener">script.google.com</a> → <strong>Nouveau projet</strong>.</li>
+      <li>Colle le contenu du fichier <code>appsscript-mails.gs</code> (le même script que pour la boîte principale).</li>
+      <li>En haut du script, renseigne :<br><code>var FICHIER_MAILS_ID = "${esc(b.fileId)}";</code>
+        <button class="btn ghost small" data-copy="${esc(b.fileId)}">Copier l'identifiant</button></li>
+      <li>Exécute <strong>installerAnalyseMails</strong> et autorise l'accès (Gmail + Drive). Pour tester tout de suite : exécute <strong>analyserMails</strong>.</li>
+    </ol>
+    <div class="muted" style="font-size:12px">${b.shared ? "Le fichier d'analyse a été partagé avec cette adresse (écriture)." : "⚠️ Le partage automatique a échoué : partage à la main le fichier « " + esc(b.fileName) + " » (Drive) avec cette adresse, en écriture."}
+      ${b.dataShared ? " Le fichier de données lui est partagé en lecture (contacts)." : " Le fichier de données n'a pas pu être partagé : les relances de contacts ne seront pas calculées pour cette boîte, mais la correspondance le sera."}</div>
+    <div style="margin-top:12px"><button class="btn" data-modal-close>Fermer</button></div>`);
+  document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
+  const cp = document.querySelector("[data-copy]");
+  if (cp) cp.onclick = () => { try { navigator.clipboard.writeText(cp.dataset.copy); toast("Identifiant copié"); } catch (e) {} };
+}
+function renderMailboxes() {
+  const main = mailStore.main;
+  const line = (label, email, sub, btns) => `<div class="row" style="cursor:default;border-left-color:var(--activity)">
+    <span class="ic">📮</span><div class="grow"><div class="r-title">${esc(label)}</div><div class="r-sub">${esc(email)}${sub ? ` · ${sub}` : ""}</div></div>${btns || ""}</div>`;
+  const when = (d) => d && d.generatedAt ? `dernière analyse ${new Date(d.generatedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })} · ${(d.threads || []).length} fils` : "script pas encore exécuté";
+  const rows = [line("Boîte principale", (main && main.mailbox) || "compte relié à l'app", when(main))]
+    .concat((state.mailboxes || []).map((b) => line(b.label || b.email, b.email, when(mailStore[b.id]),
+      `<button class="btn ghost small" data-mailbox-help="${b.id}">Marche à suivre</button><button class="btn ghost small" data-del-mailbox="${b.id}" title="Retirer">✕</button>`)));
+  return `<div class="section-h">📮 Boîtes mail <span class="muted">(${(state.mailboxes || []).length + 1})</span></div>
+    <div class="list">${rows.join("")}</div>
+    <div class="card" style="margin-top:10px"><div class="inline" style="flex-wrap:wrap">
+      <input id="mbLabel" class="grow" placeholder="Nom (ex. Boîte perso)" style="min-width:140px"/>
+      <input id="mbEmail" class="grow" type="email" placeholder="adresse@gmail.com" inputmode="email" style="min-width:200px"/>
+      <button class="btn small" data-add-mailbox>+ Ajouter une boîte</button></div>
+      <div class="muted" style="font-size:12px;margin-top:6px">Chaque boîte est lue par le script Google installé dans son compte. Une boîte qui n'est pas chez Google (Outlook, OVH…) peut être rapatriée dans l'une de tes boîtes Gmail (Gmail → Paramètres → Comptes → « Consulter d'autres comptes de messagerie »), puis lue par ce script.</div></div>`;
 }
 function mailRow(it, extra) {
   const link = it.link ? `<a class="btn ghost small" href="${esc(it.link)}" target="_blank" rel="noopener">Ouvrir</a>` : "";
@@ -1050,17 +1117,26 @@ function renderRelances() {
   if (!(window.DriveSync && DriveSync.isConnected()))
     return head + receipts + `<div class="section-h">✉️ Suivi des mails</div><div class="center-empty">Connecte-toi à Google Drive (menu de gauche) pour activer le suivi des mails.</div>`;
   const m = mailData;
-  if (!m) return head + receipts + `<div class="section-h">✉️ Suivi des mails</div>` + (mailLoading
+  const boxes = renderMailboxes();
+  if (!m && !Object.keys(mailStore).some((k) => mailStore[k])) return head + receipts + boxes + `<div class="section-h">✉️ Suivi des mails</div>` + (mailLoading
     ? '<div class="center-empty">Chargement…</div>'
     : `<div class="center-empty">Aucune analyse disponible.<br>Installe le script « Mails » (voir la marche à suivre) : il analysera ta boîte Gmail chaque heure et remplira cet onglet.</div>`);
+  // Toutes les boîtes sont fusionnées ; l'étiquette de la boîte est ajoutée
+  // quand il y en a plusieurs.
+  const multi = Object.keys(mailStore).filter((k) => mailStore[k]).length > 1;
+  const merged = (field) => {
+    const out = [];
+    Object.keys(mailStore).forEach((k) => { const d = mailStore[k]; if (d) (d[field] || []).forEach((x) => out.push(Object.assign({ box: mailboxLabel(k) }, x))); });
+    return out.sort((x, y) => (y.date || "").localeCompare(x.date || ""));
+  };
   const grp = (title, ic, arr, extra) => `<div class="section-h">${ic} ${title} <span class="muted">(${(arr || []).length})</span></div>
-    <div class="list">${(arr || []).length ? arr.map((x) => mailRow(x, extra)).join("") : '<div class="muted" style="padding:4px 2px">—</div>'}</div>`;
-  const when = m.generatedAt ? `Dernière analyse : ${new Date(m.generatedAt).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })}` : "";
-  return head + receipts + `<div class="muted" style="font-size:12px;margin:14px 0 8px">${esc(when)}</div>`
-    + grp("Non lus de contacts", "📩", m.unread)
-    + grp("À relancer", "⏰", m.relance, (it) => `sans réponse depuis ${it.jours != null ? it.jours : "?"} j`)
-    + grp("Nouveaux expéditeurs", "🆕", m.nouveau)
-    + grp("Rendez-vous à préparer", "📅", m.rdvPrep);
+    <div class="list">${(arr || []).length ? arr.map((x) => mailRow(x, (it) => [extra ? extra(it) : null, multi ? it.box : null].filter(Boolean).join(" · "))).join("") : '<div class="muted" style="padding:4px 2px">—</div>'}</div>`;
+  const when = m && m.generatedAt ? `Dernière analyse : ${new Date(m.generatedAt).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })}` : "";
+  return head + receipts + boxes + `<div class="muted" style="font-size:12px;margin:14px 0 8px">${esc(when)}</div>`
+    + grp("Non lus de contacts", "📩", merged("unread"))
+    + grp("À relancer", "⏰", merged("relance"), (it) => `sans réponse depuis ${it.jours != null ? it.jours : "?"} j`)
+    + grp("Nouveaux expéditeurs", "🆕", merged("nouveau"))
+    + grp("Rendez-vous à préparer", "📅", merged("rdvPrep"));
 }
 
 // ----------------------------- Missions -----------------------------
@@ -1113,11 +1189,11 @@ function renderMissions() {
   const viewChips = [["liste", "Liste"], ["kanban", "Kanban"]]
     .map(([id, lbl]) => `<button class="chip ${missionView === id ? "active" : ""}" data-mview="${id}">${lbl}</button>`).join("");
   const sortOpts = MISSION_SORTS.map(([id, lbl]) => `<option value="${id}" ${missionSort === id ? "selected" : ""}>${lbl}</option>`).join("");
-  const head = `<div class="toolbar"><div class="page-title grow" style="margin:0">Missions</div>
+  const head = `<div class="toolbar"><div class="page-title grow" style="margin:0">Projets</div>
       <button class="btn danger small" data-reset>Réinitialiser</button>
       <button class="btn secondary small" data-import>Importer</button>
       <button class="btn secondary small" data-export>Exporter</button>
-      <button class="btn" data-add-mission>+ Nouvelle mission</button></div>
+      <button class="btn" data-add-mission>+ Nouveau projet</button></div>
     <div class="toolbar" style="margin-bottom:12px">
       <div class="chip-row">${viewChips}</div>
       <span class="grow"></span>
@@ -1141,7 +1217,7 @@ function renderMissions() {
       const cards = items.map((m) => {
         const run = missionRunning(m);
         return `<div class="kb-card mission-card" data-mission-card="${m.id}" style="border-left-color:${run ? "#d23c3c" : "var(--primary)"}">
-          <div class="kb-title-row"><span class="grow">${esc(m.title || "Nouvelle mission")}</span>${run ? '<span class="run-dot" title="Chronomètre en cours"></span>' : ""}</div>
+          <div class="kb-title-row"><span class="grow">${esc(m.title || "Nouveau projet")}</span>${run ? '<span class="run-dot" title="Chronomètre en cours"></span>' : ""}</div>
           <div class="kb-meta">${meta(m)}</div>
           <div class="kb-meta">${dates(m)}</div>
           <div class="kb-actions">
@@ -1153,10 +1229,10 @@ function renderMissions() {
       }).join("");
       return `<div class="kb-col" data-mission-col="${st.code}">
         <div class="kb-head"><span class="grow">${st.label}</span><span class="kb-count">${items.length}</span></div>
-        <div class="kb-body">${cards || '<div class="kb-empty">Aucune mission</div>'}</div></div>`;
+        <div class="kb-body">${cards || '<div class="kb-empty">Aucun projet</div>'}</div></div>`;
     }).join("");
     return head + banner
-      + `<div class="muted" style="font-size:11px;margin-bottom:10px">Glisse une mission vers une autre colonne pour changer son statut, ou utilise ‹ ›.</div>
+      + `<div class="muted" style="font-size:11px;margin-bottom:10px">Glisse un projet vers une autre colonne pour changer son statut, ou utilise ‹ ›.</div>
          <div class="kb-board cols4">${cols}</div>
          <button class="btn fab" data-add-mission>+</button>`;
   }
@@ -1164,40 +1240,310 @@ function renderMissions() {
   const rows = all.map((m) => {
     const run = missionRunning(m);
     return `<div class="row" data-open-mission="${m.id}" style="border-left-color:${run ? "#d23c3c" : "var(--primary)"}">
-      <div class="grow"><div class="r-title">${esc(m.title || "Nouvelle mission")}</div>
+      <div class="grow"><div class="r-title">${esc(m.title || "Nouveau projet")}</div>
         <div class="r-sub">${meta(m)}</div>
         <div class="r-sub">${dates(m)}</div></div>
       ${run ? '<span class="run-dot" title="Chronomètre en cours"></span>' : ""}
       <span class="badge ${m.statusCode}">${statusLabel(m.statusCode)}</span></div>`;
   }).join("");
   return head + banner
-    + `<div class="list">${all.length ? rows : '<div class="center-empty">Aucune mission.</div>'}</div>
+    + `<div class="list">${all.length ? rows : '<div class="center-empty">Aucun projet.</div>'}</div>
        <button class="btn fab" data-add-mission>+</button>`;
 }
+
+// ----------------------------- Projet : fiche à trois vues -----------------------------
+// Résumé · Gestion de projet (tâches par section) · Correspondance (mails liés).
+let projectTab = "resume", projectTabFor = null;
+const PROJECT_TABS = [["resume", "Résumé"], ["gestion", "Gestion de projet"], ["courrier", "Correspondance"]];
+
+function projectTasks(m) { return state.tasks.filter((t) => t.missionId === m.id); }
+const taskDone = (t) => (t.status || "aFaire") === "termine";
+// Avancement d'une tâche : une tâche terminée vaut 100 ; une tâche non terminée
+// ne peut pas afficher 100, même si le champ le dit.
+function taskProgress(t) {
+  if (taskDone(t)) return 100;
+  const p = Number(t.progress);
+  return isFinite(p) ? Math.max(0, Math.min(99, Math.round(p))) : 0;
+}
+function setTaskProgress(t, p) {
+  p = Math.max(0, Math.min(100, Math.round(Number(p) || 0)));
+  t.progress = p;
+  if (p >= 100) t.status = "termine";
+  else if (p > 0 && (t.status || "aFaire") !== "enCours") t.status = "enCours";
+  else if (p === 0 && t.status === "termine") t.status = "aFaire";
+}
+// Avancement du projet : moyenne des avancements de ses tâches (null sans tâche).
+function projectProgress(m) {
+  const ts = projectTasks(m);
+  if (!ts.length) return null;
+  return Math.round(ts.reduce((a, t) => a + taskProgress(t), 0) / ts.length);
+}
+function taskSlots(t) { return state.slots.filter((s) => s.taskId === t.id).sort((a, b) => (a.date || "").localeCompare(b.date || "")); }
+// Provenance d'une tâche : issue d'un mail, planifiée dans l'emploi du temps, ou saisie.
+function taskOrigin(t) {
+  const out = [];
+  if (t.origin === "mail") out.push({ ic: "✉️", label: "Issue d'un mail", link: t.mailLink || "" });
+  const slots = taskSlots(t);
+  const slot = slots.find((s) => s.date >= todayISO()) || slots[slots.length - 1];
+  if (slot) out.push({ ic: "📅", label: `Planifiée le ${fmtDate(slot.date)} à ${fmtMin(slot.start)}` });
+  if (!out.length) out.push({ ic: "✍️", label: "Saisie à la main" });
+  return out;
+}
+const taskSeconds = (m, t) => (m.entries || []).filter((e) => e.taskId === t.id).reduce((a, e) => a + entryElapsed(e), 0);
+const projectRunning = (m) => (m.entries || []).filter((e) => e.timerStartedAt);
+function stopEntry(e) {
+  if (!e.timerStartedAt) return;
+  e.accumulatedSeconds = (e.accumulatedSeconds || 0) + (Date.now() - e.timerStartedAt) / 1000;
+  e.timerStartedAt = null;
+}
+// Lance un chrono sur le projet (« suivi ») ou sur une tâche. On réutilise
+// l'élément du jour s'il existe, pour ne pas multiplier les lignes d'historique.
+function startProjectTimer(m, taskId) {
+  const today = todayISO();
+  m.entries = m.entries || [];
+  let e = m.entries.find((x) => x.date === today && (taskId ? x.taskId === taskId : (x.kind === "suivi" && !x.taskId)));
+  if (!e) {
+    const t = taskId ? state.tasks.find((x) => x.id === taskId) : null;
+    e = { id: uid(), kind: taskId ? "action" : "suivi", title: t ? (t.title || "Tâche") : "Suivi du projet", content: "", date: today, url: "",
+      accumulatedSeconds: 0, timerStartedAt: null, createdAt: Date.now(), taskId: taskId || null };
+    m.entries.push(e);
+  }
+  if (!e.timerStartedAt) e.timerStartedAt = Date.now();
+  if (taskId) { const t = state.tasks.find((x) => x.id === taskId); if (t && (t.status || "aFaire") === "aFaire") t.status = "enCours"; }
+  return e;
+}
+function projectWeekSeconds(m) {
+  const { start, end } = weekInterval(new Date());
+  return (m.entries || []).reduce((a, e) => {
+    const d = e.date ? new Date(e.date + "T12:00:00") : null;
+    return a + ((d && d >= start && d < end) ? entryElapsed(e) : 0);
+  }, 0);
+}
+// Sections d'un projet : celles déclarées, puis celles rencontrées dans les tâches.
+function projectSections(m) {
+  const out = [...(m.sections || [])];
+  projectTasks(m).forEach((t) => { const s = t.section || ""; if (s && out.indexOf(s) === -1) out.push(s); });
+  return out;
+}
+const sortTasks = (ts) => [...ts].sort((a, b) => (taskDone(a) - taskDone(b))
+  || (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31") || (a.createdAt || 0) - (b.createdAt || 0));
 
 function renderMissionDetail(id) {
   const m = state.missions.find((x) => x.id === id);
   if (!m) return renderMissions();
+  if (projectTabFor !== m.id) { projectTab = "resume"; projectTabFor = m.id; }
   const statusOpts = STATUSES.map((s) => `<option value="${s.code}" ${s.code === m.statusCode ? "selected" : ""}>${s.label}</option>`).join("");
+  const running = projectRunning(m);
+  const timerBar = running.length
+    ? running.map((e) => `<div class="run-banner"><span class="run-dot"></span>
+        <span class="grow">⏱ ${esc(e.title || "Suivi du projet")} · <span class="timer running" data-entry-time="${e.id}">${fmtDuration(entryElapsed(e))}</span></span>
+        <button class="btn danger small" data-stop-entry="${e.id}" data-m="${m.id}">■ Arrêter</button></div>`).join("")
+    : `<div class="inline" style="margin-bottom:12px;flex-wrap:wrap">
+        <button class="btn" data-project-timer="${m.id}">▶ Suivi du projet</button>
+        <span class="muted" style="font-size:12px">Temps total : <span class="timer" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span> · cette semaine : ${fmtDuration(projectWeekSeconds(m))}</span></div>`;
+  const tabs = PROJECT_TABS.map(([tid, lbl]) => `<button class="chip ${projectTab === tid ? "active" : ""}" data-ptab="${tid}">${lbl}</button>`).join("");
+  const body = projectTab === "gestion" ? renderProjectGestion(m) : projectTab === "courrier" ? renderProjectCourrier(m) : renderProjectResume(m);
+  return `<button class="back" data-back>‹ Projets</button>
+    <div class="toolbar">
+      <input class="grow" data-bind="missions|${m.id}|title" value="${esc(m.title)}" placeholder="Intitulé du projet" style="font-size:20px;font-weight:700"/>
+      <select data-bind="missions|${m.id}|statusCode" style="width:auto">${statusOpts}</select>
+    </div>
+    ${timerBar}
+    <div class="chip-row" style="margin-bottom:14px">${tabs}</div>
+    ${body}`;
+}
+
+// ---- Résumé ----
+function renderProjectResume(m) {
+  const ts = projectTasks(m);
+  const done = ts.filter(taskDone).length;
+  const enCours = ts.filter((t) => t.status === "enCours").length;
+  const late = ts.filter((t) => !taskDone(t) && t.dueDate && daysUntil(t.dueDate) < 0);
+  const next = sortTasks(ts.filter((t) => !taskDone(t) && t.dueDate && daysUntil(t.dueDate) >= 0))[0];
+  const prog = projectProgress(m);
+  const mails = projectThreads(m).length;
+  const stat = (n, lbl, color) => `<div class="cal-stat"${color ? ` style="border-left:4px solid ${color}"` : ""}><div class="cal-stat-n">${n}</div><div class="cal-stat-l">${lbl}</div></div>`;
   const entries = [...(m.entries || [])].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
   const entriesHtml = entries.length ? entries.map((e) => renderEntry(m.id, e)).join("") : '<div class="muted" style="padding:8px 2px">Aucun élément.</div>';
   const kindButtons = KINDS.map((k) => `<button class="chip" data-add-entry="${k.code}" data-m="${m.id}">${k.ic} ${k.label}</button>`).join("");
-  return `<button class="back" data-back>‹ Missions</button>
-    <div class="toolbar">
-      <input class="grow" data-bind="missions|${m.id}|title" value="${esc(m.title)}" placeholder="Intitulé" style="font-size:20px;font-weight:700"/>
-      <select data-bind="missions|${m.id}|statusCode" style="width:auto">${statusOpts}</select>
+  return `<div class="cal-stats">
+      ${stat(prog == null ? "—" : prog + " %", "avancement", prog == null ? "" : "var(--primary)")}
+      ${stat(`${done}/${ts.length}`, `tâches terminées${enCours ? ` · ${enCours} en cours` : ""}`)}
+      ${stat(late.length, "en retard", late.length ? "#d23c3c" : "")}
+      ${stat(next ? fmtDate(next.dueDate) : "—", next ? `prochaine échéance · ${esc(next.title || "tâche")}` : "prochaine échéance")}
+      ${stat(fmtDuration(missionTotal(m)), "temps passé")}
+      ${stat(mails, "fils de correspondance")}
     </div>
-    <label class="field"><span>Société</span>${companySelect(`missions|${m.id}|companyId`, m.companyId)}</label>
-    <label class="field"><span>Date de démarrage</span><input type="date" data-bind="missions|${m.id}|startDate" data-rerender value="${esc(missionStart(m))}"/></label>
-    <div class="muted" style="font-size:12px;margin-top:-6px">Dernier événement : ${missionLast(m) ? esc(fmtDate(missionLast(m))) : "—"}</div>
-    <div class="section-h">Historique de la mission</div>
+    ${prog != null ? `<div class="pm-bar" style="margin:8px 0 14px"><div class="pm-bar-fill" style="width:${prog}%"></div></div>` : ""}
+    <div class="card">
+      <label class="field"><span>Société</span>${companySelect(`missions|${m.id}|companyId`, m.companyId)}</label>
+      <label class="field"><span>Date de démarrage</span><input type="date" data-bind="missions|${m.id}|startDate" data-rerender value="${esc(missionStart(m))}"/></label>
+      <label class="field"><span>Objectif / description</span><textarea data-bind="missions|${m.id}|summary" placeholder="En deux lignes : de quoi il s'agit, ce qu'on attend.">${esc(m.summary || "")}</textarea></label>
+      <div class="muted" style="font-size:12px">Dernier événement : ${missionLast(m) ? esc(fmtDate(missionLast(m))) : "—"}</div>
+    </div>
+    ${late.length ? `<div class="section-h" style="color:#d23c3c">⚠️ En retard <span class="muted">(${late.length})</span></div>
+      <div class="list">${late.map((t) => `<div class="row" data-goto-gestion style="border-left-color:#d23c3c"><div class="grow"><div class="r-title">${esc(t.title || "Tâche")}</div><div class="r-sub">${esc(deadlineInfo(t.dueDate, false).label)}${t.assignee ? ` · ${esc(t.assignee)}` : ""}</div></div><span class="muted">›</span></div>`).join("")}</div>` : ""}
+    <div class="section-h">Historique du projet</div>
     <div class="list">${entriesHtml}</div>
     <div class="chip-row" style="margin-top:12px">${kindButtons}</div>
-    <div class="section-h">Suivi du temps</div>
-    <div class="card"><div class="inline"><strong class="grow">Temps total</strong>
-      <span class="timer ${(m.entries || []).some((e) => e.timerStartedAt) ? "running" : ""}" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span></div></div>
-    <div style="margin-top:22px"><button class="btn danger small" data-del-mission="${m.id}">Supprimer la mission</button></div>`;
+    <div style="margin-top:22px"><button class="btn danger small" data-del-mission="${m.id}">Supprimer le projet</button></div>`;
 }
+
+// ---- Gestion de projet ----
+function renderProjectGestion(m) {
+  const ts = projectTasks(m);
+  const open = ts.filter((t) => !taskDone(t));
+  const late = open.filter((t) => t.dueDate && daysUntil(t.dueDate) < 0);
+  const soon = open.filter((t) => t.dueDate && daysUntil(t.dueDate) >= 0 && daysUntil(t.dueDate) <= 7);
+  const noDue = open.filter((t) => !t.dueDate);
+  const alerts = [
+    late.length ? `<span class="pm-alert late">⚠️ ${late.length} en retard</span>` : "",
+    soon.length ? `<span class="pm-alert soon">⏳ ${soon.length} sous 7 jours</span>` : "",
+    noDue.length ? `<span class="pm-alert none">📭 ${noDue.length} sans date limite</span>` : "",
+    !late.length && !soon.length && !noDue.length && open.length ? '<span class="pm-alert ok">✓ Aucune alerte</span>' : ""
+  ].filter(Boolean).join(" ");
+  const names = {};
+  state.contacts.forEach((c) => { const n = contactName(c); if (n) names[n] = 1; });
+  state.tasks.forEach((t) => { if (t.assignee) names[t.assignee] = 1; });
+  const datalist = `<datalist id="assigneeList"><option value="Moi"></option>${Object.keys(names).sort((a, b) => a.localeCompare(b, "fr")).map((n) => `<option value="${esc(n)}"></option>`).join("")}</datalist>`;
+  const progOpts = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+  const row = (t) => {
+    const done = taskDone(t);
+    const di = deadlineInfo(t.dueDate, done);
+    const p = taskProgress(t);
+    const running = (m.entries || []).some((e) => e.taskId === t.id && e.timerStartedAt);
+    const secs = taskSeconds(m, t);
+    const origin = taskOrigin(t).map((o) => o.link
+      ? `<a class="pm-tag" href="${esc(o.link)}" target="_blank" rel="noopener">${o.ic} ${esc(o.label)}</a>`
+      : `<span class="pm-tag">${o.ic} ${esc(o.label)}</span>`).join(" ");
+    return `<tr class="${done ? "done" : ""}" style="border-left:4px solid ${di.color}">
+      <td class="pm-title"><input class="flat-input" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
+        <div class="pm-origin">${origin}</div></td>
+      <td><input class="flat-input" list="assigneeList" data-taskfield="assignee" data-t="${t.id}" value="${esc(t.assignee || "")}" placeholder="—"/></td>
+      <td class="pm-due"><input type="date" data-taskdue="${t.id}" value="${esc(t.dueDate || "")}"/>
+        <div class="pm-dl" style="color:${di.muted ? "var(--muted)" : di.color}">${di.muted ? esc(di.label) : "⬤ " + esc(di.label)}</div></td>
+      <td class="pm-prog"><select data-taskprog="${t.id}">${progOpts.map((v) => `<option value="${v}" ${v === p || (p > 0 && v === Math.round(p / 10) * 10 && v !== 100 && !done) ? "selected" : ""}>${v} %</option>`).join("")}</select>
+        <div class="pm-bar"><div class="pm-bar-fill" style="width:${p}%"></div></div></td>
+      <td class="pm-time"><span class="timer ${running ? "running" : ""}">${secs ? fmtDurationShort(secs) : "—"}</span>
+        <button class="btn ${running ? "danger" : "ghost"} small" data-task-timer="${t.id}" data-m="${m.id}" title="${running ? "Arrêter le chrono" : "Lancer le chrono sur cette tâche"}">${running ? "■" : "▶"}</button></td>
+      <td class="pm-x"><button class="btn ghost small" data-del-task="${t.id}" title="Supprimer">✕</button></td>
+    </tr>`;
+  };
+  const sections = projectSections(m);
+  const bySection = (name) => sortTasks(ts.filter((t) => (t.section || "") === name));
+  const block = (name) => {
+    const items = bySection(name);
+    const head = name
+      ? `<tr class="pm-section"><td colspan="6"><div class="inline"><input class="flat-input grow" data-section-name="${esc(name)}" data-m="${m.id}" value="${esc(name)}"/>
+          <span class="muted" style="font-size:12px">${items.filter(taskDone).length}/${items.length}</span>
+          <button class="btn ghost small" data-add-ptask="${m.id}" data-section="${esc(name)}">+ Tâche</button>
+          <button class="btn ghost small" data-del-section="${esc(name)}" data-m="${m.id}" title="Retirer la section (les tâches restent)">✕</button></div></td></tr>`
+      : `<tr class="pm-section"><td colspan="6"><div class="inline"><span class="grow muted">Sans section</span>
+          <button class="btn ghost small" data-add-ptask="${m.id}" data-section="">+ Tâche</button></div></td></tr>`;
+    if (!name && !items.length && sections.length) return "";
+    return head + (items.map(row).join("") || `<tr><td colspan="6" class="muted" style="padding:8px 12px;font-size:12px">Aucune tâche.</td></tr>`);
+  };
+  const body = sections.map(block).join("") + block("");
+  return `<div class="inline" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">${alerts || '<span class="muted" style="font-size:12px">Aucune tâche pour l\'instant.</span>'}
+      <span class="grow"></span>
+      <button class="btn secondary small" data-add-section="${m.id}">+ Section</button>
+      <button class="btn small" data-add-ptask="${m.id}" data-section="">+ Tâche</button></div>
+    ${datalist}
+    <div class="table-wrap"><table class="pm-table">
+      <thead><tr><th>Tâche</th><th>Personne en charge</th><th>Date limite</th><th>Avancement</th><th>Temps</th><th></th></tr></thead>
+      <tbody>${body}</tbody></table></div>
+    <div class="muted" style="font-size:11px;margin-top:8px">Une tâche à 100 % passe « Terminée » ; une tâche avec un avancement passe « En cours ». Les tâches se retrouvent aussi dans l'onglet Tâches et, si elles ont une date limite ou un créneau, dans Planning.</div>`;
+}
+
+// ---- Correspondance ----
+// Fils de discussion de toutes les boîtes, avec l'étiquette de la boîte.
+function mailThreads() {
+  const out = [];
+  Object.keys(mailStore).forEach((k) => {
+    const d = mailStore[k]; if (!d) return;
+    const box = mailboxLabel(k);
+    (d.threads || []).forEach((th) => out.push(Object.assign({ box, boxId: k }, th)));
+  });
+  return out;
+}
+function mailboxLabel(id) {
+  if (id === "main") { const d = mailStore.main; return (d && d.mailbox) || "Boîte principale"; }
+  const b = (state.mailboxes || []).find((x) => x.id === id);
+  return b ? (b.label || b.email) : id;
+}
+// Fils liés à un projet : mots-clés (titre par défaut) dans l'objet ou l'extrait,
+// ou un participant parmi les adresses du projet / des contacts de sa société.
+function projectMailEmails(m) {
+  const set = {};
+  state.contacts.forEach((c) => { if (m.companyId && c.companyId === m.companyId && c.email) set[String(c.email).toLowerCase()] = 1; });
+  String(m.mailEmails || "").split(/[,;\s]+/).forEach((e) => { e = e.trim().toLowerCase(); if (e) set[e] = 1; });
+  return set;
+}
+function projectKeywords(m) {
+  const src = String(m.mailKeywords || "").trim() || String(m.title || "");
+  return src.split(",").map((k) => noAccents(k).trim()).filter((k) => k.length >= 3);
+}
+// Sans mots-clés explicites : les mots significatifs du titre (4 lettres et plus)
+// doivent tous apparaître, dans n'importe quel ordre.
+function projectTitleWords(m) {
+  if (String(m.mailKeywords || "").trim()) return [];
+  const w = noAccents(m.title || "").split(/[^a-z0-9]+/).filter((x) => x.length >= 4);
+  return w.length >= 2 ? w : [];
+}
+function projectThreads(m) {
+  const kws = projectKeywords(m), words = projectTitleWords(m), emails = projectMailEmails(m);
+  const excluded = m.mailExclude || [];
+  return mailThreads().filter((th) => {
+    if (excluded.indexOf(th.id) > -1) return false;
+    const hay = noAccents((th.subject || "") + " " + (th.snippet || ""));
+    if (kws.some((k) => hay.indexOf(k) > -1)) return true;
+    if (words.length && words.every((w) => hay.indexOf(w) > -1)) return true;
+    if (emails[(th.from || "").toLowerCase()]) return true;
+    return (th.people || []).some((p) => emails[(p.email || "").toLowerCase()]);
+  }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+}
+function renderProjectCourrier(m) {
+  const threads = projectThreads(m);
+  const anyIndex = mailThreads().length > 0;
+  const emailEntries = (m.entries || []).filter((e) => e.kind === "email").sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const linkedIds = {};
+  state.tasks.forEach((t) => { if (t.mailThreadId) linkedIds[t.mailThreadId] = 1; });
+  const row = (th) => {
+    const d = th.date ? new Date(th.date) : null;
+    const when = d ? d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" }) : "";
+    const sub = [th.mine ? "📤 moi" : esc(th.fromName || th.from || ""), when, th.count > 1 ? `${th.count} messages` : null, `<span class="pm-tag">${esc(th.box)}</span>`].filter(Boolean).join(" · ");
+    return `<div class="row mail-row" style="cursor:default;border-left-color:${th.unread ? "var(--primary)" : "var(--line)"}">
+      <span class="ic">✉️</span>
+      <div class="grow"><div class="r-title">${esc(th.subject)}${linkedIds[th.id] ? ' <span class="pm-tag">✅ tâche créée</span>' : ""}</div>
+        <div class="r-sub">${sub}</div>
+        ${th.snippet ? `<div class="mail-snippet">${esc(th.snippet)}</div>` : ""}</div>
+      <div class="mail-actions">
+        ${th.link ? `<a class="btn ghost small" href="${esc(th.link)}" target="_blank" rel="noopener">Ouvrir</a>` : ""}
+        <button class="btn ghost small" data-mail-task="${esc(th.id)}" data-m="${m.id}" title="Créer une tâche à partir de ce mail">→ Tâche</button>
+        <button class="btn ghost small" data-mail-entry="${esc(th.id)}" data-m="${m.id}" title="Ajouter à l'historique du projet">→ Historique</button>
+        <button class="btn ghost small" data-mail-exclude="${esc(th.id)}" data-m="${m.id}" title="Ce mail ne concerne pas ce projet">✕</button>
+      </div></div>`;
+  };
+  const conf = `<div class="card" style="margin-bottom:12px">
+      <label class="field"><span>Mots-clés (séparés par des virgules) — par défaut, le titre du projet</span>
+        <input data-bind="missions|${m.id}|mailKeywords" data-rerender value="${esc(m.mailKeywords || "")}" placeholder="${esc(m.title || "mot-clé")}"/></label>
+      <label class="field"><span>Adresses e-mail liées au projet (en plus des contacts de la société)</span>
+        <input data-bind="missions|${m.id}|mailEmails" data-rerender value="${esc(m.mailEmails || "")}" placeholder="prenom@client.fr, autre@partenaire.com"/></label>
+      <div class="muted" style="font-size:12px">${Object.keys(projectMailEmails(m)).length} adresse(s) suivie(s) · ${projectKeywords(m).length} mot(s)-clé(s). ${(state.mailboxes || []).length + 1} boîte(s) mail lue(s) — gérer dans Relances → Boîtes mail.</div>
+    </div>`;
+  let list;
+  if (!(window.DriveSync && DriveSync.isConnected())) list = '<div class="center-empty">Connecte-toi à Google Drive pour lire la correspondance.</div>';
+  else if (!anyIndex) list = `<div class="center-empty">${mailLoading ? "Lecture des boîtes mail…" : "Aucun index de mails disponible.<br>Installe (ou mets à jour) le script « Mails » dans chaque boîte : il indexe les fils récents toutes les heures. Voir Relances → Boîtes mail."}</div>`;
+  else list = threads.length ? `<div class="list">${threads.map(row).join("")}</div>` : '<div class="center-empty">Aucun mail ne correspond aux mots-clés ni aux adresses de ce projet.</div>';
+  const manual = emailEntries.length
+    ? `<div class="section-h">Mails notés dans l'historique <span class="muted">(${emailEntries.length})</span></div><div class="list">${emailEntries.map((e) => renderEntry(m.id, e)).join("")}</div>`
+    : "";
+  return `${conf}
+    <div class="section-h">✉️ Correspondance <span class="muted">(${threads.length})</span>
+      <button class="btn ghost small" data-mail-refresh style="margin-left:8px">${mailLoading ? "…" : "↻ Rafraîchir"}</button></div>
+    ${list}${manual}`;
+}
+
 function renderEntry(mid, e) {
   const k = kindMeta(e.kind), running = !!e.timerStartedAt;
   const urlLink = validURL(e.url) ? `<a class="btn ghost small" href="${esc(e.url)}" target="_blank" rel="noopener">↗ Ouvrir</a>` : (e.url ? '<span class="muted" style="font-size:12px">Lien invalide</span>' : "");
@@ -1503,7 +1849,7 @@ function financeRecurrences() {
       <label class="field"><span>Fréquence</span><select data-recfield="frequency" data-rec="${rec.id}">${freqOpts}</select></label>
       <label class="field"><span>Première échéance</span><input type="date" data-recfield="anchorDate" data-rec="${rec.id}" value="${esc(rec.anchorDate || todayISO())}"/></label>`;
     if (rec.kind === "task") {
-      const misOpts = ['<option value="">Aucune mission</option>'].concat(sortedMissions().map((m) => `<option value="${m.id}" ${m.id === rec.missionId ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`)).join("");
+      const misOpts = ['<option value="">Aucun projet</option>'].concat(sortedMissions().map((m) => `<option value="${m.id}" ${m.id === rec.missionId ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`)).join("");
       fields += `<label class="field"><span>Mission</span><select data-recfield="missionId" data-rec="${rec.id}">${misOpts}</select></label>`;
     } else {
       const dirOpts = DIRECTIONS.map((d) => `<option value="${d.code}" ${d.code === rec.direction ? "selected" : ""}>${d.label}</option>`).join("");
@@ -1859,7 +2205,7 @@ function renderDashboard() {
     <div class="section-h">Trésorerie consolidée (TTC)</div>
     ${grid(card("Disponible", euros(treasuryNow(now)), "aujourd'hui", "#4dc8bb") + card("Prév. 30 j", euros(treasuryProjected(now, 30)), "", "#a2d28c") + card("Prév. 60 j", euros(treasuryProjected(now, 60)), "", "#a2d28c") + card("Prév. 90 j", euros(treasuryProjected(now, 90)), "", "#a2d28c"))}
     <div class="section-h">À traiter</div>
-    ${grid(card("Clients en retard", String(overdue.length), euros(overdue.reduce((t, v) => t + invTTC(v), 0)), overdue.length ? "#d23c3c" : "#4dc8bb") + card("Fournisseurs à payer", String(toPay.length), euros(toPay.reduce((t, v) => t + invTTC(v), 0)), "#e9db65") + card("Missions en cours", String(missionsEnCours), "", "#18c1d8") + card("Sociétés", String(state.companies.length), `${state.contacts.length} contacts`, "#18c1d8"))}
+    ${grid(card("Clients en retard", String(overdue.length), euros(overdue.reduce((t, v) => t + invTTC(v), 0)), overdue.length ? "#d23c3c" : "#4dc8bb") + card("Fournisseurs à payer", String(toPay.length), euros(toPay.reduce((t, v) => t + invTTC(v), 0)), "#e9db65") + card("Projets en cours", String(missionsEnCours), "", "#18c1d8") + card("Sociétés", String(state.companies.length), `${state.contacts.length} contacts`, "#18c1d8"))}
     ${alerts.length ? `<div class="section-h">Alertes</div><div class="card">${alerts.map((a) => `<div style="padding:4px 0">⚠️ ${esc(a)}</div>`).join("")}</div>` : ""}
     <div class="section-h">Trésorerie prévisionnelle (90 jours)</div>
     <div class="card">${svgLineChart(Array.from({ length: 19 }, (_, i) => ({ x: i * 5, y: treasuryProjected(now, i * 5) })), { color: "#18c1d8", xTicks: [{ x: 0, label: "auj." }, { x: 30, label: "30j" }, { x: 60, label: "60j" }, { x: 90, label: "90j" }] })}</div>
@@ -2062,7 +2408,7 @@ function renderTime() {
         : '<div class="muted">—</div>'}</div>`;
   }
   const moyenne = r.kind === "mois" && per.length
-    ? `<div class="muted" style="font-size:11px;margin-top:6px">${per.length} mission(s) · moyenne ${fmtDuration(total / per.length)} par mission</div>` : "";
+    ? `<div class="muted" style="font-size:11px;margin-top:6px">${per.length} projet(s) · moyenne ${fmtDuration(total / per.length)} par projet</div>` : "";
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Temps</div>
       <button class="btn secondary small" data-export-temps-csv>⬇ CSV</button>
       <button class="btn secondary small" data-export-temps-pdf>📄 PDF</button></div>
@@ -2076,14 +2422,14 @@ function renderTime() {
       <button class="btn secondary small" data-time-now>${r.kind === "mois" ? "Ce mois" : "Cette semaine"}</button></div>
     <div class="card"><div class="inline"><strong class="grow">Temps total</strong>
       <span class="timer" style="color:var(--primary);font-size:18px">${fmtDuration(total)}</span></div>${moyenne}</div>
-    <div class="section-h">Par mission</div><div class="card">${rows}</div>
+    <div class="section-h">Par projet</div><div class="card">${rows}</div>
     ${weekly}`;
 }
 function weekInterval(date) { const d = new Date(date); d.setHours(0, 0, 0, 0); const day = (d.getDay() + 6) % 7; const start = new Date(d); start.setDate(d.getDate() - day); const end = new Date(start); end.setDate(start.getDate() + 7); return { start, end }; }
 
 // ----------------------------- Tâches -----------------------------
 function missionSelect(bind, current) {
-  const opts = ['<option value="">Aucune mission</option>'].concat(
+  const opts = ['<option value="">Aucun projet</option>'].concat(
     sortedMissions().map((m) => `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`)
   ).join("");
   return `<select data-bind="${bind}">${opts}</select>`;
@@ -2127,7 +2473,8 @@ function renderTasks() {
     const cards = items.map((t) => {
       const done = st.code === "termine";
       const di = deadlineInfo(t.dueDate, done);
-      const mission = t.missionId ? `<div class="kb-mission">${esc(missionTitle(t.missionId))}</div>` : "";
+      const projOpts = ['<option value="">— Sans projet —</option>'].concat(sortedMissions().map((m) => `<option value="${m.id}" ${m.id === t.missionId ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`)).join("");
+      const mission = `<select class="flat-input kb-mission" data-task-mission="${t.id}" title="Projet">${projOpts}</select>${t.assignee ? `<div class="kb-mission">👤 ${esc(t.assignee)}</div>` : ""}`;
       return `<div class="kb-card" data-task-card="${t.id}" style="border-left-color:${di.color}">
         <div class="kb-grip" title="Glisser vers une autre colonne">⠿</div>
         <input class="flat-input kb-title" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
@@ -2189,7 +2536,7 @@ function renderActionDetail(id) {
     <div class="page-title">${esc(a.title || "Action")}</div>
     <div class="card">
       <label class="field"><span>Objet</span><input data-bind="actions|${a.id}|title" value="${esc(a.title)}" placeholder="Ex. Recevoir le bilan 2025"/></label>
-      <label class="field"><span>Projet / mission</span>${missionSelect(`actions|${a.id}|missionId`, a.missionId)}</label>
+      <label class="field"><span>Projet</span>${missionSelect(`actions|${a.id}|missionId`, a.missionId)}</label>
       <label class="field"><span>Projet (libre, si hors mission)</span><input data-bind="actions|${a.id}|projectName" value="${esc(a.projectName)}"/></label>
       <label class="field"><span>Documents / informations à recevoir</span><textarea data-bind="actions|${a.id}|request">${esc(a.request)}</textarea></label>
       <label class="field"><span>Interlocuteur (dans les contacts)</span><select data-action-contact="${a.id}" data-rerender>${ctOpts}</select></label>
@@ -2699,7 +3046,7 @@ function renderRendezvousDetail(id) {
       <label class="field"><span>Lieu / lien</span><input data-bind="rendezvous|${r.id}|location" value="${esc(r.location)}" placeholder="Adresse, visio…"/></label>
       <label class="field"><span>Avec (contact)</span><select data-rdv-contact="${r.id}" data-rerender>${ctOpts}</select></label>
       <label class="field"><span>Avec (libre)</span><input data-bind="rendezvous|${r.id}|withName" value="${esc(r.withName)}"/></label>
-      <label class="field"><span>Mission / projet</span>${missionSelect(`rendezvous|${r.id}|missionId`, r.missionId)}</label>
+      <label class="field"><span>Projet</span>${missionSelect(`rendezvous|${r.id}|missionId`, r.missionId)}</label>
       <label class="field"><span>Notes</span><textarea data-bind="rendezvous|${r.id}|notes">${esc(r.notes)}</textarea></label>
     </div>
     <div style="margin-top:18px"><button class="btn danger small" data-del-rdv="${r.id}">Supprimer le rendez-vous</button></div>`;
@@ -2914,7 +3261,7 @@ function renderTimetable() {
 function slotEditor(id) {
   const s = state.slots.find((x) => x.id === id); if (!s) return;
   const task = s.taskId ? state.tasks.find((t) => t.id === s.taskId) : null;
-  const misOpts = ['<option value="">Aucune mission</option>'].concat(sortedMissions().map((m) => `<option value="${m.id}" ${m.id === s.missionId ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`)).join("");
+  const misOpts = ['<option value="">Aucun projet</option>'].concat(sortedMissions().map((m) => `<option value="${m.id}" ${m.id === s.missionId ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`)).join("");
   showModal(`<div class="modal-head"><strong class="grow">Créneau</strong><button class="btn ghost small" data-modal-close>✕</button></div>
     <label class="field"><span>Intitulé</span><input id="slTitle" value="${esc(s.title)}"/></label>
     <label class="field"><span>Date</span><input type="date" id="slDate" value="${esc(s.date)}"/></label>
@@ -2922,7 +3269,7 @@ function slotEditor(id) {
       <label class="field grow"><span>Début</span><input type="time" id="slStart" step="300" value="${String(Math.floor(s.start / 60)).padStart(2, "0")}:${String(s.start % 60).padStart(2, "0")}"/></label>
       <label class="field grow"><span>Durée (min)</span><input type="number" id="slDur" min="${MIN_DUR}" step="${SNAP}" value="${s.duration}"/></label>
     </div>
-    <label class="field"><span>Mission</span><select id="slMission">${misOpts}</select></label>
+    <label class="field"><span>Projet</span><select id="slMission">${misOpts}</select></label>
     <label class="field"><span>Notes</span><textarea id="slNotes">${esc(s.notes)}</textarea></label>
     ${task ? `<div class="muted" style="font-size:12px">Lié à la tâche « ${esc(task.title || "")} » · statut : <strong>${esc(taskStatusLabel(task.status))}</strong>.</div>` : ""}
     <div class="inline" style="margin-top:12px">
@@ -2976,7 +3323,7 @@ function wire() {
   c.querySelectorAll("[data-add-invoice]").forEach((b) => b.onclick = () => { const x = { id: uid(), title: "", reference: "", direction: "recette", status: "aEmettre", amount: 0, vatRate: 20, startDate: todayISO(), hasDueDate: false, dueDate: "", paymentDate: "", companyId: null, contactId: null, categoryName: "", payMode: "compte", accountId: null, associateId: null, receiptUrl: "", noReceipt: false }; state.invoices.push(x); save(); openDetail("finances", x.id); });
 
   // suppressions
-  c.querySelectorAll("[data-del-mission]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette mission ?")) { state.missions = state.missions.filter((m) => m.id !== b.dataset.delMission); save(); go("missions"); } });
+  c.querySelectorAll("[data-del-mission]").forEach((b) => b.onclick = () => { if (confirm("Supprimer ce projet ? Ses tâches sont conservées, sans projet.")) { state.tasks.forEach((t) => { if (t.missionId === b.dataset.delMission) t.missionId = null; }); state.missions = state.missions.filter((m) => m.id !== b.dataset.delMission); save(); go("missions"); } });
   c.querySelectorAll("[data-del-contact]").forEach((b) => b.onclick = () => { if (confirm("Supprimer ce contact ?")) { state.contacts = state.contacts.filter((x) => x.id !== b.dataset.delContact); save(); go("contacts"); } });
   c.querySelectorAll("[data-del-company]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette société ?")) { state.companies = state.companies.filter((x) => x.id !== b.dataset.delCompany); save(); go("groupe"); } });
   c.querySelectorAll("[data-del-invoice]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette facture ?")) { state.invoices = state.invoices.filter((x) => x.id !== b.dataset.delInvoice); save(); view.detailId = null; go("finances"); } });
@@ -3255,9 +3602,71 @@ function wire() {
   c.querySelectorAll("[data-md-bg]").forEach((b) => b.onclick = () => { reader.bg = b.dataset.mdBg; reader.customBg = ""; saveReader(); render(); });
   const mdCustom = c.querySelector("#mdCustom"); if (mdCustom) mdCustom.onchange = () => { reader.customBg = mdCustom.value; saveReader(); render(); };
 
-  // relances (mails)
-  const mailRefresh = c.querySelector("[data-mail-refresh]"); if (mailRefresh) mailRefresh.onclick = loadMails;
-  if (view.section === "relances" && !mailData && !mailLoading && window.DriveSync && DriveSync.isConnected()) loadMails();
+  // relances (mails) — et correspondance des projets
+  c.querySelectorAll("[data-mail-refresh]").forEach((b) => b.onclick = loadMails);
+  if (mailVisible() && !mailData && !mailLoading && Date.now() - mailLoadedAt > MAIL_RETRY && window.DriveSync && DriveSync.isConnected()) loadMails();
+  const addMb = c.querySelector("[data-add-mailbox]");
+  if (addMb) addMb.onclick = () => addMailbox((document.getElementById("mbLabel") || {}).value, (document.getElementById("mbEmail") || {}).value);
+  c.querySelectorAll("[data-del-mailbox]").forEach((b) => b.onclick = () => {
+    if (!confirm("Retirer cette boîte ? Le fichier d'analyse reste sur ton Drive.")) return;
+    state.mailboxes = (state.mailboxes || []).filter((x) => x.id !== b.dataset.delMailbox); delete mailStore[b.dataset.delMailbox]; save(); render();
+  });
+  c.querySelectorAll("[data-mailbox-help]").forEach((b) => b.onclick = () => { const mb = (state.mailboxes || []).find((x) => x.id === b.dataset.mailboxHelp); if (mb) mailboxHelp(mb); });
+
+  // ---- Projet : onglets, chronos, gestion, correspondance --------------------
+  c.querySelectorAll("[data-ptab]").forEach((b) => b.onclick = () => { projectTab = b.dataset.ptab; render(); });
+  c.querySelectorAll("[data-goto-gestion]").forEach((r) => r.onclick = () => { projectTab = "gestion"; render(); });
+  c.querySelectorAll("[data-project-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.projectTimer); if (!m) return; startProjectTimer(m, null); save(); render(); toast("Chrono lancé sur le projet ▶"); });
+  c.querySelectorAll("[data-task-timer]").forEach((b) => b.onclick = () => {
+    const m = findMission(b.dataset.m); if (!m) return;
+    const run = (m.entries || []).find((e) => e.taskId === b.dataset.taskTimer && e.timerStartedAt);
+    if (run) { stopEntry(run); toast("Chrono arrêté ■"); } else { startProjectTimer(m, b.dataset.taskTimer); toast("Chrono lancé sur la tâche ▶"); }
+    save(); render();
+  });
+  c.querySelectorAll("[data-stop-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.stopEntry); if (e) { stopEntry(e); save(); render(); } });
+  c.querySelectorAll("[data-add-ptask]").forEach((b) => b.onclick = () => {
+    state.tasks.push({ id: uid(), title: "", status: "aFaire", missionId: b.dataset.addPtask, section: b.dataset.section || "", assignee: "", progress: 0, origin: "manuel", dueDate: "", createdAt: Date.now() });
+    save(); render();
+  });
+  c.querySelectorAll("[data-add-section]").forEach((b) => b.onclick = () => {
+    const name = (prompt("Nom de la section") || "").trim(); if (!name) return;
+    const m = findMission(b.dataset.addSection); if (!m) return;
+    m.sections = m.sections || []; if (m.sections.indexOf(name) === -1) m.sections.push(name);
+    save(); render();
+  });
+  c.querySelectorAll("[data-section-name]").forEach((el) => el.onchange = () => {
+    const m = findMission(el.dataset.m); if (!m) return;
+    const from = el.dataset.sectionName, to = el.value.trim(); if (!to || to === from) { render(); return; }
+    m.sections = (m.sections || []).map((x) => (x === from ? to : x));
+    if (m.sections.indexOf(to) === -1) m.sections.push(to);
+    projectTasks(m).forEach((t) => { if ((t.section || "") === from) t.section = to; });
+    save(); render();
+  });
+  c.querySelectorAll("[data-del-section]").forEach((b) => b.onclick = () => {
+    const m = findMission(b.dataset.m); if (!m) return;
+    const name = b.dataset.delSection;
+    m.sections = (m.sections || []).filter((x) => x !== name);
+    projectTasks(m).forEach((t) => { if ((t.section || "") === name) t.section = ""; });
+    save(); render();
+  });
+  c.querySelectorAll("[data-taskprog]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskprog); if (t) { setTaskProgress(t, el.value); save(); render(); } });
+  c.querySelectorAll("[data-task-mission]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskMission); if (t) { t.missionId = el.value || null; save(); render(); } });
+  c.querySelectorAll("[data-mail-task]").forEach((b) => b.onclick = () => {
+    const m = findMission(b.dataset.m); const th = mailThreads().find((x) => x.id === b.dataset.mailTask); if (!m || !th) return;
+    state.tasks.push({ id: uid(), title: th.subject || "Mail", status: "aFaire", missionId: m.id, section: "", assignee: "", progress: 0, origin: "mail", mailLink: th.link || "", mailThreadId: th.id, mailSubject: th.subject || "", dueDate: "", createdAt: Date.now() });
+    save(); projectTab = "gestion"; render(); toast("Tâche créée à partir du mail ✓");
+  });
+  c.querySelectorAll("[data-mail-entry]").forEach((b) => b.onclick = () => {
+    const m = findMission(b.dataset.m); const th = mailThreads().find((x) => x.id === b.dataset.mailEntry); if (!m || !th) return;
+    m.entries = m.entries || [];
+    m.entries.push({ id: uid(), kind: "email", title: th.subject || "Mail", content: th.snippet || "", date: (th.date || "").slice(0, 10) || todayISO(), url: th.link || "", accumulatedSeconds: 0, timerStartedAt: null, createdAt: Date.now() });
+    save(); render(); toast("Mail ajouté à l'historique ✓");
+  });
+  c.querySelectorAll("[data-mail-exclude]").forEach((b) => b.onclick = () => {
+    const m = findMission(b.dataset.m); if (!m) return;
+    m.mailExclude = m.mailExclude || []; if (m.mailExclude.indexOf(b.dataset.mailExclude) === -1) m.mailExclude.push(b.dataset.mailExclude);
+    save(); render();
+  });
 
   // recherche globale
   const gs = c.querySelector("#globalSearch");
@@ -3458,7 +3867,7 @@ function wireKanban(c) {
     (id, code) => { const t = state.tasks.find((x) => x.id === id); if (t) { t.status = code; save(); render(); } });
   // tableau des missions
   wireBoardDnD(c, "data-mission-card", "data-mission-col",
-    (id) => { const m = findMission(id); return m ? (m.title || "Mission") : null; },
+    (id) => { const m = findMission(id); return m ? (m.title || "Projet") : null; },
     (id) => { const m = findMission(id); return m ? (m.statusCode || "aDemarrer") : ""; },
     (id, code) => { const m = findMission(id); if (m) { m.statusCode = code; save(); render(); } });
 }
@@ -3604,7 +4013,7 @@ function importJSON(text) {
   (data.recurrences || []).forEach((r) => state.recurrences.push({ id: uid(), kind: r.kind === "task" ? "task" : "invoice", active: r.active !== false, title: r.title || "", frequency: (FREQS.some((f) => f.code === r.frequency) ? r.frequency : "mensuelle"), anchorDate: (r.anchorDate || "").slice(0, 10) || todayISO(), lastGenerated: (r.lastGenerated || "").slice(0, 10) || null, direction: r.direction === "recette" ? "recette" : "depense", amount: Number(r.amount) || 0, vatRate: r.vatRate == null ? 20 : Number(r.vatRate), categoryName: r.categoryName || "", companyId: compByName[r.companyName] || null, missionId: missionByTitle[r.missionTitle] || null }));
 
   save();
-  alert(`Import terminé : ${state.companies.length} société(s), ${state.contacts.length} contact(s), ${state.invoices.length} facture(s), ${state.missions.length} mission(s).`);
+  alert(`Import terminé : ${state.companies.length} société(s), ${state.contacts.length} contact(s), ${state.invoices.length} facture(s), ${state.missions.length} projet(s).`);
   go("dashboard");
 }
 function exportJSON() {
@@ -3821,7 +4230,7 @@ function reportTemps() {
   const rows = per.map((p) => `<tr><td>${esc(p.title)}</td><td class="num">${(p.s / 3600).toFixed(2).replace(".", ",")}</td><td class="num">${fmtDuration(p.s)}</td></tr>`).join("");
   const titre = r.kind === "mois" ? `Mois de ${r.label}` : `Semaine du ${fmtDate(iso(r.start))} au ${fmtDate(iso(new Date(r.end - 86400000)))}`;
   return `<div class="rep-date">${esc(titre)}</div>
-    <table class="rep-table"><thead><tr><th>Mission</th><th class="num">Heures</th><th class="num">Durée</th></tr></thead><tbody>
+    <table class="rep-table"><thead><tr><th>Projet</th><th class="num">Heures</th><th class="num">Durée</th></tr></thead><tbody>
     ${rows || '<tr><td colspan="3">Aucun temps sur cette période.</td></tr>'}
     <tr class="rep-total"><td>Total</td><td class="num">${(total / 3600).toFixed(2).replace(".", ",")}</td><td class="num">${fmtDuration(total)}</td></tr></tbody></table>`;
 }
@@ -3841,7 +4250,7 @@ function reportDashboard() {
       ${line("Prévisionnel 60 j", repNum(treasuryProjected(now, 60)))}${line("Prévisionnel 90 j", repNum(treasuryProjected(now, 90)))}</tbody></table>
     <div class="rep-section">Structure</div><table class="rep-table"><tbody>
       ${line("Sociétés", state.companies.length)}${line("Contacts", state.contacts.length)}
-      ${line("Missions en cours", state.missions.filter((m) => m.statusCode === "enCours").length)}</tbody></table>`;
+      ${line("Projets en cours", state.missions.filter((m) => m.statusCode === "enCours").length)}</tbody></table>`;
 }
 // --- CSV ---
 function csvCell(s) { return '"' + String(s == null ? "" : s).replace(/"/g, '""') + '"'; }
@@ -3859,7 +4268,7 @@ function exportFacturesCSV() {
 function exportTempsCSV() {
   const r = timeRange();
   const { total, per } = timeBreakdown(r.start, r.end);
-  const H = ["Mission", "Heures", "Durée"];
+  const H = ["Projet", "Heures", "Durée"];
   const rows = per.map((p) => [p.title, (p.s / 3600).toFixed(2).replace(".", ","), fmtDuration(p.s)]);
   rows.push(["TOTAL", (total / 3600).toFixed(2).replace(".", ","), fmtDuration(total)]);
   const entete = [[r.kind === "mois" ? "Mois" : "Semaine", r.label, ""]];
