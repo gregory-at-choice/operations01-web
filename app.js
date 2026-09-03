@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v49";
+const APP_VERSION = "v50";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1286,6 +1286,7 @@ function taskOrigin(t) {
   const slots = taskSlots(t);
   const slot = slots.find((s) => s.date >= todayISO()) || slots[slots.length - 1];
   if (slot) out.push({ ic: "📅", label: `Planifiée le ${fmtDate(slot.date)} à ${fmtMin(slot.start)}` });
+  if (t.origin === "import") out.push({ ic: "⤓", label: "Importée d'un tableau" });
   if (!out.length) out.push({ ic: "✍️", label: "Saisie à la main" });
   return out;
 }
@@ -1418,7 +1419,8 @@ function renderProjectGestion(m) {
       : `<span class="pm-tag">${o.ic} ${esc(o.label)}</span>`).join(" ");
     return `<tr class="${done ? "done" : ""}" style="border-left:4px solid ${di.color}">
       <td class="pm-title"><input class="flat-input" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
-        <div class="pm-origin">${origin}</div></td>
+        ${t.notes ? `<div class="pm-note">${esc(t.notes)}</div>` : ""}
+        <div class="pm-origin">${origin}${t.durationDays ? `<span class="pm-tag">⏳ ${esc(String(t.durationDays).replace(".", ","))} j</span>` : ""}</div></td>
       <td><input class="flat-input" list="assigneeList" data-taskfield="assignee" data-t="${t.id}" value="${esc(t.assignee || "")}" placeholder="—"/></td>
       <td class="pm-due"><input type="date" data-taskdue="${t.id}" value="${esc(t.dueDate || "")}"/>
         <div class="pm-dl" style="color:${di.muted ? "var(--muted)" : di.color}">${di.muted ? esc(di.label) : "⬤ " + esc(di.label)}</div></td>
@@ -1446,6 +1448,7 @@ function renderProjectGestion(m) {
   const body = sections.map(block).join("") + block("");
   return `<div class="inline" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">${alerts || '<span class="muted" style="font-size:12px">Aucune tâche pour l\'instant.</span>'}
       <span class="grow"></span>
+      <button class="btn ghost small" data-import-tasks="${m.id}" title="Importer des tâches depuis un fichier CSV (tableau de suivi) ou JSON">⤓ Importer</button>
       <button class="btn secondary small" data-add-section="${m.id}">+ Section</button>
       <button class="btn small" data-add-ptask="${m.id}" data-section="">+ Tâche</button></div>
     ${datalist}
@@ -1453,6 +1456,130 @@ function renderProjectGestion(m) {
       <thead><tr><th>Tâche</th><th>Personne en charge</th><th>Date limite</th><th>Avancement</th><th>Temps</th><th></th></tr></thead>
       <tbody>${body}</tbody></table></div>
     <div class="muted" style="font-size:11px;margin-top:8px">Une tâche à 100 % passe « Terminée » ; une tâche avec un avancement passe « En cours ». Les tâches se retrouvent aussi dans l'onglet Tâches et, si elles ont une date limite ou un créneau, dans Planning.</div>`;
+}
+
+// ---- Import de tâches dans un projet (JSON ou CSV) ----
+// Le CSV vient typiquement d'un tableau de suivi (Google Sheets / Excel) :
+// Section ; Tâche ; Personne en charge ; Temps de réalisation (j) ; Date limite ; Avancement (%) ; Remarque ; Communication.
+function parseCSV(text) {
+  const lines = String(text || "").replace(/^\ufeff/, "").split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return [];
+  const sep = (lines[0].match(/;/g) || []).length >= (lines[0].match(/,/g) || []).length ? ";" : ",";
+  const split = (line) => {
+    const out = []; let cur = "", q = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (q) { if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+      else if (ch === '"') q = true;
+      else if (ch === sep) { out.push(cur); cur = ""; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out.map((x) => x.trim());
+  };
+  return lines.map(split);
+}
+// Date au format ISO, jj/mm/aaaa, ou numéro de série Excel/Sheets. Sinon "".
+function parseTaskDate(v) {
+  if (v == null) return "";
+  const s = String(v).trim();
+  if (!s) return "";
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return m[0];
+  m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  const n = Number(s.replace(",", "."));
+  if (isFinite(n) && n > 40000 && n < 80000) {
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(n) * 86400000);
+    return d.toISOString().slice(0, 10);
+  }
+  return "";
+}
+// Colonne reconnue à partir de son en-tête (sans accents ni casse).
+function taskColumn(header) {
+  const h = noAccents(header);
+  if (/^section/.test(h)) return "section";
+  if (/^tache|^titre|^intitule|^task/.test(h)) return "title";
+  if (/en charge|responsable|assign|qui$/.test(h)) return "assignee";
+  if (/date limite|echeance|deadline|date d/.test(h)) return "dueDate";
+  if (/avancement|progress|%/.test(h)) return "progress";
+  if (/remarque|detail|precision/.test(h)) return "remark";
+  if (/communication|note|commentaire/.test(h)) return "notes";
+  if (/temps|duree|jours/.test(h)) return "durationDays";
+  return null;
+}
+// Normalise une ligne (JSON ou CSV déjà mappée) en tâche du projet.
+function normImportedTask(m, r) {
+  const t = {
+    id: uid(), title: String(r.title || "").trim(), status: "aFaire", missionId: m.id,
+    section: String(r.section || "").trim(), assignee: String(r.assignee || "").trim(),
+    progress: 0, origin: "import", dueDate: parseTaskDate(r.dueDate), createdAt: Date.now()
+  };
+  if (!t.title) return null;
+  const remark = String(r.remark || "").trim();
+  if (remark) t.title += " · " + remark;
+  const notes = String(r.notes || "").trim();
+  if (notes) t.notes = notes;
+  // « Temps de réalisation » : un nombre de jours, ou parfois une date (fin de
+  // tâche saisie dans cette colonne) qui sert alors d'échéance.
+  const dur = r.durationDays;
+  if (dur != null && String(dur).trim() !== "") {
+    const asDate = parseTaskDate(dur);
+    const n = Number(String(dur).replace(",", "."));
+    if (asDate && (!isFinite(n) || n > 40000)) { if (!t.dueDate) t.dueDate = asDate; }
+    else if (isFinite(n) && n > 0) t.durationDays = n;
+  }
+  const p = Number(String(r.progress == null ? "" : r.progress).replace("%", "").replace(",", "."));
+  if (isFinite(p) && p > 0) setTaskProgress(t, p <= 1 && String(r.progress).indexOf("%") === -1 && p !== 1 ? p * 100 : p);
+  return t;
+}
+// Importe des tâches dans le projet. Renvoie { added, skipped }.
+// Une tâche identique (même section, même intitulé, même échéance) déjà présente
+// n'est pas dupliquée : on peut réimporter un tableau mis à jour sans risque.
+function importTasksInto(m, text, fileName) {
+  let rows = [];
+  const isJson = /\.json$/i.test(fileName || "") || /^\s*[\[{]/.test(String(text || ""));
+  if (isJson) {
+    let data; try { data = JSON.parse(text); } catch (e) { throw new Error("Fichier JSON invalide."); }
+    rows = Array.isArray(data) ? data : (data.tasks || []);
+  } else {
+    const lines = parseCSV(text);
+    if (lines.length < 2) throw new Error("Le fichier CSV est vide.");
+    const cols = lines[0].map(taskColumn);
+    if (cols.indexOf("title") === -1) throw new Error("Aucune colonne « Tâche » trouvée dans l'en-tête.");
+    rows = lines.slice(1).map((cells) => { const r = {}; cols.forEach((c, i) => { if (c && cells[i] != null && cells[i] !== "") r[c] = cells[i]; }); return r; });
+  }
+  const existing = {};
+  projectTasks(m).forEach((t) => { existing[(t.section || "") + "|" + (t.title || "") + "|" + (t.dueDate || "")] = 1; });
+  m.sections = m.sections || [];
+  let added = 0, skipped = 0;
+  rows.forEach((r) => {
+    const t = normImportedTask(m, r);
+    if (!t) return;
+    const key = t.section + "|" + t.title + "|" + t.dueDate;
+    if (existing[key]) { skipped++; return; }
+    existing[key] = 1;
+    if (t.section && m.sections.indexOf(t.section) === -1) m.sections.push(t.section);
+    state.tasks.push(t); added++;
+  });
+  return { added, skipped };
+}
+function importTasksClick(mid) {
+  const m = findMission(mid); if (!m) return;
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = ".csv,.json,text/csv,application/json";
+  inp.onchange = () => {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const res = importTasksInto(m, String(r.result), f.name);
+        save(); render();
+        toast(`${res.added} tâche(s) ajoutée(s)${res.skipped ? ` · ${res.skipped} déjà présente(s)` : ""}`);
+      } catch (e) { alert("Import impossible : " + e.message); }
+    };
+    r.readAsText(f);
+  };
+  inp.click();
 }
 
 // ---- Correspondance ----
@@ -3630,6 +3757,7 @@ function wire() {
     state.tasks.push({ id: uid(), title: "", status: "aFaire", missionId: b.dataset.addPtask, section: b.dataset.section || "", assignee: "", progress: 0, origin: "manuel", dueDate: "", createdAt: Date.now() });
     save(); render();
   });
+  c.querySelectorAll("[data-import-tasks]").forEach((b) => b.onclick = () => importTasksClick(b.dataset.importTasks));
   c.querySelectorAll("[data-add-section]").forEach((b) => b.onclick = () => {
     const name = (prompt("Nom de la section") || "").trim(); if (!name) return;
     const m = findMission(b.dataset.addSection); if (!m) return;
@@ -4002,8 +4130,10 @@ function importJSON(text) {
   const contactByName = {}; state.contacts.forEach((c) => { contactByName[contactName(c)] = c.id; });
   (data.invoices || []).forEach((v) => state.invoices.push({ id: uid(), title: v.title || "", reference: v.reference || "", direction: v.direction === "depense" ? "depense" : "recette", status: (INV_STATUSES.some((x) => x.code === v.status) ? v.status : "aEmettre"), amount: Number(v.amount) || 0, vatRate: v.vatRate == null ? 20 : Number(v.vatRate), startDate: (v.startDate || "").slice(0, 10) || todayISO(), hasDueDate: !!v.hasDueDate, dueDate: (v.dueDate || "").slice(0, 10), paymentDate: (v.paymentDate || "").slice(0, 10), companyId: compByName[v.companyName] || null, contactId: contactByName[v.contactName] || null, categoryName: v.categoryName || "", payMode: v.payMode === "associe" ? "associe" : "compte", accountId: null, associateId: contactByName[v.associateName] || null, receiptUrl: v.receiptUrl || "", noReceipt: !!v.noReceipt }));
   const missionByTitle = {};
+  // En mode « ajouter », une tâche peut viser un projet déjà présent.
+  state.missions.forEach((m) => { if (m.title) missionByTitle[m.title] = m.id; });
   (data.missions || []).forEach((m, i) => { const nm = { id: uid(), title: m.title || "", statusCode: normStatus(m.statusCode || m.status), companyId: compByName[m.companyName] || null, startDate: (m.startDate || "").slice(0, 10), createdAt: Date.now() + i, entries: (m.entries || []).map((e) => ({ id: uid(), kind: normKind(e.kind), title: e.title || "", content: e.content || "", date: (e.date || "").slice(0, 10) || todayISO(), url: e.url || e.urlString || "", accumulatedSeconds: Number(e.accumulatedSeconds) || 0, timerStartedAt: null, createdAt: Date.now() })) }; state.missions.push(nm); if (nm.title) missionByTitle[nm.title] = nm.id; });
-  (data.tasks || []).forEach((t) => state.tasks.push({ id: uid(), title: t.title || "", status: (TASK_STATUSES.some((s) => s.code === t.status) ? t.status : "aFaire"), missionId: missionByTitle[t.missionTitle] || null, dueDate: (t.dueDate || "").slice(0, 10), createdAt: Date.now() }));
+  (data.tasks || []).forEach((t) => state.tasks.push({ id: uid(), title: t.title || "", status: (TASK_STATUSES.some((s) => s.code === t.status) ? t.status : "aFaire"), missionId: missionByTitle[t.missionTitle] || null, dueDate: (t.dueDate || "").slice(0, 10), section: t.section || "", assignee: t.assignee || "", progress: Number(t.progress) || 0, notes: t.notes || "", origin: t.origin || "manuel", createdAt: Date.now() }));
   (data.actions || []).forEach((a) => state.actions.push({ id: uid(), title: a.title || "", projectName: a.projectName || "", missionId: missionByTitle[a.missionTitle] || null, request: a.request || "", contactId: null, recipientName: a.recipientName || "", recipientEmail: a.recipientEmail || "", dueDate: (a.dueDate || "").slice(0, 10), reminderDaily: a.reminderDaily !== false, closed: !!a.closed, closedAt: a.closedAt || null, createdAt: Date.now() }));
   (data.rendezvous || []).forEach((r) => state.rendezvous.push({ id: uid(), title: r.title || "", date: (r.date || "").slice(0, 10), time: r.time || "", location: r.location || "", contactId: null, withName: r.withName || "", missionId: missionByTitle[r.missionTitle] || null, notes: r.notes || "", createdAt: Date.now() }));
   const accByKey = {};

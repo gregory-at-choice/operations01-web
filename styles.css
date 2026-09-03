@@ -426,6 +426,7 @@ label.field.inline-check > span { margin-bottom: 0; }
 .pm-table tr.pm-section .btn { white-space: nowrap; }
 .pm-title { min-width: 220px; }
 .pm-title .flat-input { width: 100%; font-weight: 600; }
+.pm-note { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
 .pm-origin { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .pm-tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--bg); color: var(--muted); text-decoration: none; white-space: nowrap; }
 a.pm-tag { color: var(--primary); }
