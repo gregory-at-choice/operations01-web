@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v51";
+const APP_VERSION = "v52";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1685,7 +1685,7 @@ function renderProjectCourrier(m) {
       </select>`;
     return `<div class="row mail-row" style="cursor:default;border-left-color:${isLinked ? "var(--positive)" : (th.unread ? "var(--primary)" : "var(--line)")}">
       <span class="ic">✉️</span>
-      <div class="grow"><div class="r-title">${esc(th.subject)}${taskLinked[th.id] ? ' <span class="pm-tag">✅ tâche créée</span>' : ""}${isLinked ? "" : ' <span class="pm-tag">suggestion</span>'}</div>
+      <div class="grow"><div class="r-title">${th.unread ? '<span class="pm-tag mail-unread">● Non lu</span> ' : ""}${esc(th.subject)}${taskLinked[th.id] ? ' <span class="pm-tag">✅ tâche créée</span>' : ""}${isLinked ? "" : ' <span class="pm-tag">suggestion</span>'}</div>
         <div class="r-sub">${sub}</div>
         ${th.snippet ? `<div class="mail-snippet">${esc(th.snippet)}</div>` : ""}</div>
       <div class="mail-actions">
@@ -1695,6 +1695,9 @@ function renderProjectCourrier(m) {
         <button class="btn ghost small" data-mail-entry="${esc(th.id)}" data-m="${m.id}" title="Ajouter à l'historique du projet">→ Historique</button>
       </div></div>`;
   };
+  // Lu / non lu : état relevé dans Gmail au dernier passage du script (toutes les heures).
+  const nbUnread = (arr) => arr.filter((th) => th.unread).length;
+  const cnt = (arr) => `(${arr.length}${nbUnread(arr) ? ` · ${nbUnread(arr)} non lu${nbUnread(arr) > 1 ? "s" : ""}` : ""})`;
   const sugg = companyEmailSuggestions(m);
   const suggHtml = sugg.length
     ? `<div class="muted" style="font-size:12px;margin-top:6px">Contacts de ${esc(companyName(m.companyId))} : ${sugg.slice(0, 12).map((x) => `<button class="chip" data-mail-addemail="${esc(x.email)}" data-m="${m.id}" title="Ajouter ${esc(x.email)} aux adresses du projet">+ ${esc(x.name)}</button>`).join(" ")}${sugg.length > 12 ? ` <span>… (${sugg.length - 12} de plus)</span>` : ""}</div>`
@@ -1710,17 +1713,18 @@ function renderProjectCourrier(m) {
   let body;
   if (!(window.DriveSync && DriveSync.isConnected())) body = '<div class="center-empty">Connecte-toi à Google Drive pour lire la correspondance.</div>';
   else if (!anyIndex) body = `<div class="center-empty">${mailLoading ? "Lecture des boîtes mail…" : "Aucun index de mails disponible.<br>Installe (ou mets à jour) le script « Mails » dans chaque boîte : il indexe les fils récents toutes les heures. Voir Relances → Boîtes mail."}</div>`;
-  else body = `<div class="section-h">✓ Classés dans ce projet <span class="muted">(${linked.length})</span></div>
+  else body = `<div class="section-h">✓ Classés dans ce projet <span class="muted">${cnt(linked)}</span></div>
       ${linked.length ? `<div class="list">${linked.map((th) => row(th, true)).join("")}</div>` : '<div class="muted" style="padding:4px 2px;font-size:13px">Aucun fil classé pour l\'instant : confirme une suggestion ci-dessous avec « ✓ Ce projet ».</div>'}
-      <div class="section-h">Suggestions <span class="muted">(${suggested.length})</span></div>
+      <div class="section-h">Suggestions <span class="muted">${cnt(suggested)}</span></div>
       <div class="muted" style="font-size:12px;margin-bottom:6px">Fils qui contiennent un mot-clé ou impliquent une adresse du projet. Classe chacun : ce projet, un autre projet, ou aucun.</div>
       ${suggested.length ? `<div class="list">${suggested.map((th) => row(th, false)).join("")}</div>` : '<div class="muted" style="padding:4px 2px;font-size:13px">Aucune suggestion : précise des mots-clés ou des adresses ci-dessus.</div>'}`;
   const manual = emailEntries.length
     ? `<div class="section-h">Mails notés dans l'historique <span class="muted">(${emailEntries.length})</span></div><div class="list">${emailEntries.map((e) => renderEntry(m.id, e)).join("")}</div>`
     : "";
   return `${conf}
-    <div class="section-h">✉️ Correspondance <span class="muted">(${linked.length + suggested.length})</span>
+    <div class="section-h">✉️ Correspondance <span class="muted">${cnt(linked.concat(suggested))}</span>
       <button class="btn ghost small" data-mail-refresh style="margin-left:8px">${mailLoading ? "…" : "↻ Rafraîchir"}</button></div>
+    <div class="muted" style="font-size:12px;margin:-4px 0 8px">« ● Non lu » = fil non lu dans Gmail au dernier passage du script (chaque heure). Un mail lu depuis peut le rester jusqu'au passage suivant.</div>
     ${body}${manual}`;
 }
 
