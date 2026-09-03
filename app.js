@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v52";
+const APP_VERSION = "v53";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1019,7 +1019,8 @@ function renderSearch() {
 // secondaires déclarées dans state.mailboxes (chacune a son fichier d'analyse).
 let mailStore = {};
 let mailData = null, mailLoading = false, mailLoadedAt = 0;
-const MAIL_RETRY = 5 * 60000;
+const MAIL_RETRY = 5 * 60000;    // après un échec ou un fichier absent
+const MAIL_FRESH = 15 * 60000;   // relecture automatique quand les analyses datent (script toutes les 15 min)
 const mailVisible = () => view.section === "relances" || (view.section === "missions" && view.detailId);
 async function loadMails() {
   if (!(window.DriveSync && DriveSync.isConnected())) return;
@@ -1724,7 +1725,7 @@ function renderProjectCourrier(m) {
   return `${conf}
     <div class="section-h">✉️ Correspondance <span class="muted">${cnt(linked.concat(suggested))}</span>
       <button class="btn ghost small" data-mail-refresh style="margin-left:8px">${mailLoading ? "…" : "↻ Rafraîchir"}</button></div>
-    <div class="muted" style="font-size:12px;margin:-4px 0 8px">« ● Non lu » = fil non lu dans Gmail au dernier passage du script (chaque heure). Un mail lu depuis peut le rester jusqu'au passage suivant.</div>
+    <div class="muted" style="font-size:12px;margin:-4px 0 8px">« ● Non lu » = fil non lu dans Gmail au dernier passage du script (toutes les 15 minutes). Un mail lu depuis peut le rester jusqu'au passage suivant.</div>
     ${body}${manual}`;
 }
 
@@ -3788,7 +3789,7 @@ function wire() {
 
   // relances (mails) — et correspondance des projets
   c.querySelectorAll("[data-mail-refresh]").forEach((b) => b.onclick = loadMails);
-  if (mailVisible() && !mailData && !mailLoading && Date.now() - mailLoadedAt > MAIL_RETRY && window.DriveSync && DriveSync.isConnected()) loadMails();
+  if (mailVisible() && !mailLoading && Date.now() - mailLoadedAt > (mailData ? MAIL_FRESH : MAIL_RETRY) && window.DriveSync && DriveSync.isConnected()) loadMails();
   const addMb = c.querySelector("[data-add-mailbox]");
   if (addMb) addMb.onclick = () => addMailbox((document.getElementById("mbLabel") || {}).value, (document.getElementById("mbEmail") || {}).value);
   c.querySelectorAll("[data-del-mailbox]").forEach((b) => b.onclick = () => {

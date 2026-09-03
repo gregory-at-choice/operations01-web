@@ -37,6 +37,7 @@
 var FICHIER_MAILS_ID = "";        // vide = boîte principale (fichier trouvé par son nom)
 var DATA_FILE = "operations01-data.json";
 var MAILS_FILE = "operations01-mails.json";
+var FREQUENCE_MINUTES = 15;       // passage toutes les N minutes (1, 5, 10, 15 ou 30 ; 60 = toutes les heures)
 var RELANCE_JOURS = 7;            // relance suggérée après N jours sans réponse
 var MAX_THREADS = 80;             // plafond de sécurité par recherche (alertes)
 var INDEX_JOURS = 120;            // profondeur de l'index de correspondance
@@ -51,8 +52,9 @@ function installerAnalyseMails() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === "analyserMails") ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger("analyserMails").timeBased().everyHours(1).create();
-  Logger.log("Analyse des mails installée : toutes les heures.");
+  var t = ScriptApp.newTrigger("analyserMails").timeBased();
+  if ([1, 5, 10, 15, 30].indexOf(FREQUENCE_MINUTES) > -1) { t.everyMinutes(FREQUENCE_MINUTES).create(); Logger.log("Analyse des mails installée : toutes les " + FREQUENCE_MINUTES + " minutes."); }
+  else { t.everyHours(1).create(); Logger.log("Analyse des mails installée : toutes les heures."); }
 }
 
 function analyserMails() {
@@ -108,9 +110,19 @@ function analyserMails() {
     rdvPrep.push(item);
   });
 
-  // 🗂 — index des fils récents, pour la correspondance par projet
-  var threads = [];
-  GmailApp.search("newer_than:" + INDEX_JOURS + "d -in:spam -in:trash", 0, INDEX_MAX).forEach(function (th) {
+  // 🗂 — index des fils récents, pour la correspondance par projet.
+  // Incrémental : l'index précédent est conservé et seuls les fils ayant reçu un
+  // message depuis le dernier passage (marge d'une heure) sont relus. Un passage
+  // toutes les 15 minutes reste ainsi léger pour les quotas Gmail.
+  var precedent = lireJsonDe(cible) || {};
+  var index = {};
+  (precedent.threads || []).forEach(function (t) { if (t && t.id) index[t.id] = t; });
+  var complet = !Object.keys(index).length || !precedent.generatedAt;
+  var requete = "newer_than:" + INDEX_JOURS + "d -in:spam -in:trash";
+  if (!complet) requete += " after:" + Math.floor((new Date(precedent.generatedAt).getTime() - 3600000) / 1000);
+  var relus = 0;
+  GmailApp.search(requete, 0, INDEX_MAX).forEach(function (th) {
+    relus++;
     var msgs = th.getMessages(); if (!msgs.length) return;
     var last = msgs[msgs.length - 1];
     var parts = {};
@@ -124,7 +136,7 @@ function analyserMails() {
     if (EXTRAIT_CARACTERES > 0) {
       try { extrait = String(last.getPlainBody() || "").replace(/\s+/g, " ").trim().slice(0, EXTRAIT_CARACTERES); } catch (e) { extrait = ""; }
     }
-    threads.push({
+    index[th.getId()] = {
       id: th.getId(),
       subject: th.getFirstMessageSubject() || "(sans objet)",
       from: extraireEmail(last.getFrom()),
@@ -136,13 +148,21 @@ function analyserMails() {
       mine: extraireEmail(last.getFrom()) === moi,
       snippet: extrait,
       link: lienThread(th)
-    });
+    };
   });
+  // État lu / non lu de tous les fils indexés : une seule recherche, sans lire les messages.
+  var nonLus = {};
+  GmailApp.search("is:unread newer_than:" + INDEX_JOURS + "d -in:spam -in:trash", 0, 500).forEach(function (th) { nonLus[th.getId()] = true; });
+  var horizon = Date.now() - INDEX_JOURS * 86400000;
+  var threads = Object.keys(index).map(function (id) { var t = index[id]; t.unread = !!nonLus[id]; return t; })
+    .filter(function (t) { return new Date(t.date).getTime() >= horizon; })
+    .sort(function (x, y) { return String(y.date).localeCompare(String(x.date)); })
+    .slice(0, INDEX_MAX);
 
   var out = { updatedAt: Date.now(), generatedAt: new Date().toISOString(), mailbox: moi,
     unread: unread, relance: relance, nouveau: nouveau, rdvPrep: rdvPrep, threads: threads };
   cible.setContent(JSON.stringify(out));
-  Logger.log(unread.length + " non lus, " + relance.length + " à relancer, " + nouveau.length + " nouveaux, " + rdvPrep.length + " RDV, " + threads.length + " fils indexés.");
+  Logger.log(unread.length + " non lus, " + relance.length + " à relancer, " + nouveau.length + " nouveaux, " + rdvPrep.length + " RDV, " + threads.length + " fils indexés (" + relus + " relus" + (complet ? ", index complet" : "") + ").");
   try { rangerFichiersJson(); } catch (e) { Logger.log("Rangement des JSON impossible : " + e); }
 }
 
@@ -184,6 +204,7 @@ function premier(arr, f) { for (var i = 0; i < arr.length; i++) if (f(arr[i])) r
 function dateISO(dec) { var d = new Date(); d.setDate(d.getDate() + (dec || 0)); return Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd"); }
 function trouverFichier(name) { var it = DriveApp.getFilesByName(name); return it.hasNext() ? it.next() : null; }
 function fichierParId(id) { try { return DriveApp.getFileById(id); } catch (e) { return null; } }
+function lireJsonDe(fichier) { try { return JSON.parse(fichier.getBlob().getDataAsString("UTF-8")); } catch (e) { return null; } }
 function lireFichier(name) { var f = trouverFichier(name); if (!f) return null; try { return JSON.parse(f.getBlob().getDataAsString("UTF-8")); } catch (e) { return null; } }
 // Sur une boîte secondaire, le fichier de données peut avoir été partagé en lecture.
 function lireFichierPartage(name) {
