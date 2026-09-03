@@ -47,6 +47,7 @@ var EXTRAIT_CARACTERES = 160;     // longueur de l'extrait conservé (0 = aucun)
 // La web app n'a le droit d'écrire que « là où elle est » (portée drive.file) :
 // c'est ce script, qui a accès à tout le Drive, qui range ses fichiers.
 var DOSSIER_JSON = "soft/src-json";
+var MOI = "";                     // adresse du compte courant, fixée à l'exécution (liens Gmail)
 
 function installerAnalyseMails() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
@@ -71,6 +72,7 @@ function analyserMails() {
   var parEmail = {};
   contacts.forEach(function (c) { if (c.email) parEmail[String(c.email).toLowerCase().trim()] = c; });
   var moi = String(Session.getActiveUser().getEmail() || "").toLowerCase();
+  MOI = moi;
 
   var unread = [], relance = [], nouveau = [], rdvPrep = [];
   var vusNouveaux = {};
@@ -199,7 +201,12 @@ function dossierParChemin(chemin) {
 function extraireEmail(s) { var m = String(s || "").match(/<([^>]+)>/); return (m ? m[1] : String(s || "")).toLowerCase().trim(); }
 function nomExpediteur(s) { var m = String(s || "").match(/^\s*"?([^"<]+?)"?\s*</); return m ? m[1].trim() : ""; }
 function contactNom(c) { return ((c.firstName || "") + " " + (c.lastName || "")).trim() || c.email || "Contact"; }
-function lienThread(th) { return "https://mail.google.com/mail/u/0/#all/" + th.getId(); }
+// « ?authuser=adresse » ouvre le fil dans ce compte-ci, et non dans le premier
+// compte connecté du navigateur (« /u/0/ »).
+function lienThread(th) {
+  var base = MOI ? "https://mail.google.com/mail/?authuser=" + encodeURIComponent(MOI) : "https://mail.google.com/mail/u/0/";
+  return base + "#all/" + th.getId();
+}
 function premier(arr, f) { for (var i = 0; i < arr.length; i++) if (f(arr[i])) return arr[i]; return null; }
 function dateISO(dec) { var d = new Date(); d.setDate(d.getDate() + (dec || 0)); return Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd"); }
 function trouverFichier(name) { var it = DriveApp.getFilesByName(name); return it.hasNext() ? it.next() : null; }

@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v53";
+const APP_VERSION = "v54";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1127,7 +1127,7 @@ function renderRelances() {
   const multi = Object.keys(mailStore).filter((k) => mailStore[k]).length > 1;
   const merged = (field) => {
     const out = [];
-    Object.keys(mailStore).forEach((k) => { const d = mailStore[k]; if (d) (d[field] || []).forEach((x) => out.push(Object.assign({ box: mailboxLabel(k) }, x))); });
+    Object.keys(mailStore).forEach((k) => { const d = mailStore[k]; if (d) (d[field] || []).forEach((x) => out.push(Object.assign({ box: mailboxLabel(k) }, x, { link: gmailLink(x.link, d.mailbox) }))); });
     return out.sort((x, y) => (y.date || "").localeCompare(x.date || ""));
   };
   const grp = (title, ic, arr, extra) => `<div class="section-h">${ic} ${title} <span class="muted">(${(arr || []).length})</span></div>
@@ -1584,13 +1584,22 @@ function importTasksClick(mid) {
 }
 
 // ---- Correspondance ----
+// Lien Gmail ouvert dans la bonne boîte. « /u/0/ » désigne toujours le premier
+// compte connecté dans le navigateur ; « ?authuser=adresse » cible le compte
+// propriétaire du fil, quel que soit l'ordre de connexion.
+function gmailLink(link, mailbox) {
+  if (!link || !mailbox || String(link).indexOf("mail.google.com") === -1) return link || "";
+  const m = String(link).match(/#(all|inbox|sent|search\/[^/]*)\/([A-Za-z0-9_-]+)$/);
+  if (!m) return link;
+  return "https://mail.google.com/mail/?authuser=" + encodeURIComponent(mailbox) + "#" + m[1] + "/" + m[2];
+}
 // Fils de discussion de toutes les boîtes, avec l'étiquette de la boîte.
 function mailThreads() {
   const out = [];
   Object.keys(mailStore).forEach((k) => {
     const d = mailStore[k]; if (!d) return;
     const box = mailboxLabel(k);
-    (d.threads || []).forEach((th) => out.push(Object.assign({ box, boxId: k }, th)));
+    (d.threads || []).forEach((th) => out.push(Object.assign({ box, boxId: k, boxEmail: d.mailbox || "" }, th, { link: gmailLink(th.link, d.mailbox) })));
   });
   return out;
 }
