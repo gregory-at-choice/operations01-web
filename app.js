@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v54";
+const APP_VERSION = "v55";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1373,7 +1373,8 @@ function renderProjectResume(m) {
       ${stat(`${done}/${ts.length}`, `tâches terminées${enCours ? ` · ${enCours} en cours` : ""}`)}
       ${stat(late.length, "en retard", late.length ? "#d23c3c" : "")}
       ${stat(next ? fmtDate(next.dueDate) : "—", next ? `prochaine échéance · ${esc(next.title || "tâche")}` : "prochaine échéance")}
-      ${stat(fmtDuration(missionTotal(m)), "temps passé")}
+      ${stat(`<span class="timer" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span>`, `temps passé depuis le début${missionStart(m) ? ` · ${esc(fmtDate(missionStart(m)))}` : ""}`)}
+      ${stat(`<span class="timer" data-week="${m.id}">${fmtDuration(projectWeekSeconds(m))}</span>`, "cette semaine · depuis lundi")}
       ${stat(mails, "fils de correspondance")}
     </div>
     ${prog != null ? `<div class="pm-bar" style="margin:8px 0 14px"><div class="pm-bar-fill" style="width:${prog}%"></div></div>` : ""}
@@ -4496,6 +4497,7 @@ setInterval(() => {
     for (const m of state.missions) { const e = (m.entries || []).find((x) => x.id === id); if (e && e.timerStartedAt) span.textContent = fmtDuration(entryElapsed(e)); }
   });
   document.querySelectorAll("[data-total]").forEach((span) => { const m = findMission(span.dataset.total); if (m && (m.entries || []).some((e) => e.timerStartedAt)) span.textContent = fmtDuration(missionTotal(m)); });
+  document.querySelectorAll("[data-week]").forEach((span) => { const m = findMission(span.dataset.week); if (m && (m.entries || []).some((e) => e.timerStartedAt)) span.textContent = fmtDuration(projectWeekSeconds(m)); });
   // compteur « Temps » du menu : suit le chrono en cours
   if (state.missions.some((m) => (m.entries || []).some((e) => e.timerStartedAt))) {
     const el = document.getElementById("navCount-time");
