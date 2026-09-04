@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v55";
+const APP_VERSION = "v56";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -170,6 +170,7 @@ function render() {
   const sec = SECTIONS.find((s) => s.id === view.section) || SECTIONS[0];
   content.innerHTML = sec.fn();
   wire();
+  renderNotifBell();
 }
 // Compteur affiché à droite de chaque entrée du menu (null = rien).
 function navCount(id) {
@@ -217,6 +218,7 @@ function renderNav() {
   });
   const tabbar = document.getElementById("tabbar");
   tabbar.innerHTML = "";
+  const bell = document.createElement("button"); bell.id = "tabBell"; bell.className = "tab-bell"; tabbar.appendChild(bell);
   SECTIONS.forEach((s) => {
     const b = document.createElement("button");
     b.className = s.id === view.section ? "active" : "";
@@ -1033,6 +1035,7 @@ async function loadMails() {
     try { mailStore[b.id] = await DriveSync.readMailbox(b.fileName); } catch (e) { mailStore[b.id] = null; }
   }
   mailLoading = false; if (mailVisible()) render();
+  refreshNotifications();
 }
 // Ajoute une boîte secondaire : crée son fichier d'analyse, le partage avec ce
 // compte (écriture) ainsi que le fichier de données (lecture, pour les contacts).
@@ -1382,6 +1385,11 @@ function renderProjectResume(m) {
       <label class="field"><span>Société</span>${companySelect(`missions|${m.id}|companyId`, m.companyId)}</label>
       <label class="field"><span>Date de démarrage</span><input type="date" data-bind="missions|${m.id}|startDate" data-rerender value="${esc(missionStart(m))}"/></label>
       <label class="field"><span>Objectif / description</span><textarea data-bind="missions|${m.id}|summary" placeholder="En deux lignes : de quoi il s'agit, ce qu'on attend.">${esc(m.summary || "")}</textarea></label>
+      <div class="field-b"><span>🔔 Notifications de ce projet</span>
+        <label class="inline-check"><input type="checkbox" data-notify="mails" data-m="${m.id}" ${projectNotify(m).mails ? "checked" : ""}/> <span>Nouveaux mails dans la correspondance</span></label>
+        <label class="inline-check"><input type="checkbox" data-notify="deadlines" data-m="${m.id}" ${projectNotify(m).deadlines ? "checked" : ""}/> <span>Échéances des tâches, chaque jour à partir de J-7 (retards compris)</span></label>
+        <div class="muted" style="font-size:12px">Elles arrivent dans la cloche 🔔 ; un clic sur une notification l'ouvre et l'efface.</div>
+      </div>
       <div class="muted" style="font-size:12px">Dernier événement : ${missionLast(m) ? esc(fmtDate(missionLast(m))) : "—"}</div>
     </div>
     ${late.length ? `<div class="section-h" style="color:#d23c3c">⚠️ En retard <span class="muted">(${late.length})</span></div>
@@ -1458,6 +1466,132 @@ function renderProjectGestion(m) {
       <thead><tr><th>Tâche</th><th>Personne en charge</th><th>Date limite</th><th>Avancement</th><th>Temps</th><th></th></tr></thead>
       <tbody>${body}</tbody></table></div>
     <div class="muted" style="font-size:11px;margin-top:8px">Une tâche à 100 % passe « Terminée » ; une tâche avec un avancement passe « En cours ». Les tâches se retrouvent aussi dans l'onglet Tâches et, si elles ont une date limite ou un créneau, dans Planning.</div>`;
+}
+
+// ---- Notifications par projet ----
+// Deux déclencheurs, activables projet par projet : nouveaux mails dans la
+// correspondance, et échéances de tâches chaque jour à partir de J-7 (retards
+// compris). Les notifications vivent dans l'app (cloche) et sont synchronisées ;
+// sur ordinateur, le navigateur peut en plus les afficher quand l'app est ouverte.
+const NOTIF_DL_DAYS = 7;
+const NOTIF_SEEN_TTL = 60 * 86400000;
+const projectNotify = (m) => Object.assign({ mails: false, deadlines: false }, m.notify || {});
+function setProjectNotify(m, field, on) {
+  m.notify = projectNotify(m);
+  m.notify[field] = !!on;
+  // Activer les mails ne doit pas déclencher une rafale sur tout l'historique.
+  if (field === "mails" && on) m.notifyMailsSince = Date.now();
+  const kind = field === "mails" ? "mail" : "deadline";
+  if (!on) state.notifs = (state.notifs || []).filter((n) => !(n.missionId === m.id && n.kind === kind));
+}
+function pushNotif(n) {
+  state.notifs = state.notifs || []; state.notifSeen = state.notifSeen || {};
+  if (state.notifSeen[n.key] || state.notifs.some((x) => x.key === n.key)) return false;
+  n.id = uid(); n.at = Date.now();
+  state.notifs.push(n);
+  return true;
+}
+// Crée les notifications manquantes ; renvoie celles créées (pour l'affichage système).
+function computeNotifications() {
+  const created = [];
+  const today = todayISO();
+  state.missions.forEach((m) => {
+    const nf = projectNotify(m);
+    if (nf.mails) {
+      const since = m.notifyMailsSince || 0;
+      projectThreads(m).forEach((th) => {
+        const t = th.date ? new Date(th.date).getTime() : 0;
+        if (t <= since) return;
+        const n = { kind: "mail", missionId: m.id, key: `mail:${m.id}:${th.id}`, title: `✉️ ${m.title || "Projet"}`,
+          body: `${th.subject || "(sans objet)"}${th.fromName ? ` · ${th.fromName}` : ""}`, section: "missions", detailId: m.id, tab: "courrier" };
+        if (pushNotif(n)) created.push(n);
+      });
+    }
+    if (nf.deadlines) {
+      projectTasks(m).forEach((t) => {
+        if (taskDone(t) || !t.dueDate) return;
+        const d = daysUntil(t.dueDate);
+        if (d > NOTIF_DL_DAYS) return;
+        const label = d < 0 ? `en retard de ${-d} j` : d === 0 ? "aujourd'hui" : d === 1 ? "demain" : `J-${d}`;
+        const n = { kind: "deadline", missionId: m.id, key: `dl:${t.id}:${today}`, title: `⏰ ${m.title || "Projet"}`,
+          body: `${t.title || "Tâche"} · ${label} (${fmtDate(t.dueDate)})`, section: "missions", detailId: m.id, tab: "gestion" };
+        if (pushNotif(n)) created.push(n);
+      });
+    }
+  });
+  // Les marques « déjà vue » anciennes sont oubliées, pour ne pas grossir sans fin.
+  const seen = state.notifSeen || {}; const lim = Date.now() - NOTIF_SEEN_TTL;
+  Object.keys(seen).forEach((k) => { if (seen[k] < lim) delete seen[k]; });
+  return created;
+}
+function dismissNotif(id) {
+  state.notifSeen = state.notifSeen || {};
+  const n = (state.notifs || []).find((x) => x.id === id);
+  if (n) state.notifSeen[n.key] = Date.now();
+  state.notifs = (state.notifs || []).filter((x) => x.id !== id);
+}
+function dismissAllNotifs() {
+  state.notifSeen = state.notifSeen || {};
+  (state.notifs || []).forEach((n) => { state.notifSeen[n.key] = Date.now(); });
+  state.notifs = [];
+}
+// Clic sur une notification : elle disparaît et l'élément visé s'ouvre.
+function openNotif(id) {
+  const n = (state.notifs || []).find((x) => x.id === id); if (!n) return;
+  dismissNotif(id); save(); closeModal();
+  if (n.section === "missions" && n.detailId && findMission(n.detailId)) { projectTab = n.tab || "resume"; projectTabFor = n.detailId; openDetail("missions", n.detailId); }
+  else go(n.section || "missions");
+  renderNotifBell();
+}
+const notifCount = () => (state.notifs || []).length;
+// La cloche : dans le menu (ordinateur) et dans la barre d'onglets (mobile).
+function renderNotifBell() {
+  const n = notifCount();
+  ["notifBell", "tabBell"].forEach((id) => {
+    const el = document.getElementById(id); if (!el) return;
+    el.innerHTML = id === "tabBell"
+      ? `<span class="ic">🔔${n ? `<span class="tab-count">${n}</span>` : ""}</span>Notifs`
+      : `🔔${n ? `<span class="notif-badge">${n}</span>` : ""}`;
+    el.classList.toggle("has", n > 0);
+    el.onclick = showNotifPanel;
+  });
+}
+function showNotifPanel() {
+  const list = [...(state.notifs || [])].sort((a, b) => (b.at || 0) - (a.at || 0));
+  const rows = list.map((n) => `<div class="row" data-notif-open="${n.id}" style="border-left-color:${n.kind === "mail" ? "var(--positive)" : "#d23c3c"}">
+      <div class="grow"><div class="r-title">${esc(n.title)}</div><div class="r-sub">${esc(n.body)}</div></div><span class="muted">›</span></div>`).join("");
+  let sys;
+  if (!("Notification" in window)) sys = '<span class="muted" style="font-size:12px">Notifications système indisponibles sur cet appareil : elles restent dans l\'app.</span>';
+  else if (Notification.permission === "granted") sys = '<span class="muted" style="font-size:12px">Notifications système activées sur cet appareil (quand l\'app est ouverte).</span>';
+  else if (Notification.permission === "denied") sys = '<span class="muted" style="font-size:12px">Notifications système refusées dans le navigateur (réglages du site pour les réactiver).</span>';
+  else sys = '<button class="btn secondary small" data-notif-sys>Activer les notifications système sur cet appareil</button>';
+  showModal(`<div class="modal-head"><strong class="grow">🔔 Notifications${list.length ? ` (${list.length})` : ""}</strong>
+      ${list.length ? '<button class="btn ghost small" data-notif-clear>Tout effacer</button>' : ""}<button class="btn ghost small" data-modal-close>✕</button></div>
+    ${list.length ? `<div class="list">${rows}</div>` : '<div class="center-empty">Aucune notification.<br><span style="font-size:12px">Active-les projet par projet, dans le résumé du projet.</span></div>'}
+    <div style="margin-top:12px">${sys}</div>`);
+  document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
+  document.querySelectorAll("[data-notif-open]").forEach((r) => r.onclick = () => openNotif(r.dataset.notifOpen));
+  const clr = document.querySelector("[data-notif-clear]");
+  if (clr) clr.onclick = () => { dismissAllNotifs(); save(); closeModal(); renderNotifBell(); toast("Notifications effacées"); };
+  const sysBtn = document.querySelector("[data-notif-sys]");
+  if (sysBtn) sysBtn.onclick = () => { try { Notification.requestPermission().then(() => showNotifPanel()); } catch (e) {} };
+}
+// Notification système (ordinateur), en plus de la cloche ; cliquer l'ouvre dans l'app.
+function notifySystem(list) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  list.slice(0, 5).forEach((n) => {
+    try {
+      const o = new Notification(n.title, { body: n.body, tag: n.key });
+      o.onclick = () => { try { window.focus(); } catch (e) {} openNotif(n.id); };
+    } catch (e) {}
+  });
+}
+// Point d'entrée : au lancement, après lecture des mails, et périodiquement.
+function refreshNotifications() {
+  const created = computeNotifications();
+  if (created.length) { save(); notifySystem(created); }
+  renderNotifBell();
+  return created;
 }
 
 // ---- Import de tâches dans un projet (JSON ou CSV) ----
@@ -3826,6 +3960,12 @@ function wire() {
     save(); render();
   });
   c.querySelectorAll("[data-import-tasks]").forEach((b) => b.onclick = () => importTasksClick(b.dataset.importTasks));
+  c.querySelectorAll("[data-notify]").forEach((el) => el.onchange = () => {
+    const m = findMission(el.dataset.m); if (!m) return;
+    setProjectNotify(m, el.dataset.notify, el.checked);
+    save(); refreshNotifications(); render();
+    toast(el.checked ? "Notifications activées pour ce projet 🔔" : "Notifications désactivées");
+  });
   c.querySelectorAll("[data-add-section]").forEach((b) => b.onclick = () => {
     const name = (prompt("Nom de la section") || "").trim(); if (!name) return;
     const m = findMission(b.dataset.addSection); if (!m) return;
@@ -4491,6 +4631,10 @@ function exportTempsCSV() {
 
 
 // ----------------------------- Chronos live -----------------------------
+// Notifications : au lancement puis toutes les 5 minutes (les échéances changent
+// de jour, les mails arrivent par les analyses).
+refreshNotifications();
+setInterval(refreshNotifications, 5 * 60000);
 setInterval(() => {
   document.querySelectorAll("[data-entry-time]").forEach((span) => {
     const id = span.dataset.entryTime;

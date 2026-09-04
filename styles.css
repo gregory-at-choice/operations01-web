@@ -452,3 +452,12 @@ a.pm-tag { color: var(--primary); }
 .mb-steps { padding-left: 20px; font-size: 14px; line-height: 1.6; }
 .mb-steps code { background: var(--bg); padding: 2px 6px; border-radius: 6px; font-size: 12px; word-break: break-all; }
 @media (max-width: 720px) { .mail-actions { flex-direction: row; flex-wrap: wrap; } }
+
+/* Cloche de notifications (menu et barre d'onglets) */
+.brand .grow { flex: 1; }
+.notif-bell { position: relative; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg);
+  cursor: pointer; font-size: 16px; padding: 0; line-height: 1; }
+.notif-bell.has { border-color: var(--primary); background: rgba(24,193,216,.12); }
+.notif-badge { position: absolute; top: -6px; right: -6px; background: #d23c3c; color: #fff; font-size: 10px; font-weight: 700;
+  border-radius: 999px; padding: 2px 6px; line-height: 1; }
+.tab-bell.has { color: var(--primary); }

@@ -8,12 +8,12 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
-  <link rel="stylesheet" href="styles.css?v=55" />
+  <link rel="stylesheet" href="styles.css?v=56" />
 </head>
 <body>
   <div class="app">
     <aside class="sidebar" id="sidebar">
-      <div class="brand"><span class="dot"></span> Operations01</div>
+      <div class="brand"><span class="dot"></span> <span class="grow">Operations01</span><button id="notifBell" class="notif-bell" title="Notifications">🔔</button></div>
       <!-- éléments de navigation injectés par app.js -->
       <div class="drivebar" id="driveBar"></div>
     </aside>
@@ -34,9 +34,9 @@
   </div>
 
   <script src="https://accounts.google.com/gsi/client" async></script>
-  <script src="config.js?v=55"></script>
-  <script src="drive.js?v=55"></script>
-  <script src="app.js?v=55"></script>
+  <script src="config.js?v=56"></script>
+  <script src="drive.js?v=56"></script>
+  <script src="app.js?v=56"></script>
   <script>
     // Enregistrement du service worker (hors ligne + installation)
     if ("serviceWorker" in navigator) {
