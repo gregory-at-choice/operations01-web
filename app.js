@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v56";
+const APP_VERSION = "v57";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -227,6 +227,10 @@ function renderNav() {
     b.onclick = () => go(s.id);
     tabbar.appendChild(b);
   });
+}
+// Menu « ⋯ » regroupant des actions secondaires (visible sur mobile, où la place manque).
+function moreMenu(inner) {
+  return `<details class="more mob-only"><summary class="btn secondary small" title="Plus d'actions">⋯</summary><div class="more-pop">${inner}</div></details>`;
 }
 function stub(name) {
   return `<div class="page-title">${esc(name)}</div><div class="center-empty">Cette section arrivera dans une prochaine version.</div>`;
@@ -1193,26 +1197,30 @@ function renderMissions() {
   const viewChips = [["liste", "Liste"], ["kanban", "Kanban"]]
     .map(([id, lbl]) => `<button class="chip ${missionView === id ? "active" : ""}" data-mview="${id}">${lbl}</button>`).join("");
   const sortOpts = MISSION_SORTS.map(([id, lbl]) => `<option value="${id}" ${missionSort === id ? "selected" : ""}>${lbl}</option>`).join("");
-  const head = `<div class="toolbar"><div class="page-title grow" style="margin:0">Projets</div>
-      <button class="btn danger small" data-reset>Réinitialiser</button>
-      <button class="btn secondary small" data-import>Importer</button>
+  // Sur mobile, les actions secondaires passent dans un menu « ⋯ » et le bouton
+  // « + Nouveau projet » est remplacé par le bouton flottant.
+  const actions = `<button class="btn secondary small" data-import>Importer</button>
       <button class="btn secondary small" data-export>Exporter</button>
-      <button class="btn" data-add-mission>+ Nouveau projet</button></div>
-    <div class="toolbar" style="margin-bottom:12px">
+      <button class="btn danger small" data-reset>Réinitialiser</button>`;
+  const head = `<div class="toolbar nowrap"><div class="page-title grow" style="margin:0">Projets</div>
+      <span class="tb-actions desk-only">${actions}<button class="btn" data-add-mission>+ Nouveau projet</button></span>
+      ${moreMenu(actions)}</div>
+    <div class="toolbar nowrap" style="margin-bottom:12px">
       <div class="chip-row">${viewChips}</div>
       <span class="grow"></span>
-      <label class="md-ctl" style="flex-direction:row;align-items:center;gap:6px"><span>Trier par</span>
+      <label class="md-ctl sort-ctl"><span>Trier par</span>
         <select id="missionSort" style="width:auto">${sortOpts}</select></label></div>`;
 
   const meta = (m) => {
-    const parts = [`${(m.entries || []).length} élément(s)`,
+    const n = (m.entries || []).length;
+    const parts = [`${n} élément${n > 1 ? "s" : ""}`,
       `⏱ <span class="timer${missionRunning(m) ? " running" : ""}" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span>`];
     if (m.companyId) parts.push(esc(companyName(m.companyId)));
     return parts.join(" · ");
   };
   const dates = (m) => {
     const st = missionStart(m), la = missionLast(m);
-    return `Début ${st ? esc(fmtDate(st)) : "—"} · Dernier événement ${la ? esc(fmtDate(la)) : "—"}`;
+    return `Début ${st ? esc(fmtDate(st)) : "—"} · Dernier ${la ? esc(fmtDate(la)) : "—"}`;
   };
 
   if (missionView === "kanban") {
@@ -1244,11 +1252,11 @@ function renderMissions() {
   const rows = all.map((m) => {
     const run = missionRunning(m);
     return `<div class="row" data-open-mission="${m.id}" style="border-left-color:${run ? "#d23c3c" : "var(--primary)"}">
-      <div class="grow"><div class="r-title">${esc(m.title || "Nouveau projet")}</div>
+      <div class="grow"><div class="r-head"><span class="r-title">${esc(m.title || "Nouveau projet")}</span>
+          ${run ? '<span class="run-dot" title="Chronomètre en cours"></span>' : ""}
+          <span class="badge ${m.statusCode}">${statusLabel(m.statusCode)}</span></div>
         <div class="r-sub">${meta(m)}</div>
-        <div class="r-sub">${dates(m)}</div></div>
-      ${run ? '<span class="run-dot" title="Chronomètre en cours"></span>' : ""}
-      <span class="badge ${m.statusCode}">${statusLabel(m.statusCode)}</span></div>`;
+        <div class="r-sub">${dates(m)}</div></div></div>`;
   }).join("");
   return head + banner
     + `<div class="list">${all.length ? rows : '<div class="center-empty">Aucun projet.</div>'}</div>
@@ -4648,6 +4656,11 @@ setInterval(() => {
     if (el) el.textContent = fmtDurationShort(weekWorkedSeconds());
   }
 }, 1000);
+
+// Les menus « ⋯ » se referment quand on touche ailleurs.
+document.addEventListener("click", (e) => {
+  document.querySelectorAll("details.more[open]").forEach((d) => { if (!d.contains(e.target)) d.open = false; });
+});
 
 // ----------------------------- Installation (PWA) -----------------------------
 let deferredPrompt = null;
