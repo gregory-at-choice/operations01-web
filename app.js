@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v57";
+const APP_VERSION = "v58";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -146,6 +146,7 @@ const sumAmount = (arr) => arr.reduce((t, v) => t + (v.amount || 0), 0);
 const SECTIONS = [
   { id: "search", label: "Recherche", ic: "🔎", fn: renderSearch },
   { id: "relances", label: "Relances", ic: "📨", fn: renderRelances },
+  { id: "atraiter", label: "À traiter", ic: "📥", fn: renderATraiter },
   { id: "missions", label: "Projets", ic: "📁", fn: renderMissions },
   { id: "tasks", label: "Tâches", ic: "✅", fn: renderTasks },
   { id: "actions", label: "Actions", ic: "🎫", fn: renderActions },
@@ -180,6 +181,7 @@ function navCount(id) {
     if (mailData) n += (mailData.unread || []).length + (mailData.relance || []).length + (mailData.nouveau || []).length + (mailData.rdvPrep || []).length;
     return n || null;
   }
+  if (id === "atraiter") return eventsNew().length || null;
   if (id === "missions") return state.missions.filter((m) => (m.statusCode || "aDemarrer") !== "terminee").length || null;
   if (id === "tasks") return state.tasks.filter((t) => (t.status || "aFaire") !== "termine").length || null;
   if (id === "actions") return state.actions.filter((a) => !a.closed).length || null;
@@ -1600,6 +1602,166 @@ function refreshNotifications() {
   if (created.length) { save(); notifySystem(created); }
   renderNotifBell();
   return created;
+}
+
+// ----------------------------- À traiter (événements du Mac mini) -----------------------------
+// Le pipeline « assistants » (Mac mini) lit mails et messages, les classe
+// (urgence 1–4, action proposée, résumé d'une phrase) et les envoie au script
+// relais Apps Script, qui les fusionne dans operations01-evenements.json.
+// L'app lit ce fichier et reste maître du statut : nouveau → traite | ignore.
+let eventStore = null, eventLoading = false, eventLoadedAt = 0, eventError = "";
+const EVENT_FRESH = 5 * 60000;   // le Mac mini pousse toutes les 5 minutes
+const EVENT_RETRY = 5 * 60000;
+let eventFilter = { statut: "nouveau", source: "", compte: "" };
+const EVENT_SOURCES = { mail: "✉️ Mail", sms: "💬 SMS", imessage: "💬 iMessage", whatsapp: "💬 WhatsApp", bluesky: "🦋 Bluesky", linkedin: "💼 LinkedIn", x: "𝕏 X" };
+const EVENT_COMPTES = { choicefinance: "Choice Finance", majandco: "Majandco", icarus: "Icarus Swarms", gmail: "Gmail", outlook: "Outlook", "messages-mac-mini": "Messages" };
+const EVENT_ACTIONS = { repondre: "Répondre", deleguer: "Déléguer", planifier: "Planifier", lire: "Lire", archiver: "Archiver" };
+const EVENT_URGENCES = { 1: "Immédiat", 2: "Aujourd'hui", 3: "Cette semaine", 4: "Quand possible" };
+const EVENT_STATUTS = { nouveau: "Nouveaux", traite: "Traités", ignore: "Ignorés" };
+const eventsAll = () => (eventStore && Array.isArray(eventStore.evenements)) ? eventStore.evenements.filter((e) => e && e.id) : [];
+const eventStatut = (e) => EVENT_STATUTS[e.statut] ? e.statut : "nouveau";
+const eventsNew = () => eventsAll().filter((e) => eventStatut(e) === "nouveau");
+const eventUrgence = (e) => Math.min(4, Math.max(1, Number(e.urgence) || 4));
+const eventVisible = () => view.section === "atraiter";
+const eventsReady = () => !!(window.DriveSync && DriveSync.isConnected() && DriveSync.readEvenements);
+// Urgence croissante, puis les plus récents d'abord.
+function sortEvents(list) {
+  return [...list].sort((a, b) => eventUrgence(a) - eventUrgence(b) || String(b.recu_le || "").localeCompare(String(a.recu_le || "")));
+}
+function fmtDateTimeISO(iso) {
+  const d = new Date(iso); if (!iso || isNaN(d)) return "";
+  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }) + " " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+// Adresse de la boîte correspondant à un compte du pipeline, cherchée parmi les
+// boîtes connues de l'app : sert à ouvrir Gmail dans le bon compte. Le compte
+// « outlook » est redirigé vers la boîte Gmail.
+function eventAccountAddress(compte) {
+  const c = String(compte || "").toLowerCase();
+  if (!c) return "";
+  const addrs = Object.keys(ownAddresses());
+  if (c === "gmail" || c === "outlook") return addrs.find((a) => /@gmail\./.test(a)) || "";
+  return addrs.find((a) => a.indexOf(c) > -1) || "";
+}
+// Lien vers le message d'origine (mails seulement) : recherche Gmail par Message-ID.
+function eventLink(ev) {
+  if (ev.source !== "mail" || !ev.external_id) return "";
+  const id = String(ev.external_id).trim().replace(/^<|>$/g, "");
+  const addr = eventAccountAddress(ev.compte);
+  return `https://mail.google.com/mail/${addr ? "?authuser=" + encodeURIComponent(addr) : ""}#search/rfc822msgid:${encodeURIComponent(id).replace(/%40/g, "@")}`;
+}
+async function loadEvenements() {
+  if (!eventsReady() || eventLoading) return;
+  eventLoadedAt = Date.now(); eventLoading = true;
+  if (eventVisible()) render();
+  try {
+    const d = await DriveSync.readEvenements();
+    if (d) { eventStore = d; eventError = ""; } else eventError = "absent";
+  } catch (e) { eventError = e.message || "erreur"; }
+  eventLoading = false;
+  if (eventVisible()) render(); else renderNav();
+}
+// Changement de statut : affichage immédiat, puis écriture sérialisée après
+// relecture du fichier, pour ne pas écraser un ajout du relais entre-temps.
+let eventWriteChain = Promise.resolve();
+function setEventStatut(id, statut) {
+  const when = statut === "nouveau" ? null : new Date().toISOString();
+  const local = eventsAll().find((e) => e.id === id);
+  if (local) { local.statut = statut; local.traiteLe = when; }
+  render();
+  if (!eventsReady()) return Promise.resolve(false);
+  eventWriteChain = eventWriteChain.then(async () => {
+    try {
+      const fresh = await DriveSync.readEvenements();
+      if (!fresh || !fresh._fileId) throw new Error("fichier introuvable");
+      const ev = (fresh.evenements || []).find((e) => e && e.id === id);
+      if (ev) { ev.statut = statut; ev.traiteLe = when; }
+      fresh.updatedAt = Date.now();
+      const out = Object.assign({}, fresh); delete out._fileId;
+      await DriveSync.writeEvenements(fresh._fileId, out);
+      eventStore = fresh; eventLoadedAt = Date.now();
+      if (eventVisible()) render(); else renderNav();
+      return true;
+    } catch (e) { toast("Statut non enregistré : " + (e.message || e)); return false; }
+  });
+  return eventWriteChain;
+}
+// Échéance proposée d'après l'urgence : immédiat / aujourd'hui → ce jour,
+// cette semaine → J+3, quand possible → J+7.
+function eventDueDate(ev) {
+  const u = eventUrgence(ev), d = new Date();
+  if (u === 3) d.setDate(d.getDate() + 3); else if (u === 4) d.setDate(d.getDate() + 7);
+  return d.toISOString().slice(0, 10);
+}
+const eventTitle = (ev) => ev.sujet || ev.resume || "Événement";
+const eventFrom = (ev) => ev.expediteur || {};
+// Crée une action (document ou réponse à obtenir) préremplie depuis l'événement.
+function eventToAction(ev) {
+  const from = eventFrom(ev), adresse = String(from.adresse || "").toLowerCase();
+  const ct = adresse ? state.contacts.find((c) => String(c.email || "").toLowerCase() === adresse) : null;
+  const x = { id: uid(), title: eventTitle(ev), projectName: "", missionId: null, request: ev.resume || "", contactId: ct ? ct.id : null,
+    recipientName: from.nom || (ct ? contactName(ct) : ""), recipientEmail: from.adresse || "", dueDate: eventDueDate(ev),
+    reminderDaily: false, closed: false, closedAt: null, createdAt: Date.now(), eventId: ev.id, sourceLink: eventLink(ev) };
+  state.actions.push(x); save();
+  return x;
+}
+// Crée une tâche préremplie depuis l'événement (origine « mail » si c'en est un).
+function eventToTask(ev) {
+  const link = eventLink(ev);
+  const t = { id: uid(), title: eventTitle(ev), status: "aFaire", missionId: null, section: "", assignee: "", progress: 0,
+    origin: ev.source === "mail" ? "mail" : "manuel", mailLink: link, mailSubject: ev.sujet || "", notes: ev.resume || "",
+    dueDate: eventDueDate(ev), createdAt: Date.now(), eventId: ev.id };
+  state.tasks.push(t); save();
+  return t;
+}
+function eventRow(ev) {
+  const u = eventUrgence(ev), st = eventStatut(ev), from = eventFrom(ev), link = eventLink(ev);
+  const who = from.nom || from.adresse || "?";
+  const sub = [esc(who), from.nom && from.adresse ? esc(from.adresse) : "", esc(EVENT_SOURCES[ev.source] || ev.source || ""),
+    esc(EVENT_COMPTES[ev.compte] || ev.compte || ""), esc(fmtDateTimeISO(ev.recu_le))].filter(Boolean).join(" · ");
+  const buttons = st === "nouveau"
+    ? `<button class="btn secondary small" data-ev-action="${ev.id}" title="Créer une action à suivre">🎫 Action</button>
+       <button class="btn secondary small" data-ev-task="${ev.id}" title="Créer une tâche">✅ Tâche</button>
+       <button class="btn ghost small" data-ev-statut="ignore" data-id="${ev.id}">Ignorer</button>
+       <button class="btn small" data-ev-statut="traite" data-id="${ev.id}">Traité</button>`
+    : `<span class="muted" style="font-size:12px">${st === "traite" ? "Traité" : "Ignoré"}${ev.traiteLe ? " le " + esc(fmtDateTimeISO(ev.traiteLe)) : ""}</span>
+       <button class="btn ghost small" data-ev-statut="nouveau" data-id="${ev.id}">Rouvrir</button>`;
+  return `<div class="row ev-row ev-u${u}${st !== "nouveau" ? " ev-done" : ""}" data-ev="${ev.id}">
+    <div class="grow">
+      <div class="r-head"><span class="r-title">${esc(eventTitle(ev))}</span><span class="badge ev-urg u${u}" title="Urgence ${u}">${EVENT_URGENCES[u]}</span></div>
+      <div class="r-sub">${sub}</div>
+      ${ev.resume && ev.resume !== ev.sujet ? `<div class="ev-resume">${esc(ev.resume)}</div>` : ""}
+      <div class="ev-actions">
+        <span class="pm-tag ev-act" title="Action proposée${ev.classifieur ? " (" + esc(ev.classifieur) + ")" : ""}">→ ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")}</span>
+        ${link ? `<a class="btn ghost small" href="${esc(link)}" target="_blank" rel="noopener">Ouvrir</a>` : ""}
+        <span class="grow"></span>${buttons}
+      </div></div></div>`;
+}
+function renderATraiter() {
+  const head = `<div class="toolbar nowrap"><div class="page-title grow" style="margin:0">À traiter</div>
+      <button class="btn secondary small" data-ev-refresh ${eventLoading ? "disabled" : ""}>${eventLoading ? "…" : "↻ Rafraîchir"}</button></div>`;
+  if (!(window.DriveSync && DriveSync.isConnected()))
+    return head + `<div class="center-empty">Connecte-toi à Google Drive (menu de gauche) pour recevoir les événements du Mac mini.</div>`;
+  const all = eventsAll(), nb = eventsNew().length;
+  const present = (key, labels) => { const m = {}; all.forEach((e) => { const k = e[key]; if (k) m[k] = labels[k] || k; }); return m; };
+  const opts = (map, cur, all) => `<option value="">${all}</option>` + Object.keys(map).map((k) => `<option value="${esc(k)}" ${cur === k ? "selected" : ""}>${esc(map[k])}</option>`).join("");
+  const filters = `<div class="filterbar">
+      <select data-evfilter="statut">${opts(EVENT_STATUTS, eventFilter.statut, "Tous les statuts")}</select>
+      <select data-evfilter="source">${opts(present("source", EVENT_SOURCES), eventFilter.source, "Toutes les sources")}</select>
+      <select data-evfilter="compte">${opts(present("compte", EVENT_COMPTES), eventFilter.compte, "Tous les comptes")}</select></div>`;
+  const items = sortEvents(all.filter((e) => (!eventFilter.statut || eventStatut(e) === eventFilter.statut)
+    && (!eventFilter.source || e.source === eventFilter.source) && (!eventFilter.compte || e.compte === eventFilter.compte)));
+  let info;
+  if (eventStore) info = `${nb} nouveau${nb > 1 ? "x" : ""} · dernière réception ${eventStore.generatedAt ? esc(fmtDateTimeISO(eventStore.generatedAt)) : "—"}`;
+  else if (eventLoading) info = "Lecture du fichier d'événements…";
+  else if (eventError === "absent") info = "Le fichier « operations01-evenements.json » vient d'être créé sur ton Drive : le relais peut maintenant y écrire.";
+  else info = eventError ? "Lecture impossible : " + esc(eventError) : "";
+  const empty = all.length ? "Rien ne correspond à ces filtres." : "Aucun événement reçu pour l'instant.";
+  return head + `<div class="muted" style="font-size:12px;margin-bottom:10px">${info}</div>` + filters
+    + `<div class="list">${items.length ? items.map(eventRow).join("") : `<div class="center-empty">${empty}</div>`}</div>
+    <details class="ev-help"><summary class="muted" style="font-size:12px;cursor:pointer">Comment ça marche ?</summary>
+      <div class="muted" style="font-size:12px;margin-top:6px">Le Mac mini classe tes mails et messages (urgence, action proposée, résumé) et les envoie toutes les 5 minutes au script relais
+      <code>appsscript-relais-evenements.gs</code>, installé dans ton compte Google principal, qui les dépose dans « operations01-evenements.json ».
+      Ici tu décides : Traité, Ignorer, ou transformer l'événement en action ou en tâche. Jamais de contenu complet des messages : sujet et résumé seulement.</div></details>`;
 }
 
 // ---- Import de tâches dans un projet (JSON ou CSV) ----
@@ -3939,6 +4101,20 @@ function wire() {
   c.querySelectorAll("[data-md-bg]").forEach((b) => b.onclick = () => { reader.bg = b.dataset.mdBg; reader.customBg = ""; saveReader(); render(); });
   const mdCustom = c.querySelector("#mdCustom"); if (mdCustom) mdCustom.onchange = () => { reader.customBg = mdCustom.value; saveReader(); render(); };
 
+  // à traiter (événements du Mac mini)
+  c.querySelectorAll("[data-ev-refresh]").forEach((b) => b.onclick = loadEvenements);
+  c.querySelectorAll("[data-evfilter]").forEach((s) => s.onchange = () => { eventFilter[s.dataset.evfilter] = s.value; render(); });
+  c.querySelectorAll("[data-ev-statut]").forEach((b) => b.onclick = () => setEventStatut(b.dataset.id, b.dataset.evStatut));
+  c.querySelectorAll("[data-ev-action]").forEach((b) => b.onclick = () => {
+    const ev = eventsAll().find((e) => e.id === b.dataset.evAction); if (!ev) return;
+    const x = eventToAction(ev); setEventStatut(ev.id, "traite"); openDetail("actions", x.id); toast("Action créée à partir de l'événement ✓");
+  });
+  c.querySelectorAll("[data-ev-task]").forEach((b) => b.onclick = () => {
+    const ev = eventsAll().find((e) => e.id === b.dataset.evTask); if (!ev) return;
+    eventToTask(ev); setEventStatut(ev.id, "traite"); toast("Tâche créée à partir de l'événement ✓");
+  });
+  if (eventsReady() && !eventLoading && Date.now() - eventLoadedAt > (eventStore ? EVENT_FRESH : EVENT_RETRY)) loadEvenements();
+
   // relances (mails) — et correspondance des projets
   c.querySelectorAll("[data-mail-refresh]").forEach((b) => b.onclick = loadMails);
   if (mailVisible() && !mailLoading && Date.now() - mailLoadedAt > (mailData ? MAIL_FRESH : MAIL_RETRY) && window.DriveSync && DriveSync.isConnected()) loadMails();
@@ -4643,6 +4819,8 @@ function exportTempsCSV() {
 // de jour, les mails arrivent par les analyses).
 refreshNotifications();
 setInterval(refreshNotifications, 5 * 60000);
+// Événements du Mac mini : relecture périodique pour tenir la pastille à jour.
+setInterval(() => { if (eventsReady() && Date.now() - eventLoadedAt > EVENT_FRESH) loadEvenements(); }, 60000);
 setInterval(() => {
   document.querySelectorAll("[data-entry-time]").forEach((span) => {
     const id = span.dataset.entryTime;

@@ -432,6 +432,28 @@ label.field.inline-check > span { margin-bottom: 0; }
 .chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 @media (max-width: 720px) { .chip { padding: 5px 11px; font-size: 12px; } }
 
+/* À traiter : événements classés par le Mac mini */
+.ev-row { cursor: default; align-items: flex-start; }
+.ev-row:hover { background: var(--card); }
+.ev-row.ev-done { opacity: .62; }
+.ev-row.ev-u1 { border-left-color: #d23c3c; }
+.ev-row.ev-u2 { border-left-color: #f08c2e; }
+.ev-row.ev-u3 { border-left-color: var(--alert); }
+.ev-row.ev-u4 { border-left-color: var(--line); }
+.badge.u1 { background: rgba(210,60,60,.14); color: #b03030; }
+.badge.u2 { background: rgba(240,140,46,.18); color: #a35a12; }
+.badge.u3 { background: rgba(233,219,101,.3); color: #7a6b17; }
+.badge.u4 { background: var(--bg); color: var(--muted); }
+@media (prefers-color-scheme: dark) { .badge.u1{color:#f08c8c}.badge.u2{color:#f5b57a}.badge.u3{color:#e9db65} }
+.ev-resume { font-size: 13px; margin-top: 5px; line-height: 1.4; }
+.ev-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.ev-act { font-weight: 600; }
+.ev-help { margin-top: 16px; }
+@media (max-width: 720px) {
+  .ev-actions .grow { flex-basis: 100%; height: 0; }
+  .ev-actions .btn { padding: 6px 9px; font-size: 12px; }
+}
+
 /* Détail mission : entrées d'historique */
 .entry { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; }
 .entry-head { display: flex; align-items: center; gap: 10px; cursor: pointer; }

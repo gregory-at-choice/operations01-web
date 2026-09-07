@@ -314,6 +314,34 @@
     return f ? f.id : null;
   }
 
+  // ---- Événements à traiter (pipeline « assistants » du Mac mini) ----------
+  // Même mécanisme que les mails : l'app crée le fichier (portée drive.file),
+  // et c'est le script relais Apps Script (appsscript-relais-evenements.gs)
+  // qui y fusionne les événements reçus en POST depuis le Mac mini.
+  const EVENTS_FILE = "operations01-evenements.json";
+  const EMPTY_EVENTS = () => JSON.stringify({ updatedAt: 0, evenements: [] });
+  async function ensureEvenements() {
+    const f = await findByName(EVENTS_FILE);
+    if (f) return f.id;
+    const made = await createNamed(EVENTS_FILE, EMPTY_EVENTS());
+    return made.id;
+  }
+  async function readEvenements() {
+    if (!accessToken) return null;
+    const f = await findByName(EVENTS_FILE);
+    if (!f) {
+      try { await createNamed(EVENTS_FILE, EMPTY_EVENTS()); } catch (e) {}
+      return null;
+    }
+    try { const j = JSON.parse(await download(f.id)); j._fileId = f.id; return j; } catch (e) { return null; }
+  }
+  // Réécrit le fichier. L'appelant le relit juste avant, pour ne pas écraser un
+  // ajout du relais survenu entre-temps.
+  async function writeEvenements(id, data) {
+    const copy = Object.assign({}, data); delete copy._fileId;
+    return updateFile(id, JSON.stringify(copy));
+  }
+
   // ---- Agenda Google (lecture seule) -------------------------------------
   // Les occurrences des séries sont dépliées (singleEvents) pour que chaque
   // événement affiché dans Planning corresponde à une date réelle.
@@ -627,6 +655,9 @@
     ensureMailbox,
     shareFile,
     dataFileId,
+    ensureEvenements,
+    readEvenements,
+    writeEvenements,
     listEvents,
     listCalendars,
     calendarGranted: calGranted,
