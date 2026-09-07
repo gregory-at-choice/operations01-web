@@ -169,13 +169,24 @@
       return null;
     }
     needsAuth = false;
-    const f = await findFile();
-    fileId = f ? f.id : null;
-    lastModifiedTime = f ? f.modifiedTime : null;
-    let remote = null;
-    if (fileId) { try { remote = JSON.parse(await download(fileId)); } catch (e) { remote = null; } }
+    const remote = await readRemote();
     setStatus("connecté");
     if (pending) { retries = 0; schedule(200); }
+    return remote;
+  }
+
+  // Lit l'état distant. Renvoie null seulement s'il n'y a PAS de fichier ;
+  // si le fichier existe mais ne peut pas être lu, on lève une erreur : le
+  // distant reste « inconnu » et rien ne doit l'écraser à l'aveugle.
+  async function readRemote() {
+    const f = await findFile();
+    fileId = f ? f.id : null;
+    lastModifiedTime = null;
+    if (!fileId) return null;
+    let remote;
+    try { remote = JSON.parse(await download(fileId)); }
+    catch (e) { throw new Error("Lecture du fichier Drive impossible : " + (e && e.message ? e.message : e)); }
+    lastModifiedTime = f.modifiedTime;
     return remote;
   }
 
@@ -480,11 +491,7 @@
     if (!silent && isIOS() && !accessToken) { setStatus("redirection vers Google…"); startRedirectAuth(); return null; }
     setStatus(silent ? "reconnexion…" : "connexion…");
     await ensureToken(!silent);
-    const f = await findFile();
-    fileId = f ? f.id : null;
-    lastModifiedTime = f ? f.modifiedTime : null;
-    let remote = null;
-    if (fileId) { try { remote = JSON.parse(await download(fileId)); } catch (e) { remote = null; } }
+    const remote = await readRemote();
     setStatus("connecté");
     return remote;
   }
@@ -506,10 +513,7 @@
     if (cameBackFromGoogle) {
       try {
         setStatus("connexion…");
-        const f = await findFile();
-        fileId = f ? f.id : null; lastModifiedTime = f ? f.modifiedTime : null;
-        let remote = null;
-        if (fileId) { try { remote = JSON.parse(await download(fileId)); } catch (e) { remote = null; } }
+        const remote = await readRemote();
         setStatus("connecté");
         return remote;
       } catch (e) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
@@ -528,6 +532,10 @@
     pending = state;
     schedule(800);
   }
+  // Quand Drive porte un état plus récent que le nôtre (autre appareil), on
+  // l'adopte au lieu de l'écraser : l'app est prévenue par ces écouteurs.
+  const remoteListeners = [];
+  function onRemote(fn) { remoteListeners.push(fn); }
   function schedule(delay) {
     clearTimeout(pushTimer);
     pushTimer = setTimeout(flush, delay);
@@ -540,21 +548,40 @@
       setStatus("sauvegarde…");
       if (!fileId) {
         const f = await findFile();                       // le fichier existe peut-être déjà
-        if (f) { fileId = f.id; lastModifiedTime = f.modifiedTime; }
+        if (f) { fileId = f.id; lastModifiedTime = null; } // contenu jamais lu : distant inconnu
       }
       if (!fileId) {
         const f = await createNamed(FILE_NAME, content);
         fileId = f.id; lastModifiedTime = f.modifiedTime;
       } else {
-        // Détection de conflit : le fichier distant a-t-il changé depuis notre dernière synchro ?
-        try {
+        // Avant d'écrire, on s'assure de ne pas écraser le travail d'un autre
+        // appareil : si le fichier a changé depuis notre dernière lecture/écriture,
+        // ou si on ne l'a jamais lu, on le relit et le plus récent l'emporte.
+        let changed = false;
+        if (lastModifiedTime) {
           const meta = await getMeta(fileId);
-          if (lastModifiedTime && meta.modifiedTime && meta.modifiedTime !== lastModifiedTime) {
-            // Un autre appareil a écrit : on sauvegarde la version distante avant d'écraser.
-            setStatus("conflit détecté — sauvegarde du distant…");
-            try { const remoteContent = await download(fileId); await createNamed(CONFLICT_PREFIX + stampStr() + ".json", remoteContent); } catch (e) {}
+          changed = !!(meta.modifiedTime && meta.modifiedTime !== lastModifiedTime);
+        }
+        if (changed || !lastModifiedTime) {
+          const remoteContent = await download(fileId);   // en cas d'échec : reprise plus tard, sans écraser
+          let remote = null;
+          try { remote = JSON.parse(remoteContent); } catch (e) {}
+          if (remote && (remote.updatedAt || 0) > (pending.updatedAt || 0)) {
+            // Le distant est plus récent : copie de sûreté du local, puis adoption.
+            setStatus("données plus récentes sur Drive — adoption…");
+            try { await createNamed(CONFLICT_PREFIX + stampStr() + "-local.json", content); } catch (e) {}
+            try { const meta = await getMeta(fileId); lastModifiedTime = meta.modifiedTime || null; } catch (e) { lastModifiedTime = null; }
+            pending = null; retries = 0;
+            setStatus("synchronisé");
+            remoteListeners.forEach((fn) => { try { fn(remote); } catch (e) {} });
+            return;
           }
-        } catch (e) {}
+          if (changed && remote) {
+            // Un autre appareil a écrit une version plus ancienne : on la garde avant d'écraser.
+            setStatus("conflit détecté — sauvegarde du distant…");
+            try { await createNamed(CONFLICT_PREFIX + stampStr() + ".json", remoteContent); } catch (e) {}
+          }
+        }
         const res = await updateFile(fileId, content);
         lastModifiedTime = res && res.modifiedTime ? res.modifiedTime : lastModifiedTime;
       }
@@ -647,6 +674,9 @@
     hasPending: () => !!pending,
     autoConnect,
     reconnect,
+    onRemote,
+    flushNow: flush,
+    fileExists: () => !!fileId,
     listBackups,
     restore,
     backupNow,

@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v58";
+const APP_VERSION = "v59";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -53,10 +53,22 @@ function load() {
   } catch (e) {}
   return blankState();
 }
-function save() {
-  state.updatedAt = Date.now();
+// `updatedAt` date la dernière modification faite par l'utilisateur : c'est elle
+// qui départage deux appareils. Les écritures automatiques (notifications
+// calculées en tâche de fond) passent en « silent » pour ne pas la faire
+// avancer : sinon un appareil laissé ouvert sur de vieilles données se croirait
+// plus récent que les autres et les écraserait.
+function save(opts) {
+  if (!(opts && opts.silent)) state.updatedAt = Date.now();
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
   if (window.DriveSync && DriveSync.isConnected()) DriveSync.push(state);
+}
+// Drive porte un état plus récent (autre appareil) : on l'adopte.
+function adoptRemote(remote, why) {
+  state = Object.assign(blankState(), remote);
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  render(); renderNotifBell();
+  if (why) toast(why);
 }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -73,7 +85,10 @@ function fmtDuration(sec) {
   return `${s}s`;
 }
 function fmtDate(iso) { if (!iso) return "—"; const d = new Date(iso + (iso.length <= 10 ? "T12:00:00" : "")); return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" }); }
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// Date locale au format AAAA-MM-JJ (toISOString donnerait la date UTC : à
+// Paris, un lundi 00:00 deviendrait le dimanche).
+const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const todayISO = () => localISO(new Date());
 const parseDate = (iso) => (iso ? new Date(iso + "T12:00:00") : null);
 function validURL(u) { try { return !!new URL(u).protocol; } catch (e) { return false; } }
 
@@ -1599,7 +1614,7 @@ function notifySystem(list) {
 // Point d'entrée : au lancement, après lecture des mails, et périodiquement.
 function refreshNotifications() {
   const created = computeNotifications();
-  if (created.length) { save(); notifySystem(created); }
+  if (created.length) { save({ silent: true }); notifySystem(created); }
   renderNotifBell();
   return created;
 }
@@ -1690,7 +1705,7 @@ function setEventStatut(id, statut) {
 function eventDueDate(ev) {
   const u = eventUrgence(ev), d = new Date();
   if (u === 3) d.setDate(d.getDate() + 3); else if (u === 4) d.setDate(d.getDate() + 7);
-  return d.toISOString().slice(0, 10);
+  return localISO(d);
 }
 const eventTitle = (ev) => ev.sujet || ev.resume || "Événement";
 const eventFrom = (ev) => ev.expediteur || {};
@@ -2716,7 +2731,7 @@ function renderDashboard() {
 // Période affichée dans l'onglet Temps : semaine ou mois, navigables.
 let timeTab = "semaine";
 let timeRef = todayISO();   // date de référence (un jour de la semaine / du mois affiché)
-const iso = (d) => d.toISOString().slice(0, 10);
+const iso = localISO;
 // Renvoie la période courante : bornes, libellé, et si elle contient aujourd'hui.
 function timeRange() {
   const ref = new Date(timeRef + "T12:00:00");
@@ -4850,6 +4865,7 @@ document.getElementById("installClose").onclick = () => { document.getElementByI
 if (generateRecurrences() > 0) save();
 render();
 renderDriveBar();
+if (window.DriveSync && DriveSync.onRemote) DriveSync.onRemote((remote) => adoptRemote(remote, "Données plus récentes reçues d'un autre appareil ✓"));
 if (window.DriveSync) DriveSync.onStatus((s) => {
   const el = document.getElementById("driveStatus");
   if (el) el.textContent = s;
