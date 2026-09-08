@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v60";
+const APP_VERSION = "v61";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -114,12 +114,28 @@ function stampChanges(st, now) {
   stampIndex = next;
 }
 rebuildStampIndex(state);
-function mergeList(base, local, remote, ctx, nestedKey) {
+// « Avancement » d'une fiche sans date (écrite par une ancienne version de
+// l'app) : le temps ne fait que s'accumuler, une tâche ne fait qu'avancer, une
+// action se clôt… Entre deux copies non datées, la plus avancée est la plus
+// récente ; à égalité, le local.
+const TASK_RANK = { aFaire: 0, enCours: 1, termine: 2 };
+function legacyScore(kind, r) {
+  if (!r) return -1;
+  if (kind === "entries") return (r.accumulatedSeconds || 0) + (r.timerStartedAt ? 0.5 : 0);
+  if (kind === "tasks") return (TASK_RANK[r.status] || 0) * 1000 + (Number(r.progress) || 0);
+  if (kind === "actions") return r.closed ? 1 : 0;
+  if (kind === "missions") return (r.entries || []).reduce((s, e) => s + (e.accumulatedSeconds || 0), 0);
+  return 0;
+}
+function mergeList(base, local, remote, ctx, kind, nestedKey) {
   const index = (arr) => { const m = {}; (arr || []).forEach((r) => { if (r && r.id) m[r.id] = r; }); return m; };
   const B = index(base), L = index(local), R = index(remote);
   const out = [], seen = {};
   const order = [].concat((local || []).map((r) => r && r.id), (remote || []).map((r) => r && r.id)).filter(Boolean);
   const tOf = (r) => (r && r._t) || 0;
+  // Un distant sans aucune date (ancienne version de l'app, ou copie jamais
+  // enregistrée) ne peut pas prouver qu'une suppression est récente.
+  const legacyRemote = !(ctx.remote.syncT > 0);
   order.forEach((id) => {
     if (seen[id]) return; seen[id] = 1;
     const b = B[id], l = L[id], r = R[id];
@@ -132,19 +148,21 @@ function mergeList(base, local, remote, ctx, nestedKey) {
       if (!localChanged && remoteChanged) {
         // Le distant a bougé. Sauf s'il ne fait que revenir en arrière par rapport
         // à ce que nous avions déjà vu (vieille copie) : dans ce cas on garde le local.
-        const stale = b && ((r && tOf(r) < tOf(b)) || (!r && (ctx.remote.syncT || 0) < tOf(b)));
+        let stale = false;
+        if (!r) stale = legacyRemote || (ctx.remote.syncT || 0) < tOf(b);
+        else if (tOf(b)) stale = tOf(r) < tOf(b);
+        else stale = !tOf(r) && legacyScore(kind, r) < legacyScore(kind, b);
         pick = stale ? l : r;
       } else if (localChanged && !remoteChanged) pick = l;
       else if (!l) pick = tOf(r) > (ctx.local.syncT || 0) ? r : undefined;        // supprimé ici, modifié là-bas
-      else if (!r) pick = tOf(l) > (ctx.remote.syncT || 0) ? l : undefined;       // modifié ici, supprimé là-bas
+      else if (!r) pick = legacyRemote || tOf(l) > (ctx.remote.syncT || 0) ? l : undefined; // modifié ici, supprimé là-bas
       else {
-        // Modifié des deux côtés : la fiche la plus récente l'emporte, et ses
-        // sous-éléments (temps d'un projet) sont fusionnés à leur tour. Sans
-        // date sur les fiches (anciennes versions), c'est l'état qui contient
-        // les créations les plus récentes qui l'emporte, puis le local.
-        const localWins = tOf(l) !== tOf(r) ? tOf(l) > tOf(r) : ctx.localFresh >= ctx.remoteFresh;
+        // Modifié des deux côtés : la fiche la plus récente l'emporte (à défaut
+        // de dates, la plus avancée, puis le local), et ses sous-éléments
+        // (temps d'un projet) sont fusionnés à leur tour.
+        const localWins = tOf(l) !== tOf(r) ? tOf(l) > tOf(r) : legacyScore(kind, l) >= legacyScore(kind, r);
         pick = Object.assign({}, localWins ? l : r);
-        if (nestedKey) pick[nestedKey] = mergeList(b && b[nestedKey], l[nestedKey], r[nestedKey], ctx);
+        if (nestedKey) pick[nestedKey] = mergeList(b && b[nestedKey], l[nestedKey], r[nestedKey], ctx, nestedKey);
       }
     }
     if (pick !== undefined) out.push(pick);
@@ -158,27 +176,15 @@ function mergeMap(base, local, remote) {
   Object.keys(base).forEach((k) => { if (!(k in local) && JSON.stringify(remote[k]) === JSON.stringify(base[k])) delete out[k]; });
   return out;
 }
-// « Fraîcheur » d'un état : date de création la plus récente parmi ses fiches
-// (hors notifications, produites en tâche de fond). Une vieille copie poussée
-// par un appareil resté fermé ne contient pas les créations récentes.
-function freshness(st) {
-  let max = 0;
-  SYNC_COLLECTIONS.forEach((k) => { if (k === "notifs") return; (st[k] || []).forEach((r) => {
-    if (r && r.createdAt > max) max = r.createdAt;
-    const nk = SYNC_NESTED[k];
-    if (nk) (r[nk] || []).forEach((e) => { if (e && e.createdAt > max) max = e.createdAt; if (e && e.timerStartedAt > max) max = e.timerStartedAt; });
-  }); });
-  return max;
-}
 function mergeStates(base, local, remote) {
   base = base || {}; local = local || {}; remote = remote || {};
-  const ctx = { local, remote, localFresh: freshness(local), remoteFresh: freshness(remote) };
+  const ctx = { local, remote };
   const out = Object.assign(blankState(), remote);
-  SYNC_COLLECTIONS.forEach((k) => { out[k] = mergeList(base[k], local[k], remote[k], ctx, SYNC_NESTED[k]); });
+  SYNC_COLLECTIONS.forEach((k) => { out[k] = mergeList(base[k], local[k], remote[k], ctx, k, SYNC_NESTED[k]); });
   SYNC_MAPS.forEach((k) => { out[k] = mergeMap(base[k], local[k], remote[k]); });
   // Congés : réglages = côté modifié (local prioritaire), ajustements fusionnés.
   const lv = Object.assign({}, remote.leave || {}, JSON.stringify(local.leave) !== JSON.stringify(base.leave) ? (local.leave || {}) : {});
-  lv.adjustments = mergeList((base.leave || {}).adjustments, (local.leave || {}).adjustments, (remote.leave || {}).adjustments, ctx);
+  lv.adjustments = mergeList((base.leave || {}).adjustments, (local.leave || {}).adjustments, (remote.leave || {}).adjustments, ctx, "adjustments");
   out.leave = lv;
   ["readerOrder", "readerCurrent", "pdfOrder", "pdfCurrent"].forEach((k) => {
     out[k] = JSON.stringify(local[k]) !== JSON.stringify(base[k]) ? local[k] : remote[k];
