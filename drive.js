@@ -536,6 +536,14 @@
   // l'adopte au lieu de l'écraser : l'app est prévenue par ces écouteurs.
   const remoteListeners = [];
   function onRemote(fn) { remoteListeners.push(fn); }
+  // Après chaque synchronisation réussie, l'app reçoit le contenu désormais sur
+  // Drive (sa « base » pour la prochaine fusion).
+  const syncedListeners = [];
+  function onSynced(fn) { syncedListeners.push(fn); }
+  const synced = (content) => syncedListeners.forEach((fn) => { try { fn(content); } catch (e) {} });
+  // Fusion fournie par l'app : (distant, local) → état fusionné.
+  let merger = null;
+  function setMerger(fn) { merger = fn; }
   function schedule(delay) {
     clearTimeout(pushTimer);
     pushTimer = setTimeout(flush, delay);
@@ -543,7 +551,7 @@
   async function flush() {
     if (!pending) return;
     if (!hasSession()) return;
-    const content = JSON.stringify(pending);
+    let content = JSON.stringify(pending);
     try {
       setStatus("sauvegarde…");
       if (!fileId) {
@@ -566,25 +574,36 @@
           const remoteContent = await download(fileId);   // en cas d'échec : reprise plus tard, sans écraser
           let remote = null;
           try { remote = JSON.parse(remoteContent); } catch (e) {}
-          if (remote && (remote.updatedAt || 0) > (pending.updatedAt || 0)) {
-            // Le distant est plus récent : copie de sûreté du local, puis adoption.
-            setStatus("données plus récentes sur Drive — adoption…");
-            try { await createNamed(CONFLICT_PREFIX + stampStr() + "-local.json", content); } catch (e) {}
-            try { const meta = await getMeta(fileId); lastModifiedTime = meta.modifiedTime || null; } catch (e) { lastModifiedTime = null; }
-            pending = null; retries = 0;
-            setStatus("synchronisé");
-            remoteListeners.forEach((fn) => { try { fn(remote); } catch (e) {} });
-            return;
-          }
-          if (changed && remote) {
-            // Un autre appareil a écrit une version plus ancienne : on la garde avant d'écraser.
-            setStatus("conflit détecté — sauvegarde du distant…");
-            try { await createNamed(CONFLICT_PREFIX + stampStr() + ".json", remoteContent); } catch (e) {}
+          if (remote) {
+            if (changed) {
+              // Un autre appareil a écrit entre-temps : copies de sûreté des deux versions avant fusion.
+              setStatus("fusion avec un autre appareil…");
+              try { await createNamed(CONFLICT_PREFIX + stampStr() + "-local.json", content); } catch (e) {}
+              try { await createNamed(CONFLICT_PREFIX + stampStr() + ".json", remoteContent); } catch (e) {}
+            }
+            const merged = merger ? merger(remote, pending)
+              : ((remote.updatedAt || 0) > (pending.updatedAt || 0) ? remote : pending);
+            const mergedContent = JSON.stringify(merged);
+            if (mergedContent !== content) {
+              // Le résultat diffère de ce que l'app voulait écrire : elle l'adopte.
+              pending = merged; content = mergedContent;
+              remoteListeners.forEach((fn) => { try { fn(merged); } catch (e) {} });
+            }
+            if (mergedContent === remoteContent) {
+              // Drive a déjà exactement cet état : rien à écrire.
+              try { const meta = await getMeta(fileId); lastModifiedTime = meta.modifiedTime || null; } catch (e) { lastModifiedTime = null; }
+              if (pending && JSON.stringify(pending) === content) pending = null;
+              retries = 0; synced(content);
+              setStatus(pending ? "sauvegarde…" : "synchronisé");
+              if (pending) schedule(300);
+              return;
+            }
           }
         }
         const res = await updateFile(fileId, content);
         lastModifiedTime = res && res.modifiedTime ? res.modifiedTime : lastModifiedTime;
       }
+      synced(content);
       if (pending && JSON.stringify(pending) === content) pending = null; // rien de neuf entre-temps
       retries = 0;
       dailyBackup(content);
@@ -675,6 +694,8 @@
     autoConnect,
     reconnect,
     onRemote,
+    onSynced,
+    setMerger,
     flushNow: flush,
     fileExists: () => !!fileId,
     listBackups,

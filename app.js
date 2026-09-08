@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v59";
+const APP_VERSION = "v60";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -59,16 +59,144 @@ function load() {
 // avancer : sinon un appareil laissé ouvert sur de vieilles données se croirait
 // plus récent que les autres et les écraserait.
 function save(opts) {
-  if (!(opts && opts.silent)) state.updatedAt = Date.now();
+  if (!(opts && opts.silent)) {
+    const now = Date.now();
+    state.updatedAt = now;
+    state.syncT = now;          // dernière modification réelle (jamais avancée par une écriture silencieuse)
+    stampChanges(state, now);   // date chaque fiche modifiée (fusion entre appareils)
+  }
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
   if (window.DriveSync && DriveSync.isConnected()) DriveSync.push(state);
 }
-// Drive porte un état plus récent (autre appareil) : on l'adopte.
+// L'état venant de Drive (fusionné avec le nôtre) devient l'état courant.
 function adoptRemote(remote, why) {
   state = Object.assign(blankState(), remote);
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  rebuildStampIndex(state);
   render(); renderNotifBell();
   if (why) toast(why);
+}
+
+// ----------------------------- Synchronisation entre appareils -----------------------------
+// Chaque appareil garde une copie de l'état tel qu'il l'a vu sur Drive pour la
+// dernière fois (la « base »). Quand un autre appareil a écrit entre-temps, on
+// ne choisit plus un état entier : on fusionne fiche par fiche, à trois voies
+// (base, local, distant). Une fiche n'a changé que d'un côté → ce côté gagne ;
+// changée des deux côtés → la plus récemment modifiée (`_t`) gagne. Un état
+// distant qui ne fait que « revenir en arrière » (vieille copie poussée par un
+// appareil resté fermé) est reconnu à ses dates et ne fait rien perdre.
+const BASE_KEY = "operations01_base";
+const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs"];
+const SYNC_NESTED = { missions: "entries" };
+const SYNC_MAPS = ["mailLinks", "notifSeen"];
+const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
+let syncBase = (() => { try { const r = localStorage.getItem(BASE_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } })();
+function setSyncBase(obj) {
+  syncBase = typeof obj === "string" ? JSON.parse(obj) : obj;
+  try { localStorage.setItem(BASE_KEY, typeof obj === "string" ? obj : JSON.stringify(obj)); } catch (e) {}
+}
+// Index des signatures au dernier enregistrement : sert à repérer les fiches
+// modifiées pour les dater.
+let stampIndex = {};
+function eachRecord(st, fn) {
+  SYNC_COLLECTIONS.forEach((k) => (st[k] || []).forEach((r) => {
+    if (!r || !r.id) return;
+    fn(k + ":" + r.id, r);
+    const nk = SYNC_NESTED[k];
+    if (nk) (r[nk] || []).forEach((e) => { if (e && e.id) fn(k + ":" + r.id + "/" + e.id, e); });
+  }));
+  ((st.leave && st.leave.adjustments) || []).forEach((a) => { if (a && a.id) fn("leave:" + a.id, a); });
+}
+function rebuildStampIndex(st) { stampIndex = {}; eachRecord(st, (key, r) => { stampIndex[key] = sigOf(r); }); }
+function stampChanges(st, now) {
+  const next = {};
+  eachRecord(st, (key, r) => { const s = sigOf(r); next[key] = s; if (stampIndex[key] !== s) r._t = now; });
+  stampIndex = next;
+}
+rebuildStampIndex(state);
+function mergeList(base, local, remote, ctx, nestedKey) {
+  const index = (arr) => { const m = {}; (arr || []).forEach((r) => { if (r && r.id) m[r.id] = r; }); return m; };
+  const B = index(base), L = index(local), R = index(remote);
+  const out = [], seen = {};
+  const order = [].concat((local || []).map((r) => r && r.id), (remote || []).map((r) => r && r.id)).filter(Boolean);
+  const tOf = (r) => (r && r._t) || 0;
+  order.forEach((id) => {
+    if (seen[id]) return; seen[id] = 1;
+    const b = B[id], l = L[id], r = R[id];
+    let pick;
+    if (!l && !r) return;
+    if (l && r && sigOf(l) === sigOf(r)) pick = l;
+    else {
+      const localChanged = b ? (!l || sigOf(l) !== sigOf(b)) : !!l;
+      const remoteChanged = b ? (!r || sigOf(r) !== sigOf(b)) : !!r;
+      if (!localChanged && remoteChanged) {
+        // Le distant a bougé. Sauf s'il ne fait que revenir en arrière par rapport
+        // à ce que nous avions déjà vu (vieille copie) : dans ce cas on garde le local.
+        const stale = b && ((r && tOf(r) < tOf(b)) || (!r && (ctx.remote.syncT || 0) < tOf(b)));
+        pick = stale ? l : r;
+      } else if (localChanged && !remoteChanged) pick = l;
+      else if (!l) pick = tOf(r) > (ctx.local.syncT || 0) ? r : undefined;        // supprimé ici, modifié là-bas
+      else if (!r) pick = tOf(l) > (ctx.remote.syncT || 0) ? l : undefined;       // modifié ici, supprimé là-bas
+      else {
+        // Modifié des deux côtés : la fiche la plus récente l'emporte, et ses
+        // sous-éléments (temps d'un projet) sont fusionnés à leur tour. Sans
+        // date sur les fiches (anciennes versions), c'est l'état qui contient
+        // les créations les plus récentes qui l'emporte, puis le local.
+        const localWins = tOf(l) !== tOf(r) ? tOf(l) > tOf(r) : ctx.localFresh >= ctx.remoteFresh;
+        pick = Object.assign({}, localWins ? l : r);
+        if (nestedKey) pick[nestedKey] = mergeList(b && b[nestedKey], l[nestedKey], r[nestedKey], ctx);
+      }
+    }
+    if (pick !== undefined) out.push(pick);
+  });
+  return out;
+}
+function mergeMap(base, local, remote) {
+  base = base || {}; local = local || {}; remote = remote || {};
+  const out = Object.assign({}, remote);
+  Object.keys(local).forEach((k) => { if (JSON.stringify(local[k]) !== JSON.stringify(base[k])) out[k] = local[k]; });
+  Object.keys(base).forEach((k) => { if (!(k in local) && JSON.stringify(remote[k]) === JSON.stringify(base[k])) delete out[k]; });
+  return out;
+}
+// « Fraîcheur » d'un état : date de création la plus récente parmi ses fiches
+// (hors notifications, produites en tâche de fond). Une vieille copie poussée
+// par un appareil resté fermé ne contient pas les créations récentes.
+function freshness(st) {
+  let max = 0;
+  SYNC_COLLECTIONS.forEach((k) => { if (k === "notifs") return; (st[k] || []).forEach((r) => {
+    if (r && r.createdAt > max) max = r.createdAt;
+    const nk = SYNC_NESTED[k];
+    if (nk) (r[nk] || []).forEach((e) => { if (e && e.createdAt > max) max = e.createdAt; if (e && e.timerStartedAt > max) max = e.timerStartedAt; });
+  }); });
+  return max;
+}
+function mergeStates(base, local, remote) {
+  base = base || {}; local = local || {}; remote = remote || {};
+  const ctx = { local, remote, localFresh: freshness(local), remoteFresh: freshness(remote) };
+  const out = Object.assign(blankState(), remote);
+  SYNC_COLLECTIONS.forEach((k) => { out[k] = mergeList(base[k], local[k], remote[k], ctx, SYNC_NESTED[k]); });
+  SYNC_MAPS.forEach((k) => { out[k] = mergeMap(base[k], local[k], remote[k]); });
+  // Congés : réglages = côté modifié (local prioritaire), ajustements fusionnés.
+  const lv = Object.assign({}, remote.leave || {}, JSON.stringify(local.leave) !== JSON.stringify(base.leave) ? (local.leave || {}) : {});
+  lv.adjustments = mergeList((base.leave || {}).adjustments, (local.leave || {}).adjustments, (remote.leave || {}).adjustments, ctx);
+  out.leave = lv;
+  ["readerOrder", "readerCurrent", "pdfOrder", "pdfCurrent"].forEach((k) => {
+    out[k] = JSON.stringify(local[k]) !== JSON.stringify(base[k]) ? local[k] : remote[k];
+  });
+  out.updatedAt = Math.max(local.updatedAt || 0, remote.updatedAt || 0);
+  out.syncT = Math.max(local.syncT || 0, remote.syncT || 0);
+  return out;
+}
+// À la connexion : on fusionne l'état distant avec le nôtre, puis on écrit le
+// résultat s'il diffère de ce qui est sur Drive.
+function applyRemote(remote) {
+  if (!remote) { DriveSync.push(state); return; }
+  const merged = mergeStates(syncBase, state, remote);
+  setSyncBase(remote);
+  state = Object.assign(blankState(), merged);
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  rebuildStampIndex(state);
+  if (sigOf(state) !== sigOf(remote)) DriveSync.push(state);
 }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -4660,11 +4788,8 @@ function reconnectDrive() {
   if (!(window.DriveSync && DriveSync.configured())) { alert("Google Drive n'est pas configuré (identifiant client manquant dans config.js)."); return; }
   const p = DriveSync.reconnect();
   p.then((remote) => {
-    if (remote === null && DriveSync.needsAuth() === false) return; // redirection en cours
-    if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) {
-      state = Object.assign(blankState(), remote);
-      localStorage.setItem(STORE_KEY, JSON.stringify(state));
-    } else DriveSync.push(state);
+    if (remote === null && DriveSync.needsAuth() === false && !DriveSync.isConnected()) return; // redirection en cours
+    applyRemote(remote);
     renderDriveBar(); render(); loadMails(); loadCalendar(true);
     toast("Google Drive reconnecté ✓");
   }).catch((e) => {
@@ -4678,8 +4803,8 @@ async function connectDrive() {
   try {
     const remote = await DriveSync.connect();
     if (remote === null && !DriveSync.isConnected()) return; // redirection vers Google en cours
-    if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) { state = Object.assign(blankState(), remote); localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
-    if (generateRecurrences() > 0) save(); else DriveSync.push(state);
+    applyRemote(remote);
+    if (generateRecurrences() > 0) save();
     renderDriveBar(); render();
     loadMails(); loadCalendar(true);
   } catch (e) { alert("Connexion Google Drive impossible : " + e.message); }
@@ -4865,7 +4990,9 @@ document.getElementById("installClose").onclick = () => { document.getElementByI
 if (generateRecurrences() > 0) save();
 render();
 renderDriveBar();
-if (window.DriveSync && DriveSync.onRemote) DriveSync.onRemote((remote) => adoptRemote(remote, "Données plus récentes reçues d'un autre appareil ✓"));
+if (window.DriveSync && DriveSync.setMerger) DriveSync.setMerger((remote, local) => mergeStates(syncBase, local, remote));
+if (window.DriveSync && DriveSync.onRemote) DriveSync.onRemote((merged) => adoptRemote(merged, "Modifications d'un autre appareil fusionnées ✓"));
+if (window.DriveSync && DriveSync.onSynced) DriveSync.onSynced((content) => setSyncBase(content));
 if (window.DriveSync) DriveSync.onStatus((s) => {
   const el = document.getElementById("driveStatus");
   if (el) el.textContent = s;
@@ -4882,10 +5009,7 @@ if (window.DriveSync) DriveSync.onStatus((s) => {
   // on lance quand même autoConnect, qui basculera sur « reconnexion nécessaire ».
   if (!DriveSync.ready() && tries < 25) { setTimeout(() => autoReconnect(tries + 1), 400); return; }
   DriveSync.autoConnect().then((remote) => {
-    if (remote && (remote.updatedAt || 0) > (state.updatedAt || 0)) {
-      state = Object.assign(blankState(), remote);
-      localStorage.setItem(STORE_KEY, JSON.stringify(state));
-    }
+    if (remote) applyRemote(remote);
     if (generateRecurrences() > 0) save();
     renderDriveBar(); render(); loadMails(); loadCalendar(true);
   }).catch(() => { renderDriveBar(); });
