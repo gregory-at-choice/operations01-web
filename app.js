@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v65";
+const APP_VERSION = "v66";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -88,7 +88,7 @@ function adoptRemote(remote, why) {
 const BASE_KEY = "operations01_base";
 const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs"];
 const SYNC_NESTED = { missions: "entries" };
-const SYNC_MAPS = ["mailLinks", "notifSeen"];
+const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
 let syncBase = (() => { try { const r = localStorage.getItem(BASE_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } })();
 function setSyncBase(obj) {
@@ -1894,27 +1894,71 @@ function eventToTask(ev) {
   return t;
 }
 // Tâche proposée par l'assistant sur un événement : titre, échéance, estimation.
+// Étapes du processus proposé (action complexe) : liste ordonnée, ou [] sinon.
+function eventSteps(ev) {
+  const p = ev.proposition;
+  return p && Array.isArray(p.processus) ? p.processus.filter((s) => s && s.etape) : [];
+}
+// Étapes cochées par Grégory (synchronisées entre appareils) : { idÉvénement: [indices] }.
+const stepsDone = (evId) => ((state.evSteps || {})[evId] || []);
+function toggleStep(evId, i) {
+  state.evSteps = state.evSteps || {};
+  const cur = stepsDone(evId).slice();
+  const k = cur.indexOf(i);
+  if (k > -1) cur.splice(k, 1); else cur.push(i);
+  state.evSteps[evId] = cur.sort((a, b) => a - b);
+  save();
+}
+function stepsText(steps) {
+  return steps.map((s, i) => `${i + 1}. ${s.etape}${s.estimationMin ? ` (${fmtEstim(s.estimationMin)})` : ""}`).join("\n");
+}
+// Une seule tâche, les étapes du processus en description.
 function eventToProposedTask(ev) {
   const p = (ev.proposition && ev.proposition.tache) || {};
   const t = eventToTask(ev);
   if (p.titre) t.title = p.titre;
   if (p.echeance) t.dueDate = String(p.echeance).slice(0, 10);
   if (p.estimationMin) t.estimationMin = Math.round(Number(p.estimationMin)) || null;
+  const steps = eventSteps(ev);
+  if (steps.length) t.notes = [t.notes, "Processus :\n" + stepsText(steps)].filter(Boolean).join("\n\n");
   save();
   return t;
+}
+// Une tâche par étape du processus (échéance de l'action, estimation de l'étape).
+function eventToStepTasks(ev) {
+  const p = (ev.proposition && ev.proposition.tache) || {};
+  const steps = eventSteps(ev);
+  const out = steps.map((s, i) => {
+    const t = eventToTask(ev);
+    t.title = `${p.titre || eventTitle(ev)} — ${i + 1}/${steps.length} : ${s.etape}`;
+    if (p.echeance) t.dueDate = String(p.echeance).slice(0, 10);
+    t.estimationMin = Math.round(Number(s.estimationMin)) || null;
+    t.notes = `Étape ${i + 1} sur ${steps.length} de « ${p.titre || eventTitle(ev)} »`;
+    return t;
+  });
+  save();
+  return out;
 }
 function eventProposal(ev) {
   const p = ev.proposition;
   if (!p || (!p.reponse && !p.tache)) return "";
   const compose = eventComposeLink(ev);
-  const t = p.tache;
+  const t = p.tache, steps = eventSteps(ev), done = stepsDone(ev.id);
+  const complex = !!(t && (t.complexe || steps.length));
+  const stepsTotal = steps.reduce((a, s) => a + (Number(s.estimationMin) || 0), 0);
+  const stepList = steps.length ? `<div class="ev-steps">${steps.map((s, i) => `<label class="ev-step${done.indexOf(i) > -1 ? " done" : ""}">
+      <input type="checkbox" data-ev-step="${ev.id}" data-i="${i}" ${done.indexOf(i) > -1 ? "checked" : ""}/>
+      <span class="grow">${i + 1}. ${esc(s.etape)}</span>${s.estimationMin ? `<span class="muted">${esc(fmtEstim(s.estimationMin))}</span>` : ""}</label>`).join("")}
+    <div class="muted" style="font-size:11px;margin-top:4px">${done.length}/${steps.length} étapes faites${stepsTotal ? ` · ${esc(fmtEstim(stepsTotal))} au total` : ""}</div></div>` : "";
   return `<details class="ev-prop"><summary>💡 Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}</summary>
     ${p.reponse ? `<div class="ev-draft">${esc(p.reponse)}</div>
       <div class="ev-actions"><button class="btn ghost small" data-ev-copy="${ev.id}">Copier</button>
         ${compose ? `<a class="btn secondary small" href="${esc(compose)}" target="_blank" rel="noopener">✉️ Répondre dans Gmail</a>` : ""}
         <span class="muted" style="font-size:11px">Rien n'est envoyé sans toi : Gmail s'ouvre pré-rempli, tu relis puis tu envoies.</span></div>` : ""}
-    ${t && t.titre ? `<div class="ev-ptask"><span class="grow">Tâche proposée : <strong>${esc(t.titre)}</strong>${t.echeance ? ` · pour le ${esc(fmtDate(String(t.echeance).slice(0, 10)))}` : ""}${t.estimationMin ? ` · ${esc(fmtEstim(t.estimationMin))}` : ""}</span>
-        <button class="btn secondary small" data-ev-ptask="${ev.id}">✅ Créer la tâche proposée</button></div>` : ""}
+    ${t && t.titre ? `<div class="ev-ptask"><span class="grow">${complex ? '<span class="badge u2" title="Action complexe : un processus en plusieurs étapes est proposé">Complexe</span> ' : ""}Action proposée : <strong>${esc(t.titre)}</strong>${t.echeance ? ` · pour le ${esc(fmtDate(String(t.echeance).slice(0, 10)))}` : ""}${t.estimationMin ? ` · ${esc(fmtEstim(t.estimationMin))}` : ""}</span>
+        <button class="btn secondary small" data-ev-ptask="${ev.id}" title="${steps.length ? "Une seule tâche, les étapes en description" : "Créer la tâche"}">✅ Créer la tâche</button>
+        ${steps.length ? `<button class="btn ghost small" data-ev-psteps="${ev.id}" title="Une tâche par étape, avec son estimation">⋮ Une tâche par étape</button>` : ""}</div>
+      ${stepList}` : ""}
   </details>`;
 }
 function eventRow(ev) {
@@ -4413,6 +4457,11 @@ function wire() {
     const ev = eventsAll().find((e) => e.id === b.dataset.evPtask); if (!ev) return;
     eventToProposedTask(ev); setEventStatut(ev.id, "traite"); toast("Tâche proposée créée ✓");
   });
+  c.querySelectorAll("[data-ev-psteps]").forEach((b) => b.onclick = () => {
+    const ev = eventsAll().find((e) => e.id === b.dataset.evPsteps); if (!ev) return;
+    const n = eventToStepTasks(ev).length; setEventStatut(ev.id, "traite"); toast(`${n} tâche(s) créée(s), une par étape ✓`);
+  });
+  c.querySelectorAll("[data-ev-step]").forEach((cb) => cb.onchange = () => { toggleStep(cb.dataset.evStep, Number(cb.dataset.i)); render(); });
   if (eventsReady() && !eventLoading && Date.now() - eventLoadedAt > (eventStore ? EVENT_FRESH : EVENT_RETRY)) loadEvenements();
   if (assistantReady() && !assistantLoading && Date.now() - assistantLoadedAt > (assistantStore ? EVENT_FRESH : EVENT_RETRY)) loadAssistant();
 

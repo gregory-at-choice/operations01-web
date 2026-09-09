@@ -545,3 +545,8 @@ a.pm-tag { color: var(--primary); }
 .notif-badge { position: absolute; top: -6px; right: -6px; background: #d23c3c; color: #fff; font-size: 10px; font-weight: 700;
   border-radius: 999px; padding: 2px 6px; line-height: 1; }
 .tab-bell.has { color: var(--primary); }
+/* Processus proposé : étapes cochables */
+.ev-steps { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+.ev-step { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; cursor: pointer; }
+.ev-step input { width: auto; margin: 0; }
+.ev-step.done .grow { text-decoration: line-through; color: var(--muted); }
