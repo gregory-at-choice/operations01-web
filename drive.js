@@ -548,9 +548,27 @@
     clearTimeout(pushTimer);
     pushTimer = setTimeout(flush, delay);
   }
+  // Relecture à la demande : si un autre appareil a écrit depuis notre dernière
+  // synchro, on fusionne tout de suite (sans attendre une modification locale).
+  // Quand rien n'a changé, cela ne coûte qu'un appel de métadonnées.
+  async function refresh(state) {
+    if (!hasSession() || !fileId || !lastModifiedTime || pending || flushing) return false;
+    let meta;
+    try { meta = await getMeta(fileId); } catch (e) { return false; }
+    if (!meta.modifiedTime || meta.modifiedTime === lastModifiedTime) return false;
+    pending = state;
+    await flush();
+    return true;
+  }
+  let flushing = false;
   async function flush() {
     if (!pending) return;
     if (!hasSession()) return;
+    if (flushing) { schedule(500); return; }
+    flushing = true;
+    try { await doFlush(); } finally { flushing = false; }
+  }
+  async function doFlush() {
     let content = JSON.stringify(pending);
     try {
       setStatus("sauvegarde…");
@@ -696,6 +714,7 @@
     onRemote,
     onSynced,
     setMerger,
+    refresh,
     flushNow: flush,
     fileExists: () => !!fileId,
     listBackups,

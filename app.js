@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v61";
+const APP_VERSION = "v62";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -4999,6 +4999,18 @@ renderDriveBar();
 if (window.DriveSync && DriveSync.setMerger) DriveSync.setMerger((remote, local) => mergeStates(syncBase, local, remote));
 if (window.DriveSync && DriveSync.onRemote) DriveSync.onRemote((merged) => adoptRemote(merged, "Modifications d'un autre appareil fusionnées ✓"));
 if (window.DriveSync && DriveSync.onSynced) DriveSync.onSynced((content) => setSyncBase(content));
+// Appareil laissé ouvert : on relit Drive toutes les deux minutes et au retour
+// au premier plan, pour reprendre ce que les autres appareils ont écrit.
+// Jamais pendant une saisie (le rendu remplacerait le champ en cours).
+const PULL_EVERY = 2 * 60000;
+async function pullRemote() {
+  if (!(window.DriveSync && DriveSync.refresh && DriveSync.isConnected())) return;
+  const ae = document.activeElement;
+  if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || "")) return;
+  try { await DriveSync.refresh(state); } catch (e) {}
+}
+setInterval(pullRemote, PULL_EVERY);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pullRemote(); });
 if (window.DriveSync) DriveSync.onStatus((s) => {
   const el = document.getElementById("driveStatus");
   if (el) el.textContent = s;
