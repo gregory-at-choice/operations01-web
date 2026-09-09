@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v64";
+const APP_VERSION = "v65";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1980,7 +1980,10 @@ async function loadAssistant() {
   assistantLoadedAt = Date.now(); assistantLoading = true;
   try { const d = await DriveSync.readAssistant(); if (d) assistantStore = d; } catch (e) {}
   assistantLoading = false;
-  if (view.section === "dashboard" || view.section === "missions") render();
+  // Les estimations et le brief s'affichent dans plusieurs vues : on redessine,
+  // sauf pendant une saisie.
+  const ae = document.activeElement;
+  if (!(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || ""))) render();
 }
 const estimationOf = (taskId) => (assistantStore && assistantStore.estimations && assistantStore.estimations[taskId]) || null;
 const briefOf = () => (assistantStore && assistantStore.brief) || null;
