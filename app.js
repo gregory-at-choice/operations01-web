@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v63";
+const APP_VERSION = "v64";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2011,15 +2011,20 @@ function acceptEstimation(taskId) {
   });
   return assistantWriteChain;
 }
+// Proposition de l'assistant pour une tâche (si elle diffère de l'estimation saisie).
+function taskEstimHint(t) {
+  const est = estimationOf(t.id);
+  const pending = est && est.assistantMin && (!t.estimationMin || Math.round(est.assistantMin) !== Math.round(t.estimationMin));
+  if (!pending) return "";
+  return `<div class="pm-hint" title="${esc(est.base || "")}">💡 ${esc(fmtEstim(est.assistantMin))}${est.confiance != null ? ` <span class="muted">(${Math.round(est.confiance * 100)} %)</span>` : ""}
+      <button class="btn ghost small" data-accept-estim="${t.id}" title="${esc(est.base || "Estimation de l'assistant")}">Accepter</button></div>`;
+}
 // Colonne « Estimation » d'une tâche : saisie, proposition de l'assistant, écart avec le réel.
 function taskEstimCell(t, secs) {
-  const est = estimationOf(t.id);
   const own = t.estimationMin ? fmtEstim(t.estimationMin) : "";
-  const pending = est && est.assistantMin && (!t.estimationMin || Math.round(est.assistantMin) !== Math.round(t.estimationMin));
   const ratio = t.estimationMin && secs ? Math.round((secs / 60 / t.estimationMin) * 100) : 0;
   return `<td class="pm-estim"><input class="flat-input" data-taskestim="${t.id}" value="${esc(own)}" placeholder="—" title="Estimation (ex. 1h30, 45 min)"/>
-    ${pending ? `<div class="pm-hint" title="${esc(est.base || "")}">💡 ${esc(fmtEstim(est.assistantMin))}${est.confiance != null ? ` <span class="muted">(${Math.round(est.confiance * 100)} %)</span>` : ""}
-      <button class="btn ghost small" data-accept-estim="${t.id}" title="${esc(est.base || "Estimation de l'assistant")}">Accepter</button></div>` : ""}
+    ${taskEstimHint(t)}
     ${ratio ? `<div class="pm-hint ${ratio > 110 ? "over" : ""}">réel ${ratio} %</div>` : ""}</td>`;
 }
 // Brief du matin : en tête du tableau de bord et de la liste des projets.
@@ -3262,6 +3267,7 @@ function renderTasks() {
         <input class="flat-input kb-title" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
         ${mission}
         <div class="kb-dl" style="color:${di.muted ? "var(--muted)" : di.color};font-weight:${di.muted ? 400 : 600}">${di.muted ? "" : "⬤ "}${esc(di.label)}${t.estimationMin ? ` <span class="muted" style="font-weight:400">· ⏱ ${esc(fmtEstim(t.estimationMin))}</span>` : ""}</div>
+        ${taskEstimHint(t)}
         <div class="kb-actions">
           <input type="date" data-taskdue="${t.id}" value="${esc(t.dueDate || "")}" title="Échéance"/>
           <span class="grow"></span>
