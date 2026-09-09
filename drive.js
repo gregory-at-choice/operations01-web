@@ -353,6 +353,24 @@
     return updateFile(id, JSON.stringify(copy));
   }
 
+  // ---- Assistant (brief du matin, estimations de durée) ---------------------
+  // Même mécanisme : fichier créé par l'app, rempli par le relais.
+  const ASSISTANT_FILE = "operations01-assistant.json";
+  const EMPTY_ASSISTANT = () => JSON.stringify({ updatedAt: 0, brief: null, estimations: {} });
+  async function readAssistant() {
+    if (!accessToken) return null;
+    const f = await findByName(ASSISTANT_FILE);
+    if (!f) {
+      try { await createNamed(ASSISTANT_FILE, EMPTY_ASSISTANT()); } catch (e) {}
+      return null;
+    }
+    try { const j = JSON.parse(await download(f.id)); j._fileId = f.id; return j; } catch (e) { return null; }
+  }
+  async function writeAssistant(id, data) {
+    const copy = Object.assign({}, data); delete copy._fileId;
+    return updateFile(id, JSON.stringify(copy));
+  }
+
   // ---- Agenda Google (lecture seule) -------------------------------------
   // Les occurrences des séries sont dépliées (singleEvents) pour que chaque
   // événement affiché dans Planning corresponde à une date réelle.
@@ -728,6 +746,8 @@
     ensureEvenements,
     readEvenements,
     writeEvenements,
+    readAssistant,
+    writeAssistant,
     listEvents,
     listCalendars,
     calendarGranted: calGranted,

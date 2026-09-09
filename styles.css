@@ -449,6 +449,28 @@ label.field.inline-check > span { margin-bottom: 0; }
 .ev-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .ev-act { font-weight: 600; }
 .ev-help { margin-top: 16px; }
+/* Proposition de l'assistant (brouillon de réponse, tâche proposée) */
+.ev-prop { margin-top: 8px; border: 1px dashed var(--line); border-radius: 10px; padding: 6px 10px; }
+.ev-prop > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--primary); list-style: none; }
+.ev-prop > summary::-webkit-details-marker { display: none; }
+.ev-prop > summary::before { content: "▸ "; }
+.ev-prop[open] > summary::before { content: "▾ "; }
+.ev-draft { white-space: pre-wrap; font-size: 13px; line-height: 1.45; margin: 8px 0 4px; padding: 8px 10px; background: var(--bg); border-radius: 8px; }
+.ev-ptask { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; margin-top: 8px; }
+/* Estimations de durée */
+.pm-estim input { width: 74px; }
+.pm-hint { font-size: 11px; color: var(--muted); margin-top: 3px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.pm-hint .btn { padding: 1px 6px; font-size: 11px; }
+.pm-hint.over { color: #b03030; }
+/* Brief du matin */
+.brief { margin-bottom: 14px; border-left: 4px solid var(--alert); }
+.brief-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.brief-text { font-size: 13px; margin-top: 6px; line-height: 1.45; }
+.brief-list { margin-top: 8px; display: flex; flex-direction: column; }
+.brief-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-top: 1px solid var(--line); cursor: pointer; font-size: 13px; }
+.brief-row:hover { background: rgba(24,193,216,.06); }
+.brief-ic { width: 20px; text-align: center; }
+.brief-est { font-size: 12px; white-space: nowrap; }
 @media (max-width: 720px) {
   .ev-actions .grow { flex-basis: 100%; height: 0; }
   .ev-actions .btn { padding: 6px 9px; font-size: 12px; }

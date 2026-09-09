@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v62";
+const APP_VERSION = "v63";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1409,7 +1409,7 @@ function renderMissions() {
         <div class="r-sub">${meta(m)}</div>
         <div class="r-sub">${dates(m)}</div></div></div>`;
   }).join("");
-  return head + banner
+  return head + renderBrief() + banner
     + `<div class="list">${all.length ? rows : '<div class="center-empty">Aucun projet.</div>'}</div>
        <button class="btn fab" data-add-mission>+</button>`;
 }
@@ -1595,6 +1595,7 @@ function renderProjectGestion(m) {
         <div class="pm-dl" style="color:${di.muted ? "var(--muted)" : di.color}">${di.muted ? esc(di.label) : "⬤ " + esc(di.label)}</div></td>
       <td class="pm-prog"><select data-taskprog="${t.id}">${progOpts.map((v) => `<option value="${v}" ${v === p || (p > 0 && v === Math.round(p / 10) * 10 && v !== 100 && !done) ? "selected" : ""}>${v} %</option>`).join("")}</select>
         <div class="pm-bar"><div class="pm-bar-fill" style="width:${p}%"></div></div></td>
+      ${taskEstimCell(t, secs)}
       <td class="pm-time"><span class="timer ${running ? "running" : ""}">${secs ? fmtDurationShort(secs) : "—"}</span>
         <button class="btn ${running ? "danger" : "ghost"} small" data-task-timer="${t.id}" data-m="${m.id}" title="${running ? "Arrêter le chrono" : "Lancer le chrono sur cette tâche"}">${running ? "■" : "▶"}</button></td>
       <td class="pm-x"><button class="btn ghost small" data-del-task="${t.id}" title="Supprimer">✕</button></td>
@@ -1605,14 +1606,14 @@ function renderProjectGestion(m) {
   const block = (name) => {
     const items = bySection(name);
     const head = name
-      ? `<tr class="pm-section"><td colspan="6"><div class="inline"><input class="flat-input grow" data-section-name="${esc(name)}" data-m="${m.id}" value="${esc(name)}"/>
+      ? `<tr class="pm-section"><td colspan="7"><div class="inline"><input class="flat-input grow" data-section-name="${esc(name)}" data-m="${m.id}" value="${esc(name)}"/>
           <span class="muted" style="font-size:12px">${items.filter(taskDone).length}/${items.length}</span>
           <button class="btn ghost small" data-add-ptask="${m.id}" data-section="${esc(name)}">+ Tâche</button>
           <button class="btn ghost small" data-del-section="${esc(name)}" data-m="${m.id}" title="Retirer la section (les tâches restent)">✕</button></div></td></tr>`
-      : `<tr class="pm-section"><td colspan="6"><div class="inline"><span class="grow muted">Sans section</span>
+      : `<tr class="pm-section"><td colspan="7"><div class="inline"><span class="grow muted">Sans section</span>
           <button class="btn ghost small" data-add-ptask="${m.id}" data-section="">+ Tâche</button></div></td></tr>`;
     if (!name && !items.length && sections.length) return "";
-    return head + (items.map(row).join("") || `<tr><td colspan="6" class="muted" style="padding:8px 12px;font-size:12px">Aucune tâche.</td></tr>`);
+    return head + (items.map(row).join("") || `<tr><td colspan="7" class="muted" style="padding:8px 12px;font-size:12px">Aucune tâche.</td></tr>`);
   };
   const body = sections.map(block).join("") + block("");
   return `<div class="inline" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">${alerts || '<span class="muted" style="font-size:12px">Aucune tâche pour l\'instant.</span>'}
@@ -1622,7 +1623,7 @@ function renderProjectGestion(m) {
       <button class="btn small" data-add-ptask="${m.id}" data-section="">+ Tâche</button></div>
     ${datalist}
     <div class="table-wrap"><table class="pm-table">
-      <thead><tr><th>Tâche</th><th>Personne en charge</th><th>Date limite</th><th>Avancement</th><th>Temps</th><th></th></tr></thead>
+      <thead><tr><th>Tâche</th><th>Personne en charge</th><th>Date limite</th><th>Avancement</th><th>Estimation</th><th>Temps</th><th></th></tr></thead>
       <tbody>${body}</tbody></table></div>
     <div class="muted" style="font-size:11px;margin-top:8px">Une tâche à 100 % passe « Terminée » ; une tâche avec un avancement passe « En cours ». Les tâches se retrouvent aussi dans l'onglet Tâches et, si elles ont une date limite ou un créneau, dans Planning.</div>`;
 }
@@ -1784,12 +1785,42 @@ function fmtDateTimeISO(iso) {
 // Adresse de la boîte correspondant à un compte du pipeline, cherchée parmi les
 // boîtes connues de l'app : sert à ouvrir Gmail dans le bon compte. Le compte
 // « outlook » est redirigé vers la boîte Gmail.
+const EVENT_ADDRESSES = { choicefinance: "gregory.arbia@choicefinance.fr", majandco: "gregory.arbia@majandco.fr", icarus: "garbia@icarusswarms.ai", gmail: "gy.arbia@gmail.com", outlook: "gy.arbia@gmail.com" };
 function eventAccountAddress(compte) {
   const c = String(compte || "").toLowerCase();
   if (!c) return "";
   const addrs = Object.keys(ownAddresses());
-  if (c === "gmail" || c === "outlook") return addrs.find((a) => /@gmail\./.test(a)) || "";
-  return addrs.find((a) => a.indexOf(c) > -1) || "";
+  const known = (c === "gmail" || c === "outlook") ? addrs.find((a) => /@gmail\./.test(a)) : addrs.find((a) => a.indexOf(c) > -1);
+  return known || EVENT_ADDRESSES[c] || "";
+}
+// Fenêtre de rédaction Gmail pré-remplie avec le brouillon proposé : rien n'est
+// envoyé tant que Grégory ne clique pas lui-même sur « Envoyer ».
+function eventComposeLink(ev) {
+  const p = ev.proposition || {};
+  if (!p.reponse) return "";
+  const addr = eventAccountAddress(ev.compte);
+  const to = (ev.expediteur && ev.expediteur.adresse) || "";
+  const q = [addr ? "authuser=" + encodeURIComponent(addr) : "", "view=cm", to ? "to=" + encodeURIComponent(to) : "",
+    "su=" + encodeURIComponent(/^re\s*:/i.test(ev.sujet || "") ? ev.sujet : "Re: " + (ev.sujet || "")), "body=" + encodeURIComponent(p.reponse)].filter(Boolean).join("&");
+  return "https://mail.google.com/mail/?" + q;
+}
+// Durées estimées : en minutes dans les données, « 1 h 30 » à l'écran.
+function fmtEstim(min) {
+  min = Math.round(Number(min) || 0);
+  if (min <= 0) return "";
+  const h = Math.floor(min / 60), m = min % 60;
+  if (!h) return `${m} min`;
+  return m ? `${h} h ${String(m).padStart(2, "0")}` : `${h} h`;
+}
+// « 1h30 », « 1 h 30 », « 1:30 », « 90 », « 45 min », « 1,5 h » → minutes (null si vide).
+function parseEstim(s) {
+  s = String(s || "").trim().toLowerCase().replace(",", ".");
+  if (!s) return null;
+  let m = s.match(/^(\d+(?:\.\d+)?)\s*(?:h|:)\s*(\d{1,2})?\s*(?:min|m)?$/);
+  if (m) return Math.round(parseFloat(m[1]) * 60 + (parseInt(m[2] || "0", 10) || 0));
+  m = s.match(/^(\d+(?:\.\d+)?)\s*(min|m|mn)?$/);
+  if (m) return Math.round(parseFloat(m[1]));
+  return null;
 }
 // Lien vers le message d'origine (mails seulement) : recherche Gmail par Message-ID.
 function eventLink(ev) {
@@ -1862,6 +1893,30 @@ function eventToTask(ev) {
   state.tasks.push(t); save();
   return t;
 }
+// Tâche proposée par l'assistant sur un événement : titre, échéance, estimation.
+function eventToProposedTask(ev) {
+  const p = (ev.proposition && ev.proposition.tache) || {};
+  const t = eventToTask(ev);
+  if (p.titre) t.title = p.titre;
+  if (p.echeance) t.dueDate = String(p.echeance).slice(0, 10);
+  if (p.estimationMin) t.estimationMin = Math.round(Number(p.estimationMin)) || null;
+  save();
+  return t;
+}
+function eventProposal(ev) {
+  const p = ev.proposition;
+  if (!p || (!p.reponse && !p.tache)) return "";
+  const compose = eventComposeLink(ev);
+  const t = p.tache;
+  return `<details class="ev-prop"><summary>💡 Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}</summary>
+    ${p.reponse ? `<div class="ev-draft">${esc(p.reponse)}</div>
+      <div class="ev-actions"><button class="btn ghost small" data-ev-copy="${ev.id}">Copier</button>
+        ${compose ? `<a class="btn secondary small" href="${esc(compose)}" target="_blank" rel="noopener">✉️ Répondre dans Gmail</a>` : ""}
+        <span class="muted" style="font-size:11px">Rien n'est envoyé sans toi : Gmail s'ouvre pré-rempli, tu relis puis tu envoies.</span></div>` : ""}
+    ${t && t.titre ? `<div class="ev-ptask"><span class="grow">Tâche proposée : <strong>${esc(t.titre)}</strong>${t.echeance ? ` · pour le ${esc(fmtDate(String(t.echeance).slice(0, 10)))}` : ""}${t.estimationMin ? ` · ${esc(fmtEstim(t.estimationMin))}` : ""}</span>
+        <button class="btn secondary small" data-ev-ptask="${ev.id}">✅ Créer la tâche proposée</button></div>` : ""}
+  </details>`;
+}
 function eventRow(ev) {
   const u = eventUrgence(ev), st = eventStatut(ev), from = eventFrom(ev), link = eventLink(ev);
   const who = from.nom || from.adresse || "?";
@@ -1879,6 +1934,7 @@ function eventRow(ev) {
       <div class="r-head"><span class="r-title">${esc(eventTitle(ev))}</span><span class="badge ev-urg u${u}" title="Urgence ${u}">${EVENT_URGENCES[u]}</span></div>
       <div class="r-sub">${sub}</div>
       ${ev.resume && ev.resume !== ev.sujet ? `<div class="ev-resume">${esc(ev.resume)}</div>` : ""}
+      ${eventProposal(ev)}
       <div class="ev-actions">
         <span class="pm-tag ev-act" title="Action proposée${ev.classifieur ? " (" + esc(ev.classifieur) + ")" : ""}">→ ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")}</span>
         ${link ? `<a class="btn ghost small" href="${esc(link)}" target="_blank" rel="noopener">Ouvrir</a>` : ""}
@@ -1911,6 +1967,83 @@ function renderATraiter() {
       <div class="muted" style="font-size:12px;margin-top:6px">Le Mac mini classe tes mails et messages (urgence, action proposée, résumé) et les envoie toutes les 5 minutes au script relais
       <code>appsscript-relais-evenements.gs</code>, installé dans ton compte Google principal, qui les dépose dans « operations01-evenements.json ».
       Ici tu décides : Traité, Ignorer, ou transformer l'événement en action ou en tâche. Jamais de contenu complet des messages : sujet et résumé seulement.</div></details>`;
+}
+
+// ----------------------------- Assistant : brief du matin et estimations -----------------------------
+// Le Mac mini dépose dans operations01-assistant.json un brief quotidien (6 h 30)
+// et des estimations de durée par tâche. L'app affiche, Grégory décide :
+// accepter une estimation la copie dans la tâche et le note dans le fichier.
+let assistantStore = null, assistantLoading = false, assistantLoadedAt = 0;
+const assistantReady = () => !!(window.DriveSync && DriveSync.isConnected() && DriveSync.readAssistant);
+async function loadAssistant() {
+  if (!assistantReady() || assistantLoading) return;
+  assistantLoadedAt = Date.now(); assistantLoading = true;
+  try { const d = await DriveSync.readAssistant(); if (d) assistantStore = d; } catch (e) {}
+  assistantLoading = false;
+  if (view.section === "dashboard" || view.section === "missions") render();
+}
+const estimationOf = (taskId) => (assistantStore && assistantStore.estimations && assistantStore.estimations[taskId]) || null;
+const briefOf = () => (assistantStore && assistantStore.brief) || null;
+// Accepter l'estimation : la tâche prend la valeur, et le fichier (relu juste
+// avant) garde la trace de l'acceptation pour le recalibrage du Mac mini.
+let assistantWriteChain = Promise.resolve();
+function acceptEstimation(taskId) {
+  const est = estimationOf(taskId), t = state.tasks.find((x) => x.id === taskId);
+  if (!est || !t) return Promise.resolve(false);
+  const min = Math.round(Number(est.assistantMin)) || 0;
+  t.estimationMin = min; save();
+  est.accepteeMin = min; est.accepteeLe = new Date().toISOString();
+  render();
+  if (!assistantReady()) return Promise.resolve(false);
+  assistantWriteChain = assistantWriteChain.then(async () => {
+    try {
+      const fresh = await DriveSync.readAssistant();
+      if (!fresh || !fresh._fileId) throw new Error("fichier introuvable");
+      fresh.estimations = fresh.estimations || {};
+      const e = fresh.estimations[taskId] || (fresh.estimations[taskId] = { assistantMin: min });
+      e.accepteeMin = min; e.accepteeLe = est.accepteeLe;
+      fresh.updatedAt = Date.now();
+      const out = Object.assign({}, fresh); delete out._fileId;
+      await DriveSync.writeAssistant(fresh._fileId, out);
+      assistantStore = fresh; assistantLoadedAt = Date.now();
+      return true;
+    } catch (e) { toast("Acceptation non enregistrée côté assistant : " + (e.message || e)); return false; }
+  });
+  return assistantWriteChain;
+}
+// Colonne « Estimation » d'une tâche : saisie, proposition de l'assistant, écart avec le réel.
+function taskEstimCell(t, secs) {
+  const est = estimationOf(t.id);
+  const own = t.estimationMin ? fmtEstim(t.estimationMin) : "";
+  const pending = est && est.assistantMin && (!t.estimationMin || Math.round(est.assistantMin) !== Math.round(t.estimationMin));
+  const ratio = t.estimationMin && secs ? Math.round((secs / 60 / t.estimationMin) * 100) : 0;
+  return `<td class="pm-estim"><input class="flat-input" data-taskestim="${t.id}" value="${esc(own)}" placeholder="—" title="Estimation (ex. 1h30, 45 min)"/>
+    ${pending ? `<div class="pm-hint" title="${esc(est.base || "")}">💡 ${esc(fmtEstim(est.assistantMin))}${est.confiance != null ? ` <span class="muted">(${Math.round(est.confiance * 100)} %)</span>` : ""}
+      <button class="btn ghost small" data-accept-estim="${t.id}" title="${esc(est.base || "Estimation de l'assistant")}">Accepter</button></div>` : ""}
+    ${ratio ? `<div class="pm-hint ${ratio > 110 ? "over" : ""}">réel ${ratio} %</div>` : ""}</td>`;
+}
+// Brief du matin : en tête du tableau de bord et de la liste des projets.
+function renderBrief() {
+  const b = briefOf();
+  if (!b) return "";
+  const today = todayISO();
+  const ICONS = { retard: "⚠️", echeance: "📅", evenement: "📥", rdv: "🤝" };
+  const rows = (b.elements || []).map((el) => `<div class="brief-row" data-brief-open="${esc(el.type || "")}" data-id="${esc(el.id || "")}">
+      <span class="brief-ic">${ICONS[el.type] || "•"}</span><span class="grow">${esc(el.libelle || "")}</span>
+      ${el.urgence ? `<span class="badge ev-urg u${Math.min(4, Math.max(1, Number(el.urgence) || 4))}">${esc(EVENT_URGENCES[Math.min(4, Math.max(1, Number(el.urgence) || 4))])}</span>` : ""}
+      ${el.estimationMin ? `<span class="muted brief-est">${esc(fmtEstim(el.estimationMin))}</span>` : ""}<span class="muted">›</span></div>`).join("");
+  return `<div class="card brief"><div class="brief-head"><strong class="grow">☀️ ${esc(b.titre || "Aujourd'hui")}</strong>
+      ${b.date && b.date !== today ? `<span class="muted" style="font-size:12px">brief du ${esc(fmtDate(b.date))}</span>` : ""}
+      ${b.totalEstimeMin ? `<span class="pm-tag">${esc(fmtEstim(b.totalEstimeMin))} estimées</span>` : ""}</div>
+    ${b.texte ? `<div class="brief-text">${esc(b.texte)}</div>` : ""}
+    ${rows ? `<div class="brief-list">${rows}</div>` : ""}</div>`;
+}
+function openBriefElement(type, id) {
+  if (type === "evenement") { eventFilter.statut = ""; go("atraiter"); return; }
+  if (type === "rdv") { go("rendezvous"); return; }
+  const t = state.tasks.find((x) => x.id === id);
+  if (t && t.missionId && findMission(t.missionId)) { projectTab = "gestion"; projectTabFor = t.missionId; openDetail("missions", t.missionId); }
+  else go("tasks");
 }
 
 // ---- Import de tâches dans un projet (JSON ou CSV) ----
@@ -2848,6 +2981,7 @@ function renderDashboard() {
   if (toPay.length) alerts.push(`${toPay.length} facture(s) fournisseur à payer · ${euros(toPay.reduce((t, v) => t + invTTC(v), 0))}`);
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tableau de bord</div>
       <button class="btn secondary small" data-export-dashboard>📄 Exporter (PDF)</button></div>
+    ${renderBrief()}
     <div class="section-h">Activité (HT)</div>
     ${grid(card("CA facturé", euros(caFacture), "émises + payées", "#18c1d8") + card("CA encaissé", euros(caEncaisse), "payées", "#4dc8bb") + card("CA à émettre", euros(caAEmettre), "en attente", "#c3d679") + card("Résultat à date", euros(produits - charges), "produits − charges", produits - charges >= 0 ? "#4dc8bb" : "#d23c3c"))}
     <div class="section-h">Trésorerie consolidée (TTC)</div>
@@ -3127,7 +3261,7 @@ function renderTasks() {
         <div class="kb-grip" title="Glisser vers une autre colonne">⠿</div>
         <input class="flat-input kb-title" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
         ${mission}
-        <div class="kb-dl" style="color:${di.muted ? "var(--muted)" : di.color};font-weight:${di.muted ? 400 : 600}">${di.muted ? "" : "⬤ "}${esc(di.label)}</div>
+        <div class="kb-dl" style="color:${di.muted ? "var(--muted)" : di.color};font-weight:${di.muted ? 400 : 600}">${di.muted ? "" : "⬤ "}${esc(di.label)}${t.estimationMin ? ` <span class="muted" style="font-weight:400">· ⏱ ${esc(fmtEstim(t.estimationMin))}</span>` : ""}</div>
         <div class="kb-actions">
           <input type="date" data-taskdue="${t.id}" value="${esc(t.dueDate || "")}" title="Échéance"/>
           <span class="grow"></span>
@@ -4262,7 +4396,21 @@ function wire() {
     const ev = eventsAll().find((e) => e.id === b.dataset.evTask); if (!ev) return;
     eventToTask(ev); setEventStatut(ev.id, "traite"); toast("Tâche créée à partir de l'événement ✓");
   });
+  c.querySelectorAll("[data-ev-copy]").forEach((b) => b.onclick = () => {
+    const ev = eventsAll().find((e) => e.id === b.dataset.evCopy); if (!ev || !ev.proposition || !ev.proposition.reponse) return;
+    try { navigator.clipboard.writeText(ev.proposition.reponse); toast("Brouillon copié"); } catch (e) { alert("Copie impossible sur cet appareil."); }
+  });
+  c.querySelectorAll("[data-ev-ptask]").forEach((b) => b.onclick = () => {
+    const ev = eventsAll().find((e) => e.id === b.dataset.evPtask); if (!ev) return;
+    eventToProposedTask(ev); setEventStatut(ev.id, "traite"); toast("Tâche proposée créée ✓");
+  });
   if (eventsReady() && !eventLoading && Date.now() - eventLoadedAt > (eventStore ? EVENT_FRESH : EVENT_RETRY)) loadEvenements();
+  if (assistantReady() && !assistantLoading && Date.now() - assistantLoadedAt > (assistantStore ? EVENT_FRESH : EVENT_RETRY)) loadAssistant();
+
+  // assistant : estimations et brief
+  c.querySelectorAll("[data-taskestim]").forEach((el) => { const h = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskestim); if (!t) return; const v = parseEstim(el.value); if (v === null && el.value.trim()) { el.value = t.estimationMin ? fmtEstim(t.estimationMin) : ""; return; } t.estimationMin = v; save(); el.value = v ? fmtEstim(v) : ""; }; el.addEventListener("change", h); el.addEventListener("blur", h); });
+  c.querySelectorAll("[data-accept-estim]").forEach((b) => b.onclick = () => { acceptEstimation(b.dataset.acceptEstim); toast("Estimation acceptée ✓"); });
+  c.querySelectorAll("[data-brief-open]").forEach((r) => r.onclick = () => openBriefElement(r.dataset.briefOpen, r.dataset.id));
 
   // relances (mails) — et correspondance des projets
   c.querySelectorAll("[data-mail-refresh]").forEach((b) => b.onclick = loadMails);
@@ -4966,7 +5114,10 @@ function exportTempsCSV() {
 refreshNotifications();
 setInterval(refreshNotifications, 5 * 60000);
 // Événements du Mac mini : relecture périodique pour tenir la pastille à jour.
-setInterval(() => { if (eventsReady() && Date.now() - eventLoadedAt > EVENT_FRESH) loadEvenements(); }, 60000);
+setInterval(() => {
+  if (eventsReady() && Date.now() - eventLoadedAt > EVENT_FRESH) loadEvenements();
+  if (assistantReady() && Date.now() - assistantLoadedAt > EVENT_FRESH) loadAssistant();
+}, 60000);
 setInterval(() => {
   document.querySelectorAll("[data-entry-time]").forEach((span) => {
     const id = span.dataset.entryTime;
