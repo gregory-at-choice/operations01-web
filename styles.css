@@ -550,3 +550,6 @@ a.pm-tag { color: var(--primary); }
 .ev-step { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; cursor: pointer; }
 .ev-step input { width: auto; margin: 0; }
 .ev-step.done .grow { text-decoration: line-through; color: var(--muted); }
+.brief-row.done { opacity: .6; }
+.brief-row.done .grow { text-decoration: line-through; }
+.brief-row .btn { padding: 2px 8px; }

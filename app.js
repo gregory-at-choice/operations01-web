@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v66";
+const APP_VERSION = "v67";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2080,15 +2080,43 @@ function renderBrief() {
   if (!b) return "";
   const today = todayISO();
   const ICONS = { retard: "⚠️", echeance: "📅", evenement: "📥", rdv: "🤝" };
-  const rows = (b.elements || []).map((el) => `<div class="brief-row" data-brief-open="${esc(el.type || "")}" data-id="${esc(el.id || "")}">
-      <span class="brief-ic">${ICONS[el.type] || "•"}</span><span class="grow">${esc(el.libelle || "")}</span>
-      ${el.urgence ? `<span class="badge ev-urg u${Math.min(4, Math.max(1, Number(el.urgence) || 4))}">${esc(EVENT_URGENCES[Math.min(4, Math.max(1, Number(el.urgence) || 4))])}</span>` : ""}
-      ${el.estimationMin ? `<span class="muted brief-est">${esc(fmtEstim(el.estimationMin))}</span>` : ""}<span class="muted">›</span></div>`).join("");
+  const els = b.elements || [];
+  const states = els.map(briefElementState);
+  const nbDone = states.filter((s) => s.done).length;
+  const restMin = els.reduce((a, el, i) => a + (states[i].done ? 0 : (Number(el.estimationMin) || 0)), 0);
+  const rows = els.map((el, i) => { const s = states[i]; return `<div class="brief-row${s.done ? " done" : ""}" data-brief-open="${esc(el.type || "")}" data-id="${esc(el.id || "")}">
+      <span class="brief-ic">${s.done ? "✅" : (ICONS[el.type] || "•")}</span><span class="grow">${esc(el.libelle || "")}</span>
+      ${s.done ? `<span class="badge terminee">${esc(s.label)}</span>` : `${el.urgence ? `<span class="badge ev-urg u${Math.min(4, Math.max(1, Number(el.urgence) || 4))}">${esc(EVENT_URGENCES[Math.min(4, Math.max(1, Number(el.urgence) || 4))])}</span>` : ""}
+      ${el.estimationMin ? `<span class="muted brief-est">${esc(fmtEstim(el.estimationMin))}</span>` : ""}
+      ${s.can ? `<button class="btn ghost small" data-brief-done="${esc(el.type || "")}" data-id="${esc(el.id || "")}" title="Marquer comme fait">✓</button>` : ""}`}<span class="muted">›</span></div>`; }).join("");
   return `<div class="card brief"><div class="brief-head"><strong class="grow">☀️ ${esc(b.titre || "Aujourd'hui")}</strong>
       ${b.date && b.date !== today ? `<span class="muted" style="font-size:12px">brief du ${esc(fmtDate(b.date))}</span>` : ""}
-      ${b.totalEstimeMin ? `<span class="pm-tag">${esc(fmtEstim(b.totalEstimeMin))} estimées</span>` : ""}</div>
+      ${els.length ? `<span class="pm-tag">${nbDone}/${els.length} fait${nbDone > 1 ? "s" : ""}${restMin ? ` · ${esc(fmtEstim(restMin))} restantes` : ""}</span>` : (b.totalEstimeMin ? `<span class="pm-tag">${esc(fmtEstim(b.totalEstimeMin))} estimées</span>` : "")}</div>
     ${b.texte ? `<div class="brief-text">${esc(b.texte)}</div>` : ""}
     ${rows ? `<div class="brief-list">${rows}</div>` : ""}</div>`;
+}
+// État d'une ligne du brief d'après les données de l'app : événement traité ou
+// ignoré, tâche terminée, rendez-vous passé.
+function briefElementState(el) {
+  if (el.type === "evenement") {
+    const ev = eventsAll().find((e) => e.id === el.id);
+    if (ev && eventStatut(ev) !== "nouveau") return { done: true, label: eventStatut(ev) === "traite" ? "Traité" : "Ignoré" };
+    return { done: false, can: !!ev };
+  }
+  if (el.type === "rdv") {
+    const r = state.rendezvous.find((x) => x.id === el.id);
+    if (r && r.date && (r.date < todayISO() || (r.date === todayISO() && r.time && r.time < new Date().toTimeString().slice(0, 5)))) return { done: true, label: "Passé" };
+    return { done: false, can: false };
+  }
+  const t = state.tasks.find((x) => x.id === el.id);
+  if (t && taskDone(t)) return { done: true, label: "Terminée" };
+  return { done: false, can: !!t };
+}
+// Coche directe depuis le brief : l'événement passe « traité », la tâche « terminée ».
+function markBriefDone(type, id) {
+  if (type === "evenement") { if (eventsAll().some((e) => e.id === id)) setEventStatut(id, "traite"); return; }
+  const t = state.tasks.find((x) => x.id === id);
+  if (t) { setTaskProgress(t, 100); save(); render(); }
 }
 function openBriefElement(type, id) {
   if (type === "evenement") { eventFilter.statut = ""; go("atraiter"); return; }
@@ -4469,6 +4497,7 @@ function wire() {
   c.querySelectorAll("[data-taskestim]").forEach((el) => { const h = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskestim); if (!t) return; const v = parseEstim(el.value); if (v === null && el.value.trim()) { el.value = t.estimationMin ? fmtEstim(t.estimationMin) : ""; return; } t.estimationMin = v; save(); el.value = v ? fmtEstim(v) : ""; }; el.addEventListener("change", h); el.addEventListener("blur", h); });
   c.querySelectorAll("[data-accept-estim]").forEach((b) => b.onclick = () => { acceptEstimation(b.dataset.acceptEstim); toast("Estimation acceptée ✓"); });
   c.querySelectorAll("[data-brief-open]").forEach((r) => r.onclick = () => openBriefElement(r.dataset.briefOpen, r.dataset.id));
+  c.querySelectorAll("[data-brief-done]").forEach((b) => b.onclick = (ev) => { ev.stopPropagation(); markBriefDone(b.dataset.briefDone, b.dataset.id); toast("Marqué comme fait ✓"); });
 
   // relances (mails) — et correspondance des projets
   c.querySelectorAll("[data-mail-refresh]").forEach((b) => b.onclick = loadMails);
