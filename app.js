@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v68";
+const APP_VERSION = "v69";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2135,15 +2135,25 @@ function renderBrief() {
       ${b.date && b.date !== today ? `<span class="muted" style="font-size:12px">brief du ${esc(fmtDate(b.date))}</span>` : ""}
       ${els.length ? `<span class="pm-tag">${nbDone}/${els.length} fait${nbDone > 1 ? "s" : ""}${restMin ? ` · ${esc(fmtEstim(restMin))} restantes` : ""}</span>` : (b.totalEstimeMin ? `<span class="pm-tag">${esc(fmtEstim(b.totalEstimeMin))} estimées</span>` : "")}</div>
     ${b.texte ? `<div class="brief-text">${esc(b.texte)}</div>` : ""}
-    ${rows ? `<div class="brief-list">${rows}</div>` : ""}</div>${renderBriefFil(b.fil)}`;
+    ${rows ? `<div class="brief-list">${rows}</div>` : ""}</div>${renderBriefFils(b)}`;
 }
-// Digest du fil Bluesky : de simples posts publics, rien à traiter. Un encadré
-// sous le brief, jamais dans « À traiter ».
+// Digests « pour information » sous le brief (fil Bluesky, presse…) : rien à
+// traiter, jamais dans « À traiter ». `brief.fil` = fil Bluesky historique ;
+// `brief.fils` = liste de digests { titre, icone, posts, auteurs, resume[], lien }.
+function renderBriefFils(b) {
+  const fils = [];
+  if (b.fil) fils.push(Object.assign({ titre: "Fil Bluesky", icone: "🦋", unite: "post" }, b.fil));
+  (Array.isArray(b.fils) ? b.fils : []).forEach((f) => { if (f) fils.push(f); });
+  return fils.map(renderBriefFil).join("");
+}
 function renderBriefFil(fil) {
   if (!fil || !(fil.posts || (fil.resume && fil.resume.length))) return "";
   const lines = Array.isArray(fil.resume) ? fil.resume.filter(Boolean) : [];
-  return `<details class="card brief-fil"><summary>🦋 Fil Bluesky${fil.posts ? ` · ${esc(String(fil.posts))} post${fil.posts > 1 ? "s" : ""}` : ""}${fil.auteurs ? ` de ${esc(String(fil.auteurs))} auteur${fil.auteurs > 1 ? "s" : ""}` : ""} <span class="muted">(pour information, rien à traiter)</span></summary>
-    ${lines.length ? `<ul class="brief-fil-list">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : '<div class="muted" style="font-size:12px">Aucun résumé.</div>'}</details>`;
+  const unite = fil.unite || "article";
+  const n = Number(fil.posts) || 0;
+  return `<details class="card brief-fil"><summary>${esc(fil.icone || "📰")} ${esc(fil.titre || "Digest")}${n ? ` · ${n} ${esc(unite)}${n > 1 ? "s" : ""}` : ""}${fil.auteurs ? ` de ${esc(String(fil.auteurs))} auteur${fil.auteurs > 1 ? "s" : ""}` : ""} <span class="muted">(pour information, rien à traiter)</span></summary>
+    ${lines.length ? `<ul class="brief-fil-list">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : '<div class="muted" style="font-size:12px">Aucun résumé.</div>'}
+    ${fil.lien ? `<div style="margin-top:6px"><a class="btn ghost small" href="${esc(fil.lien)}" target="_blank" rel="noopener">Ouvrir la source</a></div>` : ""}</details>`;
 }
 // État d'une ligne du brief d'après les données de l'app : événement traité ou
 // ignoré, tâche terminée, rendez-vous passé.
