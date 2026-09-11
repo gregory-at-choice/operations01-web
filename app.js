@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v69";
+const APP_VERSION = "v70";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1870,15 +1870,34 @@ function applyEventDecisions(store) {
   });
 }
 let eventWriteChain = Promise.resolve();
-function setEventStatut(id, statut) {
+function setEventStatut(id, statut) { return setEventStatuts([id], statut); }
+// Même chose pour plusieurs événements d'un coup : une seule écriture.
+function setEventStatuts(ids, statut) {
   const when = statut === "nouveau" ? null : new Date().toISOString();
-  eventDecisions[id] = { statut, traiteLe: when };
-  const local = eventsAll().find((e) => e.id === id);
-  if (local) { local.statut = statut; local.traiteLe = when; }
+  const all = eventsAll();
+  ids.forEach((id) => {
+    eventDecisions[id] = { statut, traiteLe: when };
+    const local = all.find((e) => e.id === id);
+    if (local) { local.statut = statut; local.traiteLe = when; }
+  });
   render();
   if (!eventsReady()) return Promise.resolve(false);
   eventWriteChain = eventWriteChain.then(flushEventDecisions);
   return eventWriteChain;
+}
+// Clé d'expéditeur : adresse si elle existe, sinon le nom (SMS, WhatsApp…).
+const eventSenderKey = (ev) => { const f = eventFrom(ev); return String(f.adresse || f.nom || "").toLowerCase().trim(); };
+// Tous les événements encore « nouveaux » du même expéditeur.
+function eventsFromSameSender(ev) {
+  const k = eventSenderKey(ev);
+  return k ? eventsAll().filter((e) => eventStatut(e) === "nouveau" && eventSenderKey(e) === k) : [];
+}
+// Une source qui a échappé au filtre du Mac mini (newsletters, confirmations
+// d'abonnement…) : on ignore d'un geste tout ce qui vient de cet expéditeur.
+function ignoreSender(ev) {
+  const list = eventsFromSameSender(ev);
+  if (!list.length) return Promise.resolve(false);
+  return setEventStatuts(list.map((e) => e.id), "ignore");
 }
 async function flushEventDecisions() {
   const ids = Object.keys(eventDecisions);
@@ -2008,9 +2027,11 @@ function eventRow(ev) {
   const who = from.nom || from.adresse || "?";
   const sub = [esc(who), from.nom && from.adresse ? esc(from.adresse) : "", esc(EVENT_SOURCES[ev.source] || ev.source || ""),
     esc(EVENT_COMPTES[ev.compte] || ev.compte || ""), esc(fmtDateTimeISO(ev.recu_le))].filter(Boolean).join(" · ");
+  const sameSender = st === "nouveau" ? eventsFromSameSender(ev).length : 0;
   const buttons = st === "nouveau"
     ? `<button class="btn secondary small" data-ev-action="${ev.id}" title="Créer une action à suivre">🎫 Action</button>
        <button class="btn secondary small" data-ev-task="${ev.id}" title="Créer une tâche">✅ Tâche</button>
+       ${sameSender > 1 ? `<button class="btn ghost small" data-ev-ignore-sender="${ev.id}" title="Ignorer les ${sameSender} événements nouveaux de cet expéditeur">Ignorer l'expéditeur (${sameSender})</button>` : ""}
        <button class="btn ghost small" data-ev-statut="ignore" data-id="${ev.id}">Ignorer</button>
        <button class="btn small" data-ev-statut="traite" data-id="${ev.id}">Traité</button>`
     : `<span class="muted" style="font-size:12px">${st === "traite" ? "Traité" : "Ignoré"}${ev.traiteLe ? " le " + esc(fmtDateTimeISO(ev.traiteLe)) : ""}</span>
@@ -4529,6 +4550,12 @@ function wire() {
   c.querySelectorAll("[data-ev-refresh]").forEach((b) => b.onclick = loadEvenements);
   c.querySelectorAll("[data-evfilter]").forEach((s) => s.onchange = () => { eventFilter[s.dataset.evfilter] = s.value; render(); });
   c.querySelectorAll("[data-ev-statut]").forEach((b) => b.onclick = () => setEventStatut(b.dataset.id, b.dataset.evStatut));
+  c.querySelectorAll("[data-ev-ignore-sender]").forEach((b) => b.onclick = () => {
+    const ev = eventsAll().find((e) => e.id === b.dataset.evIgnoreSender); if (!ev) return;
+    const n = eventsFromSameSender(ev).length, who = eventFrom(ev).nom || eventFrom(ev).adresse || "cet expéditeur";
+    if (!confirm(`Ignorer les ${n} événements nouveaux de ${who} ?`)) return;
+    ignoreSender(ev); toast(`${n} événement(s) ignoré(s) ✓`);
+  });
   c.querySelectorAll("[data-ev-action]").forEach((b) => b.onclick = () => {
     const ev = eventsAll().find((e) => e.id === b.dataset.evAction); if (!ev) return;
     const x = eventToAction(ev); setEventStatut(ev.id, "traite"); openDetail("actions", x.id); toast("Action créée à partir de l'événement ✓");
