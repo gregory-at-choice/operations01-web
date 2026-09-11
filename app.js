@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v73";
+const APP_VERSION = "v74";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -355,8 +355,9 @@ const SECTIONS = [
   { id: "dashboard", label: "Tableau de bord", ic: icon("dashboard"), fn: renderDashboard },
   { id: "reader", label: "Lecteur", ic: icon("book"), fn: renderReader },
   { id: "pdftools", label: "Outils PDF", ic: icon("file-text"), fn: renderPdfTools },
-];
-let view = { section: "missions", detailId: null };
+].sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" }));   // rubriques par ordre alphabétique
+const HOME_SECTION = "missions";
+let view = { section: HOME_SECTION, detailId: null };
 function go(section) { view = { section, detailId: null }; render(); }
 function openDetail(section, id) { view = { section, detailId: id }; render(); }
 
@@ -364,7 +365,7 @@ function openDetail(section, id) { view = { section, detailId: id }; render(); }
 function render() {
   renderNav();
   const content = document.getElementById("content");
-  const sec = SECTIONS.find((s) => s.id === view.section) || SECTIONS[0];
+  const sec = SECTIONS.find((s) => s.id === view.section) || SECTIONS.find((s) => s.id === HOME_SECTION);
   content.innerHTML = sec.fn();
   wire();
   renderNotifBell();
@@ -436,7 +437,7 @@ function renderNav() {
   renderMoreBadge();
   applySidebarMode();
 }
-const MOBILE_TABS = ["atraiter", "missions", "tasks", "rendezvous"];
+const MOBILE_TABS = ["atraiter", "missions", "rendezvous", "tasks"];   // même ordre alphabétique que le menu
 function renderMoreBadge() {
   const more = document.getElementById("tabBell"); if (!more) return;
   const n = notifCount();
@@ -1414,11 +1415,10 @@ function missionLast(m) {
   return d.length ? d[d.length - 1] : "";
 }
 const missionCreated = (m) => m.createdAt || (m.startDate ? new Date(m.startDate + "T12:00:00").getTime() : 0);
-// Classement par ordre chronologique de création (la plus ancienne en premier).
-// Le tri est stable : à date identique (données importées en bloc), l'ordre
-// d'origine du fichier est conservé.
-let missionView = "liste", missionSort = "creation";
-const MISSION_SORTS = [["creation", "Création"], ["nom", "Nom (A→Z)"], ["recent", "Dernier événement"]];
+// Classement par ordre alphabétique par défaut. Les autres tris sont stables :
+// à date identique (données importées en bloc), l'ordre d'origine est conservé.
+let missionView = "liste", missionSort = "nom";
+const MISSION_SORTS = [["nom", "Nom (A→Z)"], ["creation", "Création"], ["recent", "Dernier événement"]];
 function sortMissions(arr) {
   const a = [...arr];
   if (missionSort === "nom") a.sort((x, y) => (x.title || "").localeCompare(y.title || "", "fr", { sensitivity: "base" }));
