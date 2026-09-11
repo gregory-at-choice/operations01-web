@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v74";
+const APP_VERSION = "v75";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -249,6 +249,7 @@ const ICONS = {
   archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+  cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
   "panel-open": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
   "panel-close": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
   sparkles: '<path d="m12 3 1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3Z"/>'
@@ -441,7 +442,9 @@ const MOBILE_TABS = ["atraiter", "missions", "rendezvous", "tasks"];   // même 
 function renderMoreBadge() {
   const more = document.getElementById("tabBell"); if (!more) return;
   const n = notifCount();
-  more.innerHTML = `<span class="ic">${icon("more")}${n ? `<span class="tab-count">${n}</span>` : ""}</span>Plus`;
+  // Pastille orange si Drive demande une reconnexion (la barre latérale est masquée sur mobile).
+  const reauth = window.DriveSync && DriveSync.isConnected() && DriveSync.needsAuth();
+  more.innerHTML = `<span class="ic">${icon("more")}${n ? `<span class="tab-count">${n}</span>` : reauth ? `<span class="tab-count warn" title="Reconnexion Drive nécessaire">!</span>` : ""}</span>Plus`;
 }
 // Feuille « Plus » : toutes les sections, plus les notifications.
 function showMoreSheet() {
@@ -451,13 +454,27 @@ function showMoreSheet() {
   showModal(`<div class="modal-head"><strong class="grow">Menu</strong><button class="btn ghost small" data-modal-close>${icon("x")}</button></div>
     <button class="sheet-item" data-sheet-notifs><span class="ic">${icon("bell")}</span><span class="grow">Notifications</span>${n ? `<span class="nav-count">${n}</span>` : ""}</button>
     <div class="sheet-grid">${items}</div>
-    <div class="sheet-foot"><span id="driveStatusSheet" class="muted" style="font-size:12px"></span><button class="btn ghost small" data-sheet-backups>${icon("archive")} Sauvegardes</button><button class="btn ghost small" data-sheet-update>${icon("refresh")} Mettre à jour</button></div>`);
+    ${driveSheetRow()}
+    <div class="sheet-foot"><span class="muted" style="font-size:12px">Version ${APP_VERSION}</span><button class="btn ghost small" data-sheet-backups>${icon("archive")} Sauvegardes</button><button class="btn ghost small" data-sheet-update>${icon("refresh")} Mettre à jour</button></div>`);
   document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
   document.querySelectorAll("[data-sheet-go]").forEach((b) => b.onclick = () => { closeModal(); go(b.dataset.sheetGo); });
   const nb = document.querySelector("[data-sheet-notifs]"); if (nb) nb.onclick = () => { closeModal(); showNotifPanel(); };
-  const bk = document.querySelector("[data-sheet-backups]"); if (bk) bk.onclick = () => { closeModal(); const d = document.getElementById("driveBackups"); if (d) d.click(); };
-  const up = document.querySelector("[data-sheet-update]"); if (up) up.onclick = () => { const d = document.getElementById("appUpdate"); if (d) d.click(); else location.reload(); };
-  const st = document.getElementById("driveStatusSheet"), src = document.getElementById("driveStatus"); if (st && src) st.textContent = "Drive · " + src.textContent;
+  const bk = document.querySelector("[data-sheet-backups]"); if (bk) bk.onclick = () => { closeModal(); openBackups(); };
+  const up = document.querySelector("[data-sheet-update]"); if (up) up.onclick = () => forceUpdate();
+  // Drive : « Reconnecter » / « Se connecter », comme dans la barre latérale (masquée sur mobile).
+  const rc = document.querySelector("[data-sheet-reconnect]"); if (rc) rc.onclick = () => { closeModal(); reconnectDrive(); };
+  const cn = document.querySelector("[data-sheet-connect]"); if (cn) cn.onclick = () => { closeModal(); connectDrive(); };
+}
+// Ligne « Drive » de la feuille « Plus » : état + bouton de (re)connexion.
+function driveSheetRow() {
+  const cfgOk = window.OPERATIONS01_CONFIG && OPERATIONS01_CONFIG.googleClientId;
+  if (!cfgOk) return "";
+  const connected = window.DriveSync && DriveSync.isConnected();
+  if (!connected) return `<div class="sheet-drive"><span class="ic">${icon("cloud")}</span><span class="grow"><strong>Drive</strong> <span class="muted">non connecté</span></span><button class="btn small" data-sheet-connect>Se connecter</button></div>`;
+  const reauth = DriveSync.needsAuth();
+  const src = document.getElementById("driveStatus");
+  const status = reauth ? "reconnexion nécessaire" : (src ? src.textContent : "synchronisé");
+  return `<div class="sheet-drive${reauth ? " warn" : ""}"><span class="ic">${icon("cloud")}</span><span class="grow"><strong>Drive</strong> <span class="muted">${esc(status)}</span></span><button class="btn ${reauth ? "" : "ghost"} small" data-sheet-reconnect>Reconnecter</button></div>`;
 }
 // Ordinateur : barre latérale repliable en rail d'icônes (préférence mémorisée).
 const SIDEBAR_KEY = "op01_sidebar";
@@ -5477,7 +5494,7 @@ if (window.DriveSync) DriveSync.onStatus((s) => {
   const el = document.getElementById("driveStatus");
   if (el) el.textContent = s;
   // le bouton « Reconnecter » apparaît/disparaît selon l'état
-  if (s === "reconnexion nécessaire" || s === "connecté") renderDriveBar();
+  if (s === "reconnexion nécessaire" || s === "connecté") { renderDriveBar(); renderMoreBadge(); }
 });
 
 // Reconnexion automatique à Google Drive (silencieuse) au lancement.
