@@ -344,14 +344,17 @@
       try { await createNamed(EVENTS_FILE, EMPTY_EVENTS()); } catch (e) {}
       return null;
     }
-    try { const j = JSON.parse(await download(f.id)); j._fileId = f.id; return j; } catch (e) { return null; }
+    try { const j = JSON.parse(await download(f.id)); j._fileId = f.id; j._modifiedTime = f.modifiedTime; return j; } catch (e) { return null; }
   }
   // Réécrit le fichier. L'appelant le relit juste avant, pour ne pas écraser un
   // ajout du relais survenu entre-temps.
   async function writeEvenements(id, data) {
-    const copy = Object.assign({}, data); delete copy._fileId;
+    const copy = Object.assign({}, data); delete copy._fileId; delete copy._modifiedTime;
     return updateFile(id, JSON.stringify(copy));
   }
+  // Date de dernière modification d'un fichier (pour vérifier, juste avant
+  // d'écrire, que personne n'a écrit depuis notre lecture).
+  async function fileModifiedTime(id) { const m = await getMeta(id); return (m && m.modifiedTime) || null; }
 
   // ---- Assistant (brief du matin, estimations de durée) ---------------------
   // Même mécanisme : fichier créé par l'app, rempli par le relais.
@@ -746,6 +749,7 @@
     ensureEvenements,
     readEvenements,
     writeEvenements,
+    fileModifiedTime,
     readAssistant,
     writeAssistant,
     listEvents,

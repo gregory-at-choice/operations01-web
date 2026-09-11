@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v67";
+const APP_VERSION = "v68";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1763,8 +1763,8 @@ let eventStore = null, eventLoading = false, eventLoadedAt = 0, eventError = "";
 const EVENT_FRESH = 5 * 60000;   // le Mac mini pousse toutes les 5 minutes
 const EVENT_RETRY = 5 * 60000;
 let eventFilter = { statut: "nouveau", source: "", compte: "" };
-const EVENT_SOURCES = { mail: "✉️ Mail", sms: "💬 SMS", imessage: "💬 iMessage", whatsapp: "💬 WhatsApp", bluesky: "🦋 Bluesky", linkedin: "💼 LinkedIn", x: "𝕏 X" };
-const EVENT_COMPTES = { choicefinance: "Choice Finance", majandco: "Majandco", icarus: "Icarus Swarms", gmail: "Gmail", outlook: "Outlook", "messages-mac-mini": "Messages" };
+const EVENT_SOURCES = { mail: "✉️ Mail", sms: "💬 SMS", imessage: "💬 iMessage", whatsapp: "💬 WhatsApp", googlechat: "💬 Google Chat", bluesky: "🦋 Bluesky", linkedin: "💼 LinkedIn", x: "𝕏 X" };
+const EVENT_COMPTES = { choicefinance: "Choice Finance", majandco: "Majandco", icarus: "Icarus Swarms", gmail: "Gmail", outlook: "Outlook", "messages-mac-mini": "Messages", "whatsapp-mac-mini": "WhatsApp" };
 const EVENT_ACTIONS = { repondre: "Répondre", deleguer: "Déléguer", planifier: "Planifier", lire: "Lire", archiver: "Archiver" };
 const EVENT_URGENCES = { 1: "Immédiat", 2: "Aujourd'hui", 3: "Cette semaine", 4: "Quand possible" };
 const EVENT_STATUTS = { nouveau: "Nouveaux", traite: "Traités", ignore: "Ignorés" };
@@ -1822,12 +1822,28 @@ function parseEstim(s) {
   if (m) return Math.round(parseFloat(m[1]));
   return null;
 }
-// Lien vers le message d'origine (mails seulement) : recherche Gmail par Message-ID.
+// Lien vers le message d'origine, selon la source : recherche Gmail par
+// Message-ID, espace Google Chat, post ou conversation Bluesky. WhatsApp n'a
+// pas de lien fiable.
 function eventLink(ev) {
-  if (ev.source !== "mail" || !ev.external_id) return "";
-  const id = String(ev.external_id).trim().replace(/^<|>$/g, "");
-  const addr = eventAccountAddress(ev.compte);
-  return `https://mail.google.com/mail/${addr ? "?authuser=" + encodeURIComponent(addr) : ""}#search/rfc822msgid:${encodeURIComponent(id).replace(/%40/g, "@")}`;
+  const ref = ev.reference_brute || {};
+  if (ev.source === "mail") {
+    if (!ev.external_id) return "";
+    const id = String(ev.external_id).trim().replace(/^<|>$/g, "");
+    const addr = eventAccountAddress(ev.compte);
+    return `https://mail.google.com/mail/${addr ? "?authuser=" + encodeURIComponent(addr) : ""}#search/rfc822msgid:${encodeURIComponent(id).replace(/%40/g, "@")}`;
+  }
+  if (ev.source === "googlechat") {
+    const space = String(ref.espace || "").replace(/^spaces\//, "");
+    return space ? `https://mail.google.com/chat/u/0/#chat/space/${encodeURIComponent(space)}` : "";
+  }
+  if (ev.source === "bluesky") {
+    if (ref.conversation) return `https://bsky.app/messages/${encodeURIComponent(String(ref.conversation))}`;
+    const m = String(ref.uri || "").match(/\/app\.bsky\.feed\.post\/([^/?#]+)/);
+    const handle = (ev.expediteur && ev.expediteur.adresse) || "";
+    return m && handle ? `https://bsky.app/profile/${encodeURIComponent(handle)}/post/${encodeURIComponent(m[1])}` : "";
+  }
+  return "";
 }
 async function loadEvenements() {
   if (!eventsReady() || eventLoading) return;
@@ -1835,35 +1851,61 @@ async function loadEvenements() {
   if (eventVisible()) render();
   try {
     const d = await DriveSync.readEvenements();
-    if (d) { eventStore = d; eventError = ""; } else eventError = "absent";
+    if (d) { applyEventDecisions(d); eventStore = d; eventError = ""; } else eventError = "absent";
   } catch (e) { eventError = e.message || "erreur"; }
   eventLoading = false;
   if (eventVisible()) render(); else renderNav();
 }
-// Changement de statut : affichage immédiat, puis écriture sérialisée après
-// relecture du fichier, pour ne pas écraser un ajout du relais entre-temps.
+// Changement de statut. L'app n'écrit jamais une liste d'événements construite
+// à partir d'une lecture ancienne : elle garde seulement ses DÉCISIONS
+// (id → statut), relit le fichier juste avant d'écrire, les applique par id,
+// vérifie que personne n'a écrit entre la lecture et l'écriture, puis écrit.
+// Les décisions faites coup sur coup partent groupées dans une seule écriture.
+const eventDecisions = {};     // id → { statut, traiteLe }, en attente d'écriture
+const EVENT_WRITE_TRIES = 4;
+function applyEventDecisions(store) {
+  (store && store.evenements || []).forEach((e) => {
+    const d = e && eventDecisions[e.id];
+    if (d) { e.statut = d.statut; e.traiteLe = d.traiteLe; }
+  });
+}
 let eventWriteChain = Promise.resolve();
 function setEventStatut(id, statut) {
   const when = statut === "nouveau" ? null : new Date().toISOString();
+  eventDecisions[id] = { statut, traiteLe: when };
   const local = eventsAll().find((e) => e.id === id);
   if (local) { local.statut = statut; local.traiteLe = when; }
   render();
   if (!eventsReady()) return Promise.resolve(false);
-  eventWriteChain = eventWriteChain.then(async () => {
-    try {
+  eventWriteChain = eventWriteChain.then(flushEventDecisions);
+  return eventWriteChain;
+}
+async function flushEventDecisions() {
+  const ids = Object.keys(eventDecisions);
+  if (!ids.length) return true;
+  try {
+    for (let attempt = 0; attempt < EVENT_WRITE_TRIES; attempt++) {
       const fresh = await DriveSync.readEvenements();
       if (!fresh || !fresh._fileId) throw new Error("fichier introuvable");
-      const ev = (fresh.evenements || []).find((e) => e && e.id === id);
-      if (ev) { ev.statut = statut; ev.traiteLe = when; }
+      // Le fichier a-t-il bougé pendant qu'on le lisait ? Si oui, on recommence
+      // avec la version la plus récente plutôt que d'écraser un ajout du relais.
+      if (DriveSync.fileModifiedTime && fresh._modifiedTime) {
+        const now = await DriveSync.fileModifiedTime(fresh._fileId);
+        if (now && now !== fresh._modifiedTime) continue;
+      }
+      const applied = Object.assign({}, eventDecisions);
+      applyEventDecisions(fresh);
       fresh.updatedAt = Date.now();
-      const out = Object.assign({}, fresh); delete out._fileId;
+      const out = Object.assign({}, fresh); delete out._fileId; delete out._modifiedTime;
       await DriveSync.writeEvenements(fresh._fileId, out);
+      // Décisions écrites : on ne garde que celles arrivées pendant l'écriture.
+      Object.keys(applied).forEach((k) => { if (eventDecisions[k] === applied[k]) delete eventDecisions[k]; });
       eventStore = fresh; eventLoadedAt = Date.now();
       if (eventVisible()) render(); else renderNav();
       return true;
-    } catch (e) { toast("Statut non enregistré : " + (e.message || e)); return false; }
-  });
-  return eventWriteChain;
+    }
+    throw new Error("le fichier change sans arrêt");
+  } catch (e) { toast("Statut non enregistré (nouvel essai à la prochaine action) : " + (e.message || e)); return false; }
 }
 // Échéance proposée d'après l'urgence : immédiat / aujourd'hui → ce jour,
 // cette semaine → J+3, quand possible → J+7.
@@ -2093,7 +2135,15 @@ function renderBrief() {
       ${b.date && b.date !== today ? `<span class="muted" style="font-size:12px">brief du ${esc(fmtDate(b.date))}</span>` : ""}
       ${els.length ? `<span class="pm-tag">${nbDone}/${els.length} fait${nbDone > 1 ? "s" : ""}${restMin ? ` · ${esc(fmtEstim(restMin))} restantes` : ""}</span>` : (b.totalEstimeMin ? `<span class="pm-tag">${esc(fmtEstim(b.totalEstimeMin))} estimées</span>` : "")}</div>
     ${b.texte ? `<div class="brief-text">${esc(b.texte)}</div>` : ""}
-    ${rows ? `<div class="brief-list">${rows}</div>` : ""}</div>`;
+    ${rows ? `<div class="brief-list">${rows}</div>` : ""}</div>${renderBriefFil(b.fil)}`;
+}
+// Digest du fil Bluesky : de simples posts publics, rien à traiter. Un encadré
+// sous le brief, jamais dans « À traiter ».
+function renderBriefFil(fil) {
+  if (!fil || !(fil.posts || (fil.resume && fil.resume.length))) return "";
+  const lines = Array.isArray(fil.resume) ? fil.resume.filter(Boolean) : [];
+  return `<details class="card brief-fil"><summary>🦋 Fil Bluesky${fil.posts ? ` · ${esc(String(fil.posts))} post${fil.posts > 1 ? "s" : ""}` : ""}${fil.auteurs ? ` de ${esc(String(fil.auteurs))} auteur${fil.auteurs > 1 ? "s" : ""}` : ""} <span class="muted">(pour information, rien à traiter)</span></summary>
+    ${lines.length ? `<ul class="brief-fil-list">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : '<div class="muted" style="font-size:12px">Aucun résumé.</div>'}</details>`;
 }
 // État d'une ligne du brief d'après les données de l'app : événement traité ou
 // ignoré, tâche terminée, rendez-vous passé.

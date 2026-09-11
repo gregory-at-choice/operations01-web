@@ -553,3 +553,8 @@ a.pm-tag { color: var(--primary); }
 .brief-row.done { opacity: .6; }
 .brief-row.done .grow { text-decoration: line-through; }
 .brief-row .btn { padding: 2px 8px; }
+/* Digest du fil Bluesky sous le brief */
+.brief-fil { margin: -6px 0 14px; padding: 10px 16px; }
+.brief-fil > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.brief-fil-list { margin: 8px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
+.brief-fil-list li { margin: 2px 0; }
