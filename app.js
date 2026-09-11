@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v71";
+const APP_VERSION = "v72";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -210,6 +210,50 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 }
+// ----------------------------- Icônes (SVG en ligne, trait fin, couleur courante) -----------------------------
+// Remplacent les émojis dans l'interface : rendu identique sur tous les appareils, teinte héritée du texte.
+const ICONS = {
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/>',
+  inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  tray: '<path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"/>',
+  folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>',
+  "check-circle": '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m22 4-10 10.01-3-3"/>',
+  ticket: '<path d="M2 9a3 3 0 0 1 0 6v3a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3a3 3 0 0 1 0-6V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2M13 17v2M13 11v2"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  "calendar-days": '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"/>',
+  "calendar-check": '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  euro: '<path d="M4 10h12M4 14h9"/><path d="M19 6a7.7 7.7 0 0 0-5.2-2A7.9 7.9 0 0 0 6 12c0 4.4 3.5 8 7.8 8 2 0 3.8-.8 5.2-2"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  building: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/>',
+  dashboard: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
+  book: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+  "file-text": '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m4.93-15.07 1.41-1.41M4.93 19.07l1.41-1.41M2 12h2M20 12h2m-3.66 5.66 1.41 1.41M4.93 4.93l1.41 1.41"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/>',
+  message: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+  "message-square": '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  smartphone: '<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/>',
+  feather: '<path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><path d="M16 8 2 22M17.5 15H9"/>',
+  newspaper: '<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/>',
+  briefcase: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
+  chevron: '<path d="m9 18 6-6-6-6"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  refresh: '<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
+  lightbulb: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6M10 22h4"/>',
+  edit: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
+  archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  sparkles: '<path d="m12 3 1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3Z"/>'
+};
+function icon(name, cls) {
+  const d = ICONS[name] || ICONS.check;
+  return `<svg class="i${cls ? " " + cls : ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+}
 const euros = (v) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(v || 0);
 function fmtDuration(sec) {
   sec = Math.max(0, Math.round(sec));
@@ -293,21 +337,21 @@ const sumAmount = (arr) => arr.reduce((t, v) => t + (v.amount || 0), 0);
 
 // ----------------------------- Navigation -----------------------------
 const SECTIONS = [
-  { id: "search", label: "Recherche", ic: "🔎", fn: renderSearch },
-  { id: "relances", label: "Relances", ic: "📨", fn: renderRelances },
-  { id: "atraiter", label: "À traiter", ic: "📥", fn: renderATraiter },
-  { id: "missions", label: "Projets", ic: "📁", fn: renderMissions },
-  { id: "tasks", label: "Tâches", ic: "✅", fn: renderTasks },
-  { id: "actions", label: "Actions", ic: "🎫", fn: renderActions },
-  { id: "rendezvous", label: "Rendez-vous", ic: "📅", fn: renderRendezvous },
-  { id: "planning", label: "Planning", ic: "🗓️", fn: renderPlanning },
-  { id: "time", label: "Temps", ic: "⏱️", fn: renderTime },
-  { id: "finances", label: "Finances", ic: "€", fn: renderFinances },
-  { id: "contacts", label: "Contacts", ic: "👥", fn: renderContacts },
-  { id: "groupe", label: "Groupe", ic: "🏢", fn: renderGroupe },
-  { id: "dashboard", label: "Tableau de bord", ic: "🎛️", fn: renderDashboard },
-  { id: "reader", label: "Lecteur", ic: "📖", fn: renderReader },
-  { id: "pdftools", label: "Outils PDF", ic: "🧰", fn: renderPdfTools },
+  { id: "search", label: "Recherche", ic: icon("search"), fn: renderSearch },
+  { id: "relances", label: "Relances", ic: icon("mail"), fn: renderRelances },
+  { id: "atraiter", label: "À traiter", ic: icon("tray"), fn: renderATraiter },
+  { id: "missions", label: "Projets", ic: icon("folder"), fn: renderMissions },
+  { id: "tasks", label: "Tâches", ic: icon("check-circle"), fn: renderTasks },
+  { id: "actions", label: "Actions", ic: icon("ticket"), fn: renderActions },
+  { id: "rendezvous", label: "Rendez-vous", ic: icon("calendar"), fn: renderRendezvous },
+  { id: "planning", label: "Planning", ic: icon("calendar-days"), fn: renderPlanning },
+  { id: "time", label: "Temps", ic: icon("clock"), fn: renderTime },
+  { id: "finances", label: "Finances", ic: icon("euro"), fn: renderFinances },
+  { id: "contacts", label: "Contacts", ic: icon("users"), fn: renderContacts },
+  { id: "groupe", label: "Groupe", ic: icon("building"), fn: renderGroupe },
+  { id: "dashboard", label: "Tableau de bord", ic: icon("dashboard"), fn: renderDashboard },
+  { id: "reader", label: "Lecteur", ic: icon("book"), fn: renderReader },
+  { id: "pdftools", label: "Outils PDF", ic: icon("file-text"), fn: renderPdfTools },
 ];
 let view = { section: "missions", detailId: null };
 function go(section) { view = { section, detailId: null }; render(); }
@@ -1271,13 +1315,13 @@ function receiptsBlock() {
 }
 function renderRelances() {
   const head = `<div class="toolbar"><div class="page-title grow" style="margin:0">Relances</div>
-      <button class="btn secondary small" data-mail-refresh>${mailLoading ? "…" : "↻ Rafraîchir"}</button></div>`;
+      <button class="btn secondary small" data-mail-refresh>${mailLoading ? "…" : icon("refresh") + " Rafraîchir"}</button></div>`;
   const receipts = receiptsBlock();
   if (!(window.DriveSync && DriveSync.isConnected()))
-    return head + receipts + `<div class="section-h">✉️ Suivi des mails</div><div class="center-empty">Connecte-toi à Google Drive (menu de gauche) pour activer le suivi des mails.</div>`;
+    return head + receipts + `<div class="section-h">${icon("mail")} Suivi des mails</div><div class="center-empty">Connecte-toi à Google Drive (menu de gauche) pour activer le suivi des mails.</div>`;
   const m = mailData;
   const boxes = renderMailboxes();
-  if (!m && !Object.keys(mailStore).some((k) => mailStore[k])) return head + receipts + boxes + `<div class="section-h">✉️ Suivi des mails</div>` + (mailLoading
+  if (!m && !Object.keys(mailStore).some((k) => mailStore[k])) return head + receipts + boxes + `<div class="section-h">${icon("mail")} Suivi des mails</div>` + (mailLoading
     ? '<div class="center-empty">Chargement…</div>'
     : `<div class="center-empty">Aucune analyse disponible.<br>Installe le script « Mails » (voir la marche à suivre) : il analysera ta boîte Gmail chaque heure et remplira cet onglet.</div>`);
   // Toutes les boîtes sont fusionnées ; l'étiquette de la boîte est ajoutée
@@ -1445,12 +1489,12 @@ function taskSlots(t) { return state.slots.filter((s) => s.taskId === t.id).sort
 // Provenance d'une tâche : issue d'un mail, planifiée dans l'emploi du temps, ou saisie.
 function taskOrigin(t) {
   const out = [];
-  if (t.origin === "mail") out.push({ ic: "✉️", label: "Issue d'un mail", link: t.mailLink || "" });
+  if (t.origin === "mail") out.push({ ic: icon("mail"), label: "Issue d'un mail", link: t.mailLink || "" });
   const slots = taskSlots(t);
   const slot = slots.find((s) => s.date >= todayISO()) || slots[slots.length - 1];
-  if (slot) out.push({ ic: "📅", label: `Planifiée le ${fmtDate(slot.date)} à ${fmtMin(slot.start)}` });
-  if (t.origin === "import") out.push({ ic: "⤓", label: "Importée d'un tableau" });
-  if (!out.length) out.push({ ic: "✍️", label: "Saisie à la main" });
+  if (slot) out.push({ ic: icon("calendar"), label: `Planifiée le ${fmtDate(slot.date)} à ${fmtMin(slot.start)}` });
+  if (t.origin === "import") out.push({ ic: icon("download"), label: "Importée d'un tableau" });
+  if (!out.length) out.push({ ic: icon("edit"), label: "Saisie à la main" });
   return out;
 }
 const taskSeconds = (m, t) => (m.entries || []).filter((e) => e.taskId === t.id).reduce((a, e) => a + entryElapsed(e), 0);
@@ -1544,7 +1588,7 @@ function renderProjectResume(m) {
       <label class="field"><span>Société</span>${companySelect(`missions|${m.id}|companyId`, m.companyId)}</label>
       <label class="field"><span>Date de démarrage</span><input type="date" data-bind="missions|${m.id}|startDate" data-rerender value="${esc(missionStart(m))}"/></label>
       <label class="field"><span>Objectif / description</span><textarea data-bind="missions|${m.id}|summary" placeholder="En deux lignes : de quoi il s'agit, ce qu'on attend.">${esc(m.summary || "")}</textarea></label>
-      <div class="field-b"><span>🔔 Notifications de ce projet</span>
+      <div class="field-b"><span>${icon("bell")} Notifications de ce projet</span>
         <label class="inline-check"><input type="checkbox" data-notify="mails" data-m="${m.id}" ${projectNotify(m).mails ? "checked" : ""}/> <span>Nouveaux mails dans la correspondance</span></label>
         <label class="inline-check"><input type="checkbox" data-notify="deadlines" data-m="${m.id}" ${projectNotify(m).deadlines ? "checked" : ""}/> <span>Échéances des tâches, chaque jour à partir de J-7 (retards compris)</span></label>
         <div class="muted" style="font-size:12px">Elles arrivent dans la cloche 🔔 ; un clic sur une notification l'ouvre et l'efface.</div>
@@ -1618,7 +1662,7 @@ function renderProjectGestion(m) {
   const body = sections.map(block).join("") + block("");
   return `<div class="inline" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">${alerts || '<span class="muted" style="font-size:12px">Aucune tâche pour l\'instant.</span>'}
       <span class="grow"></span>
-      <button class="btn ghost small" data-import-tasks="${m.id}" title="Importer des tâches depuis un fichier CSV (tableau de suivi) ou JSON">⤓ Importer</button>
+      <button class="btn ghost small" data-import-tasks="${m.id}" title="Importer des tâches depuis un fichier CSV (tableau de suivi) ou JSON">${icon("download")} Importer</button>
       <button class="btn secondary small" data-add-section="${m.id}">+ Section</button>
       <button class="btn small" data-add-ptask="${m.id}" data-section="">+ Tâche</button></div>
     ${datalist}
@@ -1710,8 +1754,8 @@ function renderNotifBell() {
   ["notifBell", "tabBell"].forEach((id) => {
     const el = document.getElementById(id); if (!el) return;
     el.innerHTML = id === "tabBell"
-      ? `<span class="ic">🔔${n ? `<span class="tab-count">${n}</span>` : ""}</span>Notifs`
-      : `🔔${n ? `<span class="notif-badge">${n}</span>` : ""}`;
+      ? `<span class="ic">${icon("bell")}${n ? `<span class="tab-count">${n}</span>` : ""}</span>Notifs`
+      : `${icon("bell")}${n ? `<span class="notif-badge">${n}</span>` : ""}`;
     el.classList.toggle("has", n > 0);
     el.onclick = showNotifPanel;
   });
@@ -1725,7 +1769,7 @@ function showNotifPanel() {
   else if (Notification.permission === "granted") sys = '<span class="muted" style="font-size:12px">Notifications système activées sur cet appareil (quand l\'app est ouverte).</span>';
   else if (Notification.permission === "denied") sys = '<span class="muted" style="font-size:12px">Notifications système refusées dans le navigateur (réglages du site pour les réactiver).</span>';
   else sys = '<button class="btn secondary small" data-notif-sys>Activer les notifications système sur cet appareil</button>';
-  showModal(`<div class="modal-head"><strong class="grow">🔔 Notifications${list.length ? ` (${list.length})` : ""}</strong>
+  showModal(`<div class="modal-head"><strong class="grow">${icon("bell")} Notifications${list.length ? ` (${list.length})` : ""}</strong>
       ${list.length ? '<button class="btn ghost small" data-notif-clear>Tout effacer</button>' : ""}<button class="btn ghost small" data-modal-close>✕</button></div>
     ${list.length ? `<div class="list">${rows}</div>` : '<div class="center-empty">Aucune notification.<br><span style="font-size:12px">Active-les projet par projet, dans le résumé du projet.</span></div>'}
     <div style="margin-top:12px">${sys}</div>`);
@@ -1763,7 +1807,8 @@ let eventStore = null, eventLoading = false, eventLoadedAt = 0, eventError = "";
 const EVENT_FRESH = 5 * 60000;   // le Mac mini pousse toutes les 5 minutes
 const EVENT_RETRY = 5 * 60000;
 let eventFilter = { statut: "nouveau", source: "", compte: "" };
-const EVENT_SOURCES = { mail: "✉️ Mail", sms: "💬 SMS", imessage: "💬 iMessage", whatsapp: "💬 WhatsApp", googlechat: "💬 Google Chat", bluesky: "🦋 Bluesky", linkedin: "💼 LinkedIn", x: "𝕏 X" };
+const EVENT_SOURCES = { mail: "Mail", sms: "SMS", imessage: "iMessage", whatsapp: "WhatsApp", googlechat: "Google Chat", bluesky: "Bluesky", linkedin: "LinkedIn", x: "X" };
+const EVENT_SOURCE_ICONS = { mail: "mail", sms: "smartphone", imessage: "message", whatsapp: "message", googlechat: "message-square", bluesky: "feather", linkedin: "briefcase", x: "message-square" };
 const EVENT_COMPTES = { choicefinance: "Choice Finance", majandco: "Majandco", icarus: "Icarus Swarms", gmail: "Gmail", outlook: "Outlook", "messages-mac-mini": "Messages", "whatsapp-mac-mini": "WhatsApp" };
 const EVENT_ACTIONS = { repondre: "Répondre", deleguer: "Déléguer", planifier: "Planifier", lire: "Lire", archiver: "Archiver" };
 const EVENT_URGENCES = { 1: "Immédiat", 2: "Aujourd'hui", 3: "Cette semaine", 4: "Quand possible" };
@@ -2011,10 +2056,10 @@ function eventProposal(ev) {
       <input type="checkbox" data-ev-step="${ev.id}" data-i="${i}" ${done.indexOf(i) > -1 ? "checked" : ""}/>
       <span class="grow">${i + 1}. ${esc(s.etape)}</span>${s.estimationMin ? `<span class="muted">${esc(fmtEstim(s.estimationMin))}</span>` : ""}</label>`).join("")}
     <div class="muted" style="font-size:11px;margin-top:4px">${done.length}/${steps.length} étapes faites${stepsTotal ? ` · ${esc(fmtEstim(stepsTotal))} au total` : ""}</div></div>` : "";
-  return `<details class="ev-prop"><summary>💡 Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}</summary>
+  return `<details class="ev-prop"><summary>${icon("lightbulb")} Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}</summary>
     ${p.reponse ? `<div class="ev-draft">${esc(p.reponse)}</div>
       <div class="ev-actions"><button class="btn ghost small" data-ev-copy="${ev.id}">Copier</button>
-        ${compose ? `<a class="btn secondary small" href="${esc(compose)}" target="_blank" rel="noopener">✉️ Répondre dans Gmail</a>` : ""}
+        ${compose ? `<a class="btn secondary small" href="${esc(compose)}" target="_blank" rel="noopener">${icon("mail")} Répondre dans Gmail</a>` : ""}
         <span class="muted" style="font-size:11px">Rien n'est envoyé sans toi : Gmail s'ouvre pré-rempli, tu relis puis tu envoies.</span></div>` : ""}
     ${t && t.titre ? `<div class="ev-ptask"><span class="grow">${complex ? '<span class="badge u2" title="Action complexe : un processus en plusieurs étapes est proposé">Complexe</span> ' : ""}Action proposée : <strong>${esc(t.titre)}</strong>${t.echeance ? ` · pour le ${esc(fmtDate(String(t.echeance).slice(0, 10)))}` : ""}${t.estimationMin ? ` · ${esc(fmtEstim(t.estimationMin))}` : ""}</span>
         <button class="btn secondary small" data-ev-ptask="${ev.id}" title="${steps.length ? "Une seule tâche, les étapes en description" : "Créer la tâche"}">✅ Créer la tâche</button>
@@ -2025,7 +2070,7 @@ function eventProposal(ev) {
 function eventRow(ev) {
   const u = eventUrgence(ev), st = eventStatut(ev), from = eventFrom(ev), link = eventLink(ev);
   const who = from.nom || from.adresse || "?";
-  const sub = [esc(who), from.nom && from.adresse ? esc(from.adresse) : "", esc(EVENT_SOURCES[ev.source] || ev.source || ""),
+  const sub = [esc(who), from.nom && from.adresse ? esc(from.adresse) : "", icon(EVENT_SOURCE_ICONS[ev.source] || "message") + " " + esc(EVENT_SOURCES[ev.source] || ev.source || ""),
     esc(EVENT_COMPTES[ev.compte] || ev.compte || ""), esc(fmtDateTimeISO(ev.recu_le))].filter(Boolean).join(" · ");
   const sameSender = st === "nouveau" ? eventsFromSameSender(ev).length : 0;
   const buttons = st === "nouveau"
@@ -2050,7 +2095,7 @@ function eventRow(ev) {
 }
 function renderATraiter() {
   const head = `<div class="toolbar nowrap"><div class="page-title grow" style="margin:0">À traiter</div>
-      <button class="btn secondary small" data-ev-refresh ${eventLoading ? "disabled" : ""}>${eventLoading ? "…" : "↻ Rafraîchir"}</button></div>`;
+      <button class="btn secondary small" data-ev-refresh ${eventLoading ? "disabled" : ""}>${eventLoading ? "…" : icon("refresh") + " Rafraîchir"}</button></div>`;
   if (!(window.DriveSync && DriveSync.isConnected()))
     return head + `<div class="center-empty">Connecte-toi à Google Drive (menu de gauche) pour recevoir les événements du Mac mini.</div>`;
   const all = eventsAll(), nb = eventsNew().length;
@@ -2126,7 +2171,7 @@ function taskEstimHint(t) {
   const est = estimationOf(t.id);
   const pending = est && est.assistantMin && (!t.estimationMin || Math.round(est.assistantMin) !== Math.round(t.estimationMin));
   if (!pending) return "";
-  return `<div class="pm-hint" title="${esc(est.base || "")}">💡 ${esc(fmtEstim(est.assistantMin))}${est.confiance != null ? ` <span class="muted">(${Math.round(est.confiance * 100)} %)</span>` : ""}
+  return `<div class="pm-hint" title="${esc(est.base || "")}">${icon("lightbulb")} ${esc(fmtEstim(est.assistantMin))}${est.confiance != null ? ` <span class="muted">(${Math.round(est.confiance * 100)} %)</span>` : ""}
       <button class="btn ghost small" data-accept-estim="${t.id}" title="${esc(est.base || "Estimation de l'assistant")}">Accepter</button></div>`;
 }
 // Colonne « Estimation » d'une tâche : saisie, proposition de l'assistant, écart avec le réel.
@@ -2150,7 +2195,7 @@ function briefLabelParts(el) {
   return { sujet: s };
 }
 const BRIEF_GROUPS = [
-  ["evenement", "📥", "Messages"], ["echeance", "📅", "Échéances du jour"], ["retard", "⚠️", "En retard"], ["rdv", "🤝", "Rendez-vous"]
+  ["evenement", "tray", "Messages"], ["echeance", "calendar", "Échéances du jour"], ["retard", "alert", "En retard"], ["rdv", "calendar-check", "Rendez-vous"]
 ];
 function briefRow(el, s, parts) {
   const u = el.urgence ? Math.min(4, Math.max(1, Number(el.urgence) || 4)) : 0;
@@ -2190,14 +2235,14 @@ function renderBrief() {
     // Les éléments faits passent en bas du groupe.
     const doneRows = [], openRows = [];
     rows.forEach((r, i) => { const c = clusters[order[i]]; (c.every((x) => x.s.done) ? doneRows : openRows).push(r); });
-    return `<details class="brief-group" ${open ? "open" : ""}><summary>${ic} ${esc(label)} <span class="pm-tag">${open ? `${open} à faire` : "tout fait"}</span></summary>${openRows.join("")}${doneRows.join("")}</details>`;
+    return `<details class="brief-group" ${open ? "open" : ""}><summary>${icon(ic)} ${esc(label)} <span class="pm-tag">${open ? `${open} à faire` : "tout fait"}</span></summary>${openRows.join("")}${doneRows.join("")}</details>`;
   }).join("");
-  return `<div class="card brief"><div class="brief-head"><strong class="grow">☀️ ${esc(b.titre || "Aujourd'hui")}</strong>
+  return `<div class="card brief"><div class="brief-head"><strong class="grow">${icon("sun", "brief-sun")} ${esc(b.titre || "Aujourd'hui")}</strong>
       ${b.date && b.date !== today ? `<span class="muted" style="font-size:12px">brief du ${esc(fmtDate(b.date))}</span>` : ""}
       ${els.length ? `<span class="pm-tag">${nbDone}/${els.length} fait${nbDone > 1 ? "s" : ""}${restMin ? ` · ${esc(fmtEstim(restMin))} restantes` : ""}</span>` : (b.totalEstimeMin ? `<span class="pm-tag">${esc(fmtEstim(b.totalEstimeMin))} estimées</span>` : "")}</div>
     ${els.length ? `<div class="brief-bar"><div style="width:${pct}%"></div></div>` : ""}
     ${b.texte ? `<div class="brief-text">${esc(b.texte)}</div>` : ""}
-    ${els.length && nbDone === els.length ? '<div class="brief-alldone">🎉 Tout est fait pour aujourd\'hui.</div>' : ""}
+    ${els.length && nbDone === els.length ? '<div class="brief-alldone">${icon("check-circle")} Tout est fait pour aujourd\'hui.</div>' : ""}
     ${groups}</div>${renderBriefFils(b)}`;
 }
 // Digests « pour information » sous le brief (fil Bluesky, presse…) : rien à
@@ -2205,7 +2250,7 @@ function renderBrief() {
 // `brief.fils` = liste de digests { titre, icone, posts, auteurs, resume[], lien }.
 function renderBriefFils(b) {
   const fils = [];
-  if (b.fil) fils.push(Object.assign({ titre: "Fil Bluesky", icone: "🦋", unite: "post" }, b.fil));
+  if (b.fil) fils.push(Object.assign({ titre: "Fil Bluesky", icone: "", unite: "post", icn: "feather" }, b.fil));
   (Array.isArray(b.fils) ? b.fils : []).forEach((f) => { if (f) fils.push(f); });
   return fils.map(renderBriefFil).join("");
 }
@@ -2214,7 +2259,7 @@ function renderBriefFil(fil) {
   const lines = Array.isArray(fil.resume) ? fil.resume.filter(Boolean) : [];
   const unite = fil.unite || "article";
   const n = Number(fil.posts) || 0;
-  return `<details class="card brief-fil"><summary>${esc(fil.icone || "📰")} ${esc(fil.titre || "Digest")}${n ? ` · ${n} ${esc(unite)}${n > 1 ? "s" : ""}` : ""}${fil.auteurs ? ` de ${esc(String(fil.auteurs))} auteur${fil.auteurs > 1 ? "s" : ""}` : ""} <span class="muted">(pour information, rien à traiter)</span></summary>
+  return `<details class="card brief-fil"><summary>${fil.icone ? esc(fil.icone) : icon(fil.icn || "newspaper")} ${esc(fil.titre || "Digest")}${n ? ` · ${n} ${esc(unite)}${n > 1 ? "s" : ""}` : ""}${fil.auteurs ? ` de ${esc(String(fil.auteurs))} auteur${fil.auteurs > 1 ? "s" : ""}` : ""} <span class="muted">(pour information, rien à traiter)</span></summary>
     ${lines.length ? `<ul class="brief-fil-list">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : '<div class="muted" style="font-size:12px">Aucun résumé.</div>'}
     ${fil.lien ? `<div style="margin-top:6px"><a class="btn ghost small" href="${esc(fil.lien)}" target="_blank" rel="noopener">Ouvrir la source</a></div>` : ""}</details>`;
 }
@@ -2522,8 +2567,8 @@ function renderProjectCourrier(m) {
     ? `<div class="section-h">Mails notés dans l'historique <span class="muted">(${emailEntries.length})</span></div><div class="list">${emailEntries.map((e) => renderEntry(m.id, e)).join("")}</div>`
     : "";
   return `${conf}
-    <div class="section-h">✉️ Correspondance <span class="muted">${cnt(linked.concat(suggested))}</span>
-      <button class="btn ghost small" data-mail-refresh style="margin-left:8px">${mailLoading ? "…" : "↻ Rafraîchir"}</button></div>
+    <div class="section-h">${icon("mail")} Correspondance <span class="muted">${cnt(linked.concat(suggested))}</span>
+      <button class="btn ghost small" data-mail-refresh style="margin-left:8px">${mailLoading ? "…" : icon("refresh") + " Rafraîchir"}</button></div>
     <div class="muted" style="font-size:12px;margin:-4px 0 8px">« ● Non lu » = fil non lu dans Gmail au dernier passage du script (toutes les 15 minutes). Un mail lu depuis peut le rester jusqu'au passage suivant.</div>
     ${body}${manual}`;
 }
@@ -2683,7 +2728,7 @@ function financeFactures() {
     <div style="text-align:right"><div>${euros(v.amount)}</div><span class="badge aDemarrer" style="font-size:10px">${invStatusLabel(v.status)}</span></div></div>`;
   }).join("");
   return `<div class="toolbar"><span class="grow"></span>
-      <button class="btn secondary small" data-export-factures>⬇ CSV</button>
+      <button class="btn secondary small" data-export-factures>${icon("download")} CSV</button>
       <button class="btn" data-add-invoice>+ Nouvelle facture</button></div>
     <div class="filterbar">
       <input id="factureSearch" placeholder="🔎 Rechercher…" value="${esc(f.q)}"/>
@@ -2705,7 +2750,7 @@ function financeCDR() {
   };
   const produits = lines("produit"), charges = lines("charge");
   const totP = produits.reduce((t, l) => t + l[1], 0), totC = charges.reduce((t, l) => t + l[1], 0);
-  const expBar = `<div class="toolbar"><span class="grow"></span><button class="btn secondary small" data-export-cdr>📄 Exporter (PDF)</button></div>`;
+  const expBar = `<div class="toolbar"><span class="grow"></span><button class="btn secondary small" data-export-cdr>${icon("file-text")} Exporter (PDF)</button></div>`;
   const block = (title, arr, tot, color) => `<div class="section-h">${title}</div><div class="card">
     ${arr.length ? arr.map((l) => `<div class="inline" style="padding:4px 0"><span class="grow">${esc(l[0])}</span><span class="muted">${euros(l[1])}</span></div>`).join("") : '<div class="muted">—</div>'}
     <div class="inline" style="padding:6px 0;border-top:1px solid var(--line);margin-top:6px"><strong class="grow">Total ${title.toLowerCase()}</strong><strong style="color:${color}">${euros(tot)}</strong></div></div>`;
@@ -2718,7 +2763,7 @@ function financeTresorerie() {
   const now = new Date();
   const ents = treasuryEntities();
   const perEnt = ents.map((c) => `<div class="inline" style="padding:5px 0"><span class="grow">${esc(c.name || "Sans nom")}</span><span class="timer">${euros(companyBalance(c, now))}</span></div>`).join("");
-  return `<div class="toolbar"><span class="grow"></span><button class="btn secondary small" data-export-treso>📄 Exporter (PDF)</button></div>
+  return `<div class="toolbar"><span class="grow"></span><button class="btn secondary small" data-export-treso>${icon("file-text")} Exporter (PDF)</button></div>
     <div class="card"><div class="inline"><strong class="grow">Trésorerie consolidée</strong>
       <strong style="color:${treasuryNow(now) >= 0 ? "var(--positive)" : "#d23c3c"};font-size:18px">${euros(treasuryNow(now))}</strong></div></div>
     <div class="section-h">Prévisionnel</div><div class="card">
@@ -3183,7 +3228,7 @@ function renderDashboard() {
   if (overdue.length) alerts.push(`${overdue.length} facture(s) client en retard · ${euros(overdue.reduce((t, v) => t + invTTC(v), 0))}`);
   if (toPay.length) alerts.push(`${toPay.length} facture(s) fournisseur à payer · ${euros(toPay.reduce((t, v) => t + invTTC(v), 0))}`);
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tableau de bord</div>
-      <button class="btn secondary small" data-export-dashboard>📄 Exporter (PDF)</button></div>
+      <button class="btn secondary small" data-export-dashboard>${icon("file-text")} Exporter (PDF)</button></div>
     ${renderBrief()}
     <div class="section-h">Activité (HT)</div>
     ${grid(card("CA facturé", euros(caFacture), "émises + payées", "#18c1d8") + card("CA encaissé", euros(caEncaisse), "payées", "#4dc8bb") + card("CA à émettre", euros(caAEmettre), "en attente", "#c3d679") + card("Résultat à date", euros(produits - charges), "produits − charges", produits - charges >= 0 ? "#4dc8bb" : "#d23c3c"))}
@@ -3395,8 +3440,8 @@ function renderTime() {
   const moyenne = r.kind === "mois" && per.length
     ? `<div class="muted" style="font-size:11px;margin-top:6px">${per.length} projet(s) · moyenne ${fmtDuration(total / per.length)} par projet</div>` : "";
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Temps</div>
-      <button class="btn secondary small" data-export-temps-csv>⬇ CSV</button>
-      <button class="btn secondary small" data-export-temps-pdf>📄 PDF</button></div>
+      <button class="btn secondary small" data-export-temps-csv>${icon("download")} CSV</button>
+      <button class="btn secondary small" data-export-temps-pdf>${icon("file-text")} PDF</button></div>
     <div class="chip-row" style="margin-bottom:12px">${tabs}</div>
     <div class="toolbar">
       <button class="btn ghost small" data-time-nav="-1" title="Période précédente">‹</button>
@@ -3464,7 +3509,7 @@ function renderTasks() {
         <div class="kb-grip" title="Glisser vers une autre colonne">⠿</div>
         <input class="flat-input kb-title" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
         ${mission}
-        <div class="kb-dl" style="color:${di.muted ? "var(--muted)" : di.color};font-weight:${di.muted ? 400 : 600}">${di.muted ? "" : "⬤ "}${esc(di.label)}${t.estimationMin ? ` <span class="muted" style="font-weight:400">· ⏱ ${esc(fmtEstim(t.estimationMin))}</span>` : ""}</div>
+        <div class="kb-dl" style="color:${di.muted ? "var(--muted)" : di.color};font-weight:${di.muted ? 400 : 600}">${di.muted ? "" : "⬤ "}${esc(di.label)}${t.estimationMin ? ` <span class="muted" style="font-weight:400">· ${icon("clock")} ${esc(fmtEstim(t.estimationMin))}</span>` : ""}</div>
         ${taskEstimHint(t)}
         <div class="kb-actions">
           <input type="date" data-taskdue="${t.id}" value="${esc(t.dueDate || "")}" title="Échéance"/>
@@ -5083,7 +5128,7 @@ function renderDriveBar() {
   const main = connected
     ? `<div style="font-size:12px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">${reauth ? "reconnexion nécessaire" : "synchronisé"}</span></div>
        <button class="btn ${reauth ? "" : "ghost"} small" id="driveReconnect" style="width:100%;margin-top:6px">Reconnecter</button>
-       <button class="btn ghost small" id="driveBackups" style="width:100%;margin-top:6px">🛟 Sauvegardes</button>`
+       <button class="btn ghost small" id="driveBackups" style="width:100%;margin-top:6px">${icon("archive")} Sauvegardes</button>`
     : `<button class="btn secondary small" id="driveConnect" style="width:100%">Se connecter à Google Drive</button>`;
   el.innerHTML = main
     + `<div class="app-version"><span>Version ${APP_VERSION}</span><button class="btn ghost small" id="appUpdate">↻ Mettre à jour</button></div>`;
