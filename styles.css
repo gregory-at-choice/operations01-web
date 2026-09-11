@@ -465,94 +465,35 @@ label.field.inline-check > span { margin-bottom: 0; }
 /* Brief du matin */
 .brief { margin-bottom: 14px; border-left: 4px solid var(--alert); }
 .brief-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.brief-text { font-size: 13px; margin-top: 6px; line-height: 1.45; }
-.brief-list { margin-top: 8px; display: flex; flex-direction: column; }
-.brief-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-top: 1px solid var(--line); cursor: pointer; font-size: 13px; }
+.brief-bar { height: 5px; border-radius: 999px; background: var(--line); margin-top: 8px; overflow: hidden; }
+.brief-bar > div { height: 100%; background: var(--positive); border-radius: 999px; transition: width .3s; }
+.brief-text { font-size: 13px; margin-top: 8px; line-height: 1.45; color: var(--muted); }
+.brief-alldone { margin-top: 10px; font-size: 14px; font-weight: 600; color: #1f8074; }
+.brief-group { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
+.brief-group > summary { cursor: pointer; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); list-style: none; display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.brief-group > summary::-webkit-details-marker { display: none; }
+.brief-group > summary::after { content: "▾"; margin-left: auto; font-size: 11px; }
+.brief-group:not([open]) > summary::after { content: "▸"; }
+.brief-row { display: flex; align-items: center; gap: 10px; padding: 6px 4px; cursor: pointer; font-size: 13px; border-radius: 8px; }
 .brief-row:hover { background: rgba(24,193,216,.06); }
-.brief-ic { width: 20px; text-align: center; }
-.brief-est { font-size: 12px; white-space: nowrap; }
+.brief-main { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brief-act { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: rgba(24,193,216,.14); color: #0e7f90; margin-right: 2px; }
+.brief-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+.brief-est { font-size: 12px; color: var(--muted); white-space: nowrap; min-width: 44px; text-align: right; }
+.brief-ok { padding: 1px 7px; }
+.brief-row.done { opacity: .55; }
+.brief-row.done .brief-main { text-decoration: line-through; }
+.brief-cluster { margin: 2px 0; }
+.brief-cluster > summary { display: flex; align-items: center; gap: 10px; padding: 6px 4px; cursor: pointer; font-size: 13px; list-style: none; border-radius: 8px; }
+.brief-cluster > summary::-webkit-details-marker { display: none; }
+.brief-cluster > summary:hover { background: rgba(24,193,216,.06); }
+.brief-cluster .brief-row { padding-left: 22px; }
+.brief-cluster.done > summary { opacity: .55; text-decoration: line-through; }
 @media (max-width: 720px) {
-  .ev-actions .grow { flex-basis: 100%; height: 0; }
-  .ev-actions .btn { padding: 6px 9px; font-size: 12px; }
+  .brief-row, .brief-cluster > summary { flex-wrap: wrap; }
+  .brief-main { flex-basis: 100%; white-space: normal; }
+  .brief-meta { margin-left: auto; }
 }
-
-/* Détail mission : entrées d'historique */
-.entry { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px; }
-.entry-head { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-.entry-head .ic { width: 22px; text-align: center; }
-.entry-body { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
-.timer { font-variant-numeric: tabular-nums; font-weight: 600; }
-.running { color: var(--primary); }
-
-.section-h { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 22px 0 8px; }
-.back { background: none; border: none; color: var(--primary); font-size: 15px; cursor: pointer; padding: 4px 0; margin-bottom: 8px; display: inline-flex; align-items: center; gap: 6px; }
-.drivebar { margin-top: auto; padding: 12px 10px 4px; border-top: 1px solid var(--line); }
-
-/* Bandeau installation */
-.install-banner {
-  position: fixed; left: 12px; right: 12px; bottom: calc(74px + env(safe-area-inset-bottom, 0px)); z-index: 30;
-  background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
-  padding: 12px 14px; display: none; align-items: center; gap: 12px;
-}
-@media (min-width: 721px) { .install-banner { left: auto; right: 22px; width: 340px; bottom: 22px; } }
-
-/* Fiche projet : gestion de projet (tableau), correspondance, boîtes mail */
-.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.pm-table { width: 100%; border-collapse: separate; border-spacing: 0 6px; min-width: 720px; }
-.pm-table th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; padding: 0 10px 2px; text-transform: uppercase; letter-spacing: .02em; }
-.pm-table td { background: var(--card); padding: 8px 10px; vertical-align: top; box-shadow: var(--shadow); }
-.pm-table td:first-child { border-radius: 10px 0 0 10px; }
-.pm-table td:last-child { border-radius: 0 10px 10px 0; }
-.pm-table tr.done td { opacity: .6; }
-.pm-table tr.done .pm-title input { text-decoration: line-through; }
-.pm-table tr.pm-section td { background: transparent; box-shadow: none; padding: 10px 4px 0; font-weight: 700; }
-.pm-table tr.pm-section input { font-weight: 700; font-size: 14px; }
-.pm-table tr.pm-section .btn { white-space: nowrap; }
-.pm-title { min-width: 220px; }
-.pm-title .flat-input { width: 100%; font-weight: 600; }
-.pm-note { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
-.pm-origin { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-.pm-tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--bg); color: var(--muted); text-decoration: none; white-space: nowrap; }
-a.pm-tag { color: var(--primary); }
-.pm-due input[type=date] { padding: 6px 8px; font-size: 13px; }
-.pm-dl { font-size: 11px; margin-top: 3px; font-weight: 600; white-space: nowrap; }
-.pm-prog select { padding: 6px 8px; font-size: 13px; width: 90px; }
-.pm-bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; margin-top: 6px; }
-.pm-bar-fill { height: 100%; background: linear-gradient(90deg, var(--primary), var(--positive)); border-radius: 999px; }
-.pm-time { white-space: nowrap; }
-.pm-time .timer { font-size: 12px; margin-right: 4px; }
-.pm-x { width: 34px; }
-.pm-alert { display: inline-block; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--bg); }
-.pm-alert.late { background: rgba(210,60,60,.12); color: #b03030; }
-.pm-alert.soon { background: rgba(233,219,101,.3); color: #7a6b17; }
-.pm-alert.none { color: var(--muted); }
-.pm-alert.ok { background: rgba(77,200,187,.2); color: #1f8074; }
-.kb-mission.flat-input { font-size: 11px; color: var(--muted); padding: 0; margin-top: 2px; width: 100%; }
-.mail-row { align-items: flex-start; }
-.mail-snippet { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
-.pm-tag.mail-unread { background: rgba(24,193,216,.18); color: #0e7f90; font-weight: 700; }
-.mail-sel { width: auto; max-width: 220px; padding: 5px 8px; font-size: 12px; }
-.mail-actions { display: flex; flex-direction: column; gap: 2px; align-items: flex-end; }
-.mb-steps { padding-left: 20px; font-size: 14px; line-height: 1.6; }
-.mb-steps code { background: var(--bg); padding: 2px 6px; border-radius: 6px; font-size: 12px; word-break: break-all; }
-@media (max-width: 720px) { .mail-actions { flex-direction: row; flex-wrap: wrap; } }
-
-/* Cloche de notifications (menu et barre d'onglets) */
-.brand .grow { flex: 1; }
-.notif-bell { position: relative; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg);
-  cursor: pointer; font-size: 16px; padding: 0; line-height: 1; }
-.notif-bell.has { border-color: var(--primary); background: rgba(24,193,216,.12); }
-.notif-badge { position: absolute; top: -6px; right: -6px; background: #d23c3c; color: #fff; font-size: 10px; font-weight: 700;
-  border-radius: 999px; padding: 2px 6px; line-height: 1; }
-.tab-bell.has { color: var(--primary); }
-/* Processus proposé : étapes cochables */
-.ev-steps { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
-.ev-step { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; cursor: pointer; }
-.ev-step input { width: auto; margin: 0; }
-.ev-step.done .grow { text-decoration: line-through; color: var(--muted); }
-.brief-row.done { opacity: .6; }
-.brief-row.done .grow { text-decoration: line-through; }
-.brief-row .btn { padding: 2px 8px; }
 /* Digest du fil Bluesky sous le brief */
 .brief-fil { margin: -6px 0 14px; padding: 10px 16px; }
 .brief-fil > summary { cursor: pointer; font-size: 13px; font-weight: 600; }

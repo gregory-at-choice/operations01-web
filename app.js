@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v70";
+const APP_VERSION = "v71";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2138,25 +2138,67 @@ function taskEstimCell(t, secs) {
     ${ratio ? `<div class="pm-hint ${ratio > 110 ? "over" : ""}">réel ${ratio} %</div>` : ""}</td>`;
 }
 // Brief du matin : en tête du tableau de bord et de la liste des projets.
+// Libellé d'un élément du brief : « Répondre à X — Sujet », « Lire : X — Sujet »,
+// « Planifier avec X — Sujet » → { action, qui, sujet } pour un affichage sur
+// deux niveaux. Sinon tout dans `sujet`.
+function briefLabelParts(el) {
+  const s = String(el.libelle || "");
+  let m = s.match(/^(Répondre à|Planifier avec|Lire|Déléguer à|Archiver)\s*:?\s*(.*?)\s+—\s+(.*)$/);
+  if (m) return { action: m[1].replace(/ (à|avec)$/, ""), qui: m[2], sujet: m[3] };
+  m = s.match(/^(.*?)\s+—\s+(\d+)\/(\d+)\s*:\s*(.*)$/);
+  if (m) return { parent: m[1], step: Number(m[2]), steps: Number(m[3]), sujet: m[4] };
+  return { sujet: s };
+}
+const BRIEF_GROUPS = [
+  ["evenement", "📥", "Messages"], ["echeance", "📅", "Échéances du jour"], ["retard", "⚠️", "En retard"], ["rdv", "🤝", "Rendez-vous"]
+];
+function briefRow(el, s, parts) {
+  const u = el.urgence ? Math.min(4, Math.max(1, Number(el.urgence) || 4)) : 0;
+  const p = parts || briefLabelParts(el);
+  const main = p.action
+    ? `<span class="brief-act">${esc(p.action)}</span> <strong>${esc(p.qui)}</strong> <span class="muted">· ${esc(p.sujet)}</span>`
+    : esc(p.sujet);
+  return `<div class="brief-row${s.done ? " done" : ""}" data-brief-open="${esc(el.type || "")}" data-id="${esc(el.id || "")}" title="${esc(el.libelle || "")}">
+      <span class="brief-main">${main}</span>
+      <span class="brief-meta">${s.done ? `<span class="badge terminee">${esc(s.label)}</span>`
+        : `${u ? `<span class="badge ev-urg u${u}">${esc(EVENT_URGENCES[u])}</span>` : ""}${el.estimationMin ? `<span class="brief-est">${esc(fmtEstim(el.estimationMin))}</span>` : ""}`}
+      ${!s.done && s.can ? `<button class="btn ghost small brief-ok" data-brief-done="${esc(el.type || "")}" data-id="${esc(el.id || "")}" title="Marquer comme fait">✓</button>` : ""}</span></div>`;
+}
 function renderBrief() {
   const b = briefOf();
   if (!b) return "";
   const today = todayISO();
-  const ICONS = { retard: "⚠️", echeance: "📅", evenement: "📥", rdv: "🤝" };
-  const els = b.elements || [];
-  const states = els.map(briefElementState);
-  const nbDone = states.filter((s) => s.done).length;
-  const restMin = els.reduce((a, el, i) => a + (states[i].done ? 0 : (Number(el.estimationMin) || 0)), 0);
-  const rows = els.map((el, i) => { const s = states[i]; return `<div class="brief-row${s.done ? " done" : ""}" data-brief-open="${esc(el.type || "")}" data-id="${esc(el.id || "")}">
-      <span class="brief-ic">${s.done ? "✅" : (ICONS[el.type] || "•")}</span><span class="grow">${esc(el.libelle || "")}</span>
-      ${s.done ? `<span class="badge terminee">${esc(s.label)}</span>` : `${el.urgence ? `<span class="badge ev-urg u${Math.min(4, Math.max(1, Number(el.urgence) || 4))}">${esc(EVENT_URGENCES[Math.min(4, Math.max(1, Number(el.urgence) || 4))])}</span>` : ""}
-      ${el.estimationMin ? `<span class="muted brief-est">${esc(fmtEstim(el.estimationMin))}</span>` : ""}
-      ${s.can ? `<button class="btn ghost small" data-brief-done="${esc(el.type || "")}" data-id="${esc(el.id || "")}" title="Marquer comme fait">✓</button>` : ""}`}<span class="muted">›</span></div>`; }).join("");
+  const els = (b.elements || []).map((el) => ({ el, s: briefElementState(el), p: briefLabelParts(el) }));
+  const nbDone = els.filter((x) => x.s.done).length;
+  const restMin = els.reduce((a, x) => a + (x.s.done ? 0 : (Number(x.el.estimationMin) || 0)), 0);
+  const pct = els.length ? Math.round((nbDone / els.length) * 100) : 0;
+  const groups = BRIEF_GROUPS.map(([type, ic, label]) => {
+    const items = els.filter((x) => (x.el.type || "") === type);
+    if (!items.length) return "";
+    // Les étapes d'un même processus (« X — 1/6 : … ») sont regroupées sous leur action.
+    const clusters = {}, order = [];
+    items.forEach((x) => { const k = x.p.parent ? "p:" + x.p.parent : "s:" + (x.el.id || Math.random()); if (!clusters[k]) { clusters[k] = []; order.push(k); } clusters[k].push(x); });
+    const open = items.filter((x) => !x.s.done).length;
+    const rows = order.map((k) => {
+      const c = clusters[k];
+      if (k[0] === "s") return briefRow(c[0].el, c[0].s);
+      const done = c.filter((x) => x.s.done).length, min = c.reduce((a, x) => a + (x.s.done ? 0 : (Number(x.el.estimationMin) || 0)), 0);
+      return `<details class="brief-cluster${done === c.length ? " done" : ""}"><summary><span class="brief-main"><strong>${esc(c[0].p.parent)}</strong> <span class="muted">· ${c.length} étapes</span></span>
+          <span class="brief-meta"><span class="pm-tag">${done}/${c.length}</span>${min ? `<span class="brief-est">${esc(fmtEstim(min))}</span>` : ""}</span></summary>
+        ${c.map((x) => briefRow(x.el, x.s, { sujet: `${x.p.step}. ${x.p.sujet}` })).join("")}</details>`;
+    });
+    // Les éléments faits passent en bas du groupe.
+    const doneRows = [], openRows = [];
+    rows.forEach((r, i) => { const c = clusters[order[i]]; (c.every((x) => x.s.done) ? doneRows : openRows).push(r); });
+    return `<details class="brief-group" ${open ? "open" : ""}><summary>${ic} ${esc(label)} <span class="pm-tag">${open ? `${open} à faire` : "tout fait"}</span></summary>${openRows.join("")}${doneRows.join("")}</details>`;
+  }).join("");
   return `<div class="card brief"><div class="brief-head"><strong class="grow">☀️ ${esc(b.titre || "Aujourd'hui")}</strong>
       ${b.date && b.date !== today ? `<span class="muted" style="font-size:12px">brief du ${esc(fmtDate(b.date))}</span>` : ""}
       ${els.length ? `<span class="pm-tag">${nbDone}/${els.length} fait${nbDone > 1 ? "s" : ""}${restMin ? ` · ${esc(fmtEstim(restMin))} restantes` : ""}</span>` : (b.totalEstimeMin ? `<span class="pm-tag">${esc(fmtEstim(b.totalEstimeMin))} estimées</span>` : "")}</div>
+    ${els.length ? `<div class="brief-bar"><div style="width:${pct}%"></div></div>` : ""}
     ${b.texte ? `<div class="brief-text">${esc(b.texte)}</div>` : ""}
-    ${rows ? `<div class="brief-list">${rows}</div>` : ""}</div>${renderBriefFils(b)}`;
+    ${els.length && nbDone === els.length ? '<div class="brief-alldone">🎉 Tout est fait pour aujourd\'hui.</div>' : ""}
+    ${groups}</div>${renderBriefFils(b)}`;
 }
 // Digests « pour information » sous le brief (fil Bluesky, presse…) : rien à
 // traiter, jamais dans « À traiter ». `brief.fil` = fil Bluesky historique ;
