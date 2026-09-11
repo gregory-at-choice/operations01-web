@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v72";
+const APP_VERSION = "v73";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -248,6 +248,9 @@ const ICONS = {
   edit: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
   archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+  "panel-open": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
+  "panel-close": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
   sparkles: '<path d="m12 3 1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3Z"/>'
 };
 function icon(name, cls) {
@@ -411,17 +414,63 @@ function renderNav() {
     b.onclick = () => go(s.id);
     sidebar.insertBefore(b, driveBar);
   });
+  // Mobile : quatre onglets principaux et un bouton « Plus » qui ouvre la liste
+  // complète (façon barre d'onglets iOS), au lieu d'une barre qui défile.
   const tabbar = document.getElementById("tabbar");
   tabbar.innerHTML = "";
-  const bell = document.createElement("button"); bell.id = "tabBell"; bell.className = "tab-bell"; tabbar.appendChild(bell);
-  SECTIONS.forEach((s) => {
+  const tabBtn = (s) => {
     const b = document.createElement("button");
     b.className = s.id === view.section ? "active" : "";
     const n = navCount(s.id);
     b.innerHTML = `<span class="ic">${s.ic}${n != null ? `<span class="tab-count">${esc(String(n))}</span>` : ""}</span>${esc(s.label)}`;
     b.onclick = () => go(s.id);
-    tabbar.appendChild(b);
-  });
+    return b;
+  };
+  MOBILE_TABS.forEach((id) => { const s = SECTIONS.find((x) => x.id === id); if (s) tabbar.appendChild(tabBtn(s)); });
+  const more = document.createElement("button");
+  const inMore = SECTIONS.some((s) => s.id === view.section && MOBILE_TABS.indexOf(s.id) === -1);
+  more.className = "tab-more" + (inMore ? " active" : "");
+  more.id = "tabBell";
+  more.onclick = showMoreSheet;
+  tabbar.appendChild(more);
+  renderMoreBadge();
+  applySidebarMode();
+}
+const MOBILE_TABS = ["atraiter", "missions", "tasks", "rendezvous"];
+function renderMoreBadge() {
+  const more = document.getElementById("tabBell"); if (!more) return;
+  const n = notifCount();
+  more.innerHTML = `<span class="ic">${icon("more")}${n ? `<span class="tab-count">${n}</span>` : ""}</span>Plus`;
+}
+// Feuille « Plus » : toutes les sections, plus les notifications.
+function showMoreSheet() {
+  const n = notifCount();
+  const items = SECTIONS.map((s) => `<button class="sheet-item${s.id === view.section ? " active" : ""}" data-sheet-go="${s.id}">
+      <span class="ic">${s.ic}</span><span class="grow">${esc(s.label)}</span>${navCount(s.id) != null ? `<span class="nav-count">${esc(String(navCount(s.id)))}</span>` : ""}</button>`).join("");
+  showModal(`<div class="modal-head"><strong class="grow">Menu</strong><button class="btn ghost small" data-modal-close>${icon("x")}</button></div>
+    <button class="sheet-item" data-sheet-notifs><span class="ic">${icon("bell")}</span><span class="grow">Notifications</span>${n ? `<span class="nav-count">${n}</span>` : ""}</button>
+    <div class="sheet-grid">${items}</div>
+    <div class="sheet-foot"><span id="driveStatusSheet" class="muted" style="font-size:12px"></span><button class="btn ghost small" data-sheet-backups>${icon("archive")} Sauvegardes</button><button class="btn ghost small" data-sheet-update>${icon("refresh")} Mettre à jour</button></div>`);
+  document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
+  document.querySelectorAll("[data-sheet-go]").forEach((b) => b.onclick = () => { closeModal(); go(b.dataset.sheetGo); });
+  const nb = document.querySelector("[data-sheet-notifs]"); if (nb) nb.onclick = () => { closeModal(); showNotifPanel(); };
+  const bk = document.querySelector("[data-sheet-backups]"); if (bk) bk.onclick = () => { closeModal(); const d = document.getElementById("driveBackups"); if (d) d.click(); };
+  const up = document.querySelector("[data-sheet-update]"); if (up) up.onclick = () => { const d = document.getElementById("appUpdate"); if (d) d.click(); else location.reload(); };
+  const st = document.getElementById("driveStatusSheet"), src = document.getElementById("driveStatus"); if (st && src) st.textContent = "Drive · " + src.textContent;
+}
+// Ordinateur : barre latérale repliable en rail d'icônes (préférence mémorisée).
+const SIDEBAR_KEY = "op01_sidebar";
+let sidebarMode = (() => { try { return localStorage.getItem(SIDEBAR_KEY) || "rail"; } catch (e) { return "rail"; } })();
+function applySidebarMode() {
+  const app = document.querySelector(".app"); if (!app) return;
+  app.classList.toggle("rail", sidebarMode === "rail");
+  const t = document.getElementById("sideToggle");
+  if (t) { t.innerHTML = icon(sidebarMode === "rail" ? "panel-open" : "panel-close"); t.title = sidebarMode === "rail" ? "Déplier le menu" : "Replier le menu"; t.onclick = toggleSidebar; }
+}
+function toggleSidebar() {
+  sidebarMode = sidebarMode === "rail" ? "full" : "rail";
+  try { localStorage.setItem(SIDEBAR_KEY, sidebarMode); } catch (e) {}
+  applySidebarMode();
 }
 // Menu « ⋯ » regroupant des actions secondaires (visible sur mobile, où la place manque).
 function moreMenu(inner) {
@@ -1751,14 +1800,15 @@ const notifCount = () => (state.notifs || []).length;
 // La cloche : dans le menu (ordinateur) et dans la barre d'onglets (mobile).
 function renderNotifBell() {
   const n = notifCount();
-  ["notifBell", "tabBell"].forEach((id) => {
-    const el = document.getElementById(id); if (!el) return;
-    el.innerHTML = id === "tabBell"
-      ? `<span class="ic">${icon("bell")}${n ? `<span class="tab-count">${n}</span>` : ""}</span>Notifs`
-      : `${icon("bell")}${n ? `<span class="notif-badge">${n}</span>` : ""}`;
+  const el = document.getElementById("notifBell");
+  if (el) {
+    el.innerHTML = `${icon("bell")}${n ? `<span class="notif-badge">${n}</span>` : ""}`;
     el.classList.toggle("has", n > 0);
     el.onclick = showNotifPanel;
-  });
+  }
+  // Sur mobile, la cloche vit dans la feuille « Plus » ; son bouton porte le badge.
+  const more = document.getElementById("tabBell");
+  if (more) { renderMoreBadge(); more.onclick = showMoreSheet; }
 }
 function showNotifPanel() {
   const list = [...(state.notifs || [])].sort((a, b) => (b.at || 0) - (a.at || 0));
