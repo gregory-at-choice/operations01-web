@@ -48,20 +48,58 @@
   const hasSession = () => { try { return localStorage.getItem(SESSION_KEY) === "1"; } catch (e) { return false; } }
   const rememberSession = () => { try { localStorage.setItem(SESSION_KEY, "1"); } catch (e) {} };
 
+  // --- Jeton mémorisé sur l'appareil ---
+  // Un jeton Google vaut une heure. Le garder sur l'appareil évite de redemander
+  // quoi que ce soit à chaque réouverture de l'app : on passe du MacBook au
+  // téléphone et retour sans coupure. Portée drive.file : il ne donne accès
+  // qu'aux fichiers de l'app. `hint` est l'adresse du compte Google, pour que
+  // les renouvellements ne demandent jamais de choisir un compte.
+  const TOKEN_KEY = "op01_driveToken";
+  let loginHint = null;
+  function adoptToken(tok, expiresIn, scope) {
+    accessToken = tok;
+    // marge de 2 min pour renouveler avant l'expiration réelle
+    tokenExpiry = Date.now() + Math.max(60, (Number(expiresIn) || 3600) - 120) * 1000;
+    needsAuth = false; rememberSession();
+    try { localStorage.setItem(TOKEN_KEY, JSON.stringify({ t: tok, exp: tokenExpiry, scope: scope || askedScope(), hint: loginHint })); } catch (e) {}
+  }
+  function dropToken() {
+    accessToken = null; tokenExpiry = 0;
+    try { localStorage.setItem(TOKEN_KEY, JSON.stringify({ hint: loginHint })); } catch (e) {}
+  }
+  const scopeCovers = (s) => askedScope().split(" ").every((x) => String(s || "").split(" ").indexOf(x) !== -1);
+  (function restoreToken() {
+    try {
+      const j = JSON.parse(localStorage.getItem(TOKEN_KEY) || "null");
+      if (!j) return;
+      loginHint = j.hint || null;
+      if (j.t && j.exp > Date.now() + 30000 && scopeCovers(j.scope)) { accessToken = j.t; tokenExpiry = j.exp; }
+    } catch (e) {}
+  })();
+
   // --- Autorisation par redirection pleine page (indispensable sur iOS/Safari) ---
   // Safari isole le stockage tiers : la fenêtre surgissante de Google s'ouvre mais
   // ne rend jamais la main. On quitte donc l'app vers Google, qui nous renvoie
   // ensuite avec le jeton dans le fragment d'URL. Aucune pop-up n'est impliquée.
+  // En mode silencieux (prompt=none), Google renvoie le jeton sans rien afficher
+  // tant que la session Google de l'appareil est ouverte : c'est le renouvellement
+  // « invisible » sur Safari, où le renouvellement en arrière-plan est bloqué.
   const STATE_KEY = "op01_oauth_state";
+  const SILENT_AT_KEY = "op01_silentAuthAt";      // dernière tentative silencieuse (anti-boucle)
+  const SILENT_FAIL_KEY = "op01_silentAuthFail";  // dernier refus de Google en silencieux
+  const SILENT_RETRY = 10 * 60000;                // pas deux tentatives silencieuses en moins de 10 min
+  const SILENT_FAIL_COOLDOWN = 60 * 60000;        // après un refus, on laisse la main à l'utilisateur 1 h
   const isIOS = () => typeof navigator !== "undefined" && (/iPad|iPhone|iPod/.test(navigator.userAgent)
     || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
   function redirectURI() {
     if (typeof location === "undefined") return "";
     return location.origin + location.pathname.replace(/index\.html$/, "");
   }
-  function startRedirectAuth() {
-    const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
-    try { localStorage.setItem(STATE_KEY, nonce); } catch (e) {}
+  let redirecting = false;
+  const beforeRedirect = [];
+  function startRedirectAuth(silent) {
+    const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36) + (silent ? ".s" : "");
+    try { localStorage.setItem(STATE_KEY, nonce); if (silent) localStorage.setItem(SILENT_AT_KEY, String(Date.now())); } catch (e) {}
     const p = new URLSearchParams({
       client_id: cfg.googleClientId,
       redirect_uri: redirectURI(),
@@ -69,26 +107,63 @@
       scope: askedScope(),
       include_granted_scopes: "true",
       state: nonce,
-      prompt: "consent"
+      prompt: silent ? "none" : "consent"
     });
+    if (loginHint) p.set("login_hint", loginHint);
+    redirecting = true;
+    // Si la page ne part pas (navigation bloquée), on ne reste pas figé sur cet état.
+    setTimeout(() => { redirecting = false; }, 20000);
+    beforeRedirect.forEach((fn) => { try { fn(); } catch (e) {} });
     location.assign("https://accounts.google.com/o/oauth2/v2/auth?" + p.toString());
   }
   // Au chargement : récupère le jeton renvoyé par Google, s'il y en a un.
+  let redirectError = null;
   function consumeRedirectToken() {
     if (typeof location === "undefined") return false;
-    if (!location.hash || location.hash.indexOf("access_token=") === -1) return false;
+    if (!location.hash || (location.hash.indexOf("access_token=") === -1 && location.hash.indexOf("error=") === -1)) return false;
     const p = new URLSearchParams(location.hash.replace(/^#/, ""));
     const tok = p.get("access_token");
     let saved = null;
     try { saved = localStorage.getItem(STATE_KEY); localStorage.removeItem(STATE_KEY); } catch (e) {}
-    if (!tok || (saved && p.get("state") !== saved)) return false;
-    accessToken = tok;
-    tokenExpiry = Date.now() + Math.max(60, (Number(p.get("expires_in")) || 3600) - 120) * 1000;
-    needsAuth = false; rememberSession();
-    try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { location.hash = ""; }
+    if (saved && p.get("state") !== saved) return false;
+    const silent = /\.s$/.test(p.get("state") || "");
+    const clean = () => { try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { location.hash = ""; } };
+    if (!tok) {
+      // Google a refusé (session fermée, plusieurs comptes…) : en silencieux on
+      // n'insiste pas pendant une heure, l'utilisateur reprend la main.
+      redirectError = p.get("error") || "refus";
+      if (silent) { try { localStorage.setItem(SILENT_FAIL_KEY, String(Date.now())); } catch (e) {} }
+      needsAuth = true; clean();
+      return false;
+    }
+    adoptToken(tok, p.get("expires_in"), p.get("scope") || askedScope());
+    try { localStorage.removeItem(SILENT_FAIL_KEY); } catch (e) {}
+    clean();
     return true;
   }
   const cameBackFromGoogle = consumeRedirectToken();
+  function canSilentRedirect() {
+    if (!hasSession() || typeof location === "undefined" || !cfg.googleClientId) return false;
+    let at = 0, fail = 0;
+    try { at = Number(localStorage.getItem(SILENT_AT_KEY)) || 0; fail = Number(localStorage.getItem(SILENT_FAIL_KEY)) || 0; } catch (e) {}
+    const now = Date.now();
+    return now - at > SILENT_RETRY && now - fail > SILENT_FAIL_COOLDOWN;
+  }
+  // L'app dit si c'est le bon moment pour recharger la page (pas de saisie en
+  // cours, pas de fenêtre ouverte). Sinon on réessaie un peu plus tard.
+  let silentGate = () => true;
+  let silentTimer = null;
+  let silentPending = false;   // redirection silencieuse décidée, en attente d'un moment calme
+  const authInProgress = () => redirecting || silentPending;
+  function requestSilentAuth() {
+    if (redirecting) return true;
+    if (!canSilentRedirect()) { silentPending = false; needsAuth = true; setStatus("reconnexion nécessaire"); return false; }
+    if (silentGate()) { silentPending = false; setStatus("reconnexion…"); startRedirectAuth(true); return true; }
+    silentPending = true;
+    clearTimeout(silentTimer); silentTimer = setTimeout(requestSilentAuth, 15000);
+    setStatus("reconnexion…");
+    return true;
+  }
 
   // Demande un jeton.
   //   interactive = false → renouvellement silencieux (aucune fenêtre).
@@ -126,10 +201,7 @@
       };
       tokenClient.callback = (resp) => {
         if (resp && resp.access_token) {
-          accessToken = resp.access_token;
-          // marge de 2 min pour renouveler avant l'expiration réelle
-          tokenExpiry = Date.now() + Math.max(60, (Number(resp.expires_in) || 3600) - 120) * 1000;
-          needsAuth = false; rememberSession();
+          adoptToken(resp.access_token, resp.expires_in, resp.scope || tokenClientScope);
           done(null, accessToken);
         } else { needsAuth = true; done(new Error("Autorisation Google refusée.")); }
       };
@@ -141,24 +213,46 @@
       try {
         // Un clic explicite force l'affichage de la fenêtre Google : c'est le seul
         // moyen fiable de se ré-autoriser sur Safari.
-        tokenClient.requestAccessToken({ prompt: interactive ? "consent" : "" });
+        const req = { prompt: interactive ? "consent" : "" };
+        if (loginHint) req.hint = loginHint;   // pas de choix de compte au renouvellement
+        tokenClient.requestAccessToken(req);
       } catch (e) { needsAuth = true; done(e); }
     });
     if (!interactive) tokenPromise = p;
     return p;
   }
 
+  // Renouvellement sans intervention : d'abord en arrière-plan (fonctionne sur
+  // Chrome), sinon par redirection silencieuse (Safari, iPhone). Sur iOS on va
+  // directement à la redirection : la demande en arrière-plan y reste sans réponse.
+  async function silentRenew(force) {
+    if (!force && accessToken && Date.now() < tokenExpiry) return accessToken;
+    if (!hasSession()) throw new Error("Non connecté.");
+    if (!isIOS() && ready()) {
+      try { return await getToken(false); } catch (e) { /* on passe à la redirection */ }
+    }
+    if (requestSilentAuth()) throw new Error("Renouvellement en cours.");
+    throw new Error("Reconnexion nécessaire.");
+  }
+
   // Garantit un jeton valide (renouvellement silencieux si expiré/proche de l'expiration).
   async function ensureToken(interactive) {
     if (accessToken && Date.now() < tokenExpiry) return accessToken;
-    if (!interactive && !hasSession()) throw new Error("Non connecté.");
-    return await getToken(!!interactive);
+    if (!interactive) return await silentRenew();
+    return await getToken(true);
   }
+  // Renouvellement anticipé : quelques minutes avant l'expiration, pendant que
+  // tout marche encore, plutôt qu'au moment où une sauvegarde échoue.
+  const RENEW_AHEAD = 4 * 60000;
+  setInterval(() => {
+    if (!hasSession() || !accessToken || redirecting) return;
+    if (tokenExpiry - Date.now() < RENEW_AHEAD) silentRenew(true).catch(() => {});
+  }, 60000);
 
   // Reconnexion déclenchée par un clic : on repart d'un état propre.
   // Sur iOS/Safari on passe directement par la redirection (la pop-up n'aboutit pas).
   async function reconnect() {
-    accessToken = null; tokenExpiry = 0; tokenPromise = null;
+    dropToken(); tokenPromise = null;
     if (isIOS()) { setStatus("redirection vers Google…"); startRedirectAuth(); return null; }
     try {
       await getToken(true);
@@ -179,6 +273,7 @@
   // si le fichier existe mais ne peut pas être lu, on lève une erreur : le
   // distant reste « inconnu » et rien ne doit l'écraser à l'aveugle.
   async function readRemote() {
+    await discoverHint();
     const f = await findFile();
     fileId = f ? f.id : null;
     lastModifiedTime = null;
@@ -219,8 +314,8 @@
     }
     if (authProblem && !retried) {
       // jeton révoqué ou expiré côté Google : on en redemande un et on rejoue une fois
-      accessToken = null; tokenExpiry = 0;
-      await getToken(false);
+      dropToken();
+      await silentRenew();
       return api(url, opts, true);
     }
     if (!r.ok) {
@@ -236,6 +331,17 @@
     return r;
   }
 
+  // Adresse du compte Google (une fois par appareil) : sert d'indice à Google
+  // pour renouveler le jeton sans jamais demander de choisir un compte.
+  async function discoverHint() {
+    if (loginHint || !accessToken) return;
+    try {
+      const r = await api("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)");
+      const j = await r.json();
+      const mail = j && j.user && j.user.emailAddress;
+      if (mail) { loginHint = mail; adoptToken(accessToken, Math.round((tokenExpiry - Date.now()) / 1000) + 120, tokenClientScope); }
+    } catch (e) {}
+  }
   async function findFile() {
     const q = encodeURIComponent(`name='${FILE_NAME}' and trashed=false`);
     const r = await api(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,modifiedTime)`);
@@ -381,7 +487,7 @@
   // On repart d'un jeton neuf, car l'ancien ne porte que drive.file.
   async function enableCalendar() {
     try { localStorage.setItem(CAL_KEY, "1"); } catch (e) {}
-    accessToken = null; tokenExpiry = 0; tokenPromise = null; tokenClient = null; tokenClientScope = null;
+    dropToken(); tokenPromise = null; tokenClient = null; tokenClientScope = null;
     if (isIOS()) { setStatus("redirection vers Google…"); startRedirectAuth(); return null; }
     try { await getToken(true); return true; }
     catch (e) { disableCalendar(); throw e; }
@@ -526,7 +632,10 @@
     if (!hasSession()) return null;
     const guard = new Promise((_, rej) => setTimeout(() => rej(new Error("délai dépassé")), AUTOCONNECT_TIMEOUT));
     try { return await Promise.race([doAutoConnect(), guard]); }
-    catch (e) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
+    catch (e) {
+      if (authInProgress()) { setStatus("reconnexion…"); return null; }
+      needsAuth = true; setStatus("reconnexion nécessaire"); return null;
+    }
   }
   async function doAutoConnect() {
     if (!hasSession()) return null;
@@ -539,11 +648,13 @@
         return remote;
       } catch (e) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
     }
-    // Script Google absent (bloqué par Safari, hors ligne…) : la redirection reste
-    // possible, on demande donc simplement à l'utilisateur de se reconnecter.
-    if (!ready()) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
+    // Jeton mémorisé encore valable : aucune demande à Google. Sinon,
+    // renouvellement silencieux (arrière-plan, ou redirection invisible).
     try { return await connect(true); }
-    catch (e) { needsAuth = true; setStatus("reconnexion nécessaire"); return null; }
+    catch (e) {
+      if (authInProgress()) { setStatus("reconnexion…"); return null; }
+      needsAuth = true; setStatus("reconnexion nécessaire"); return null;
+    }
   }
 
   // Enregistrer l'état sur Drive. L'état est mis en file : en cas d'échec
@@ -729,6 +840,12 @@
     // est momentanément expiré (il sera renouvelé silencieusement).
     isConnected: () => !!accessToken || hasSession(),
     needsAuth: () => needsAuth,
+    cameBack: () => cameBackFromGoogle,
+    redirecting: () => redirecting,
+    lastRedirectError: () => redirectError,
+    onBeforeRedirect: (fn) => beforeRedirect.push(fn),
+    setSilentGate: (fn) => { silentGate = fn; },
+    tokenExpiresIn: () => (accessToken ? Math.max(0, tokenExpiry - Date.now()) : 0),
     hasPending: () => !!pending,
     autoConnect,
     reconnect,

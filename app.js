@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v75";
+const APP_VERSION = "v76";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -455,7 +455,7 @@ function showMoreSheet() {
     <button class="sheet-item" data-sheet-notifs><span class="ic">${icon("bell")}</span><span class="grow">Notifications</span>${n ? `<span class="nav-count">${n}</span>` : ""}</button>
     <div class="sheet-grid">${items}</div>
     ${driveSheetRow()}
-    <div class="sheet-foot"><span class="muted" style="font-size:12px">Version ${APP_VERSION}</span><button class="btn ghost small" data-sheet-backups>${icon("archive")} Sauvegardes</button><button class="btn ghost small" data-sheet-update>${icon("refresh")} Mettre à jour</button></div>`);
+    <div class="sheet-foot"><span class="muted" style="font-size:14px">Version ${APP_VERSION}</span><button class="btn ghost small" data-sheet-backups>${icon("archive")} Sauvegardes</button><button class="btn ghost small" data-sheet-update>${icon("refresh")} Mettre à jour</button></div>`);
   document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
   document.querySelectorAll("[data-sheet-go]").forEach((b) => b.onclick = () => { closeModal(); go(b.dataset.sheetGo); });
   const nb = document.querySelector("[data-sheet-notifs]"); if (nb) nb.onclick = () => { closeModal(); showNotifPanel(); };
@@ -972,7 +972,7 @@ function renderPdfReader() {
   if (!connected) body = `<div class="center-empty">Connecte-toi à Google Drive : tes PDF y sont enregistrés et suivent d'un appareil à l'autre.</div>`;
   else if (pdfBusyR) body = `<div class="center-empty">Chargement…</div>`;
   else if (cur && pdfOpen && pdfOpen.id === cur.id) body = `${nav}<div id="pdfPages" class="pdf-pages"></div>`;
-  else if (cur && pdfError) body = `${nav}<div class="center-empty" style="color:#d23c3c">Impossible d'afficher ce PDF.<br><span style="font-size:12px">${esc(pdfError)}</span><br><br><button class="btn secondary small" data-pdfr-retry>Réessayer</button></div>`;
+  else if (cur && pdfError) body = `${nav}<div class="center-empty" style="color:#d23c3c">Impossible d'afficher ce PDF.<br><span style="font-size:14px">${esc(pdfError)}</span><br><br><button class="btn secondary small" data-pdfr-retry>Réessayer</button></div>`;
   else if (cur) body = `${nav}<div class="center-empty">Ouverture du document…</div>`;
   else body = `<div class="center-empty">${docs.length ? "Choisis un PDF dans la liste de lecture." : "Aucun PDF.<br>Clique sur « Importer des PDF » — tu peux en sélectionner plusieurs."}</div>`;
 
@@ -996,8 +996,8 @@ function renderPdfReader() {
     <div class="md-layout">
       <div class="md-side">
         <div class="section-h" style="margin-top:0">Liste de lecture <span class="muted">(${docs.length})</span></div>
-        <div class="md-list">${items || '<div class="muted" style="font-size:12px">Vide.</div>'}</div>
-        ${docs.length ? '<div class="muted" style="font-size:11px;margin-top:8px">Enregistrés sur ton Google Drive</div>' : ""}
+        <div class="md-list">${items || '<div class="muted" style="font-size:14px">Vide.</div>'}</div>
+        ${docs.length ? '<div class="muted" style="font-size:13px;margin-top:8px">Enregistrés sur ton Google Drive</div>' : ""}
       </div>
       <div class="md-main">${body}</div>
     </div>`;
@@ -1071,8 +1071,8 @@ function renderMdReader() {
     <div class="md-layout">
       <div class="md-side">
         <div class="section-h" style="margin-top:0">Liste de lecture <span class="muted">(${docs.length})</span></div>
-        <div class="md-list">${items || '<div class="muted" style="font-size:12px">Vide.</div>'}</div>
-        ${docs.length ? `<div class="muted" style="font-size:11px;margin-top:8px">Enregistrés sur ton Google Drive</div>` : ""}
+        <div class="md-list">${items || '<div class="muted" style="font-size:14px">Vide.</div>'}</div>
+        ${docs.length ? `<div class="muted" style="font-size:13px;margin-top:8px">Enregistrés sur ton Google Drive</div>` : ""}
       </div>
       <div class="md-main">${body}</div>
     </div>`;
@@ -1236,10 +1236,10 @@ function renderPdfTools() {
 
   let panel = "";
   if (pdfTool === "fusion") {
-    panel = `<div class="muted" style="font-size:12px;margin-bottom:10px">Les PDF sont assemblés dans l'ordre de la liste — utilise ↑ ↓ pour le modifier.</div>
+    panel = `<div class="muted" style="font-size:14px;margin-bottom:10px">Les PDF sont assemblés dans l'ordre de la liste — utilise ↑ ↓ pour le modifier.</div>
       <button class="btn" data-pdf-run ${pdfFiles.length < 2 || pdfBusy ? "disabled" : ""}>${pdfBusy === "fusion" ? "Fusion en cours…" : "Fusionner en un seul PDF"}</button>`;
   } else {
-    panel = `<div class="muted" style="font-size:12px;margin-bottom:10px">Le texte est extrait avec sa mise en forme approximative : les titres sont déduits de la taille de police, et les paragraphes reconstitués. Un PDF scanné (image pure) ne contient pas de texte à extraire.</div>
+    panel = `<div class="muted" style="font-size:14px;margin-bottom:10px">Le texte est extrait avec sa mise en forme approximative : les titres sont déduits de la taille de police, et les paragraphes reconstitués. Un PDF scanné (image pure) ne contient pas de texte à extraire.</div>
       <button class="btn" data-pdf-run ${pdfFiles.length !== 1 || pdfBusy ? "disabled" : ""}>${pdfBusy === "markdown" ? "Conversion en cours…" : "Convertir en Markdown"}</button>`;
   }
 
@@ -1250,12 +1250,12 @@ function renderPdfTools() {
     <div class="md-layout">
       <div class="md-side">
         <div class="section-h" style="margin-top:0">Fichiers <span class="muted">(${pdfFiles.length})</span></div>
-        <div class="md-list">${files || '<div class="muted" style="font-size:12px">Aucun fichier sélectionné.</div>'}</div>
+        <div class="md-list">${files || '<div class="muted" style="font-size:14px">Aucun fichier sélectionné.</div>'}</div>
       </div>
       <div class="md-main">
         <div class="card">${panel}
-          ${pdfLog ? `<div class="muted" style="font-size:12px;margin-top:10px">${esc(pdfLog)}</div>` : ""}</div>
-        <div class="muted" style="font-size:11px;margin-top:12px;line-height:1.5">🔒 Le traitement a lieu entièrement dans ton navigateur : aucun fichier n'est envoyé sur Internet.</div>
+          ${pdfLog ? `<div class="muted" style="font-size:14px;margin-top:10px">${esc(pdfLog)}</div>` : ""}</div>
+        <div class="muted" style="font-size:13px;margin-top:12px;line-height:1.5">🔒 Le traitement a lieu entièrement dans ton navigateur : aucun fichier n'est envoyé sur Internet.</div>
       </div>
     </div>`;
 }
@@ -1279,7 +1279,7 @@ function renderSearch() {
     <span class="ic">${r.ic}</span><div class="grow"><div class="r-title">${esc(r.title)}</div><div class="r-sub">${esc(r.sub)}</div></div></div>`).join("");
   return `<div class="page-title">Recherche</div>
     <input id="globalSearch" placeholder="Rechercher un projet, un contact, une facture…" value="${esc(searchQ)}" style="margin-bottom:14px"/>
-    ${q ? `<div class="muted" style="font-size:12px;margin-bottom:8px">${results.length} résultat(s)</div><div class="list">${rows || '<div class="center-empty">Aucun résultat.</div>'}</div>` : '<div class="center-empty">Tape un mot-clé pour chercher dans toutes les sections.</div>'}`;
+    ${q ? `<div class="muted" style="font-size:14px;margin-bottom:8px">${results.length} résultat(s)</div><div class="list">${rows || '<div class="center-empty">Aucun résultat.</div>'}</div>` : '<div class="center-empty">Tape un mot-clé pour chercher dans toutes les sections.</div>'}`;
 }
 
 // ----------------------------- Relances (analyse des mails) -----------------------------
@@ -1336,7 +1336,7 @@ function mailboxHelp(b) {
         <button class="btn ghost small" data-copy="${esc(b.fileId)}">Copier l'identifiant</button></li>
       <li>Exécute <strong>installerAnalyseMails</strong> et autorise l'accès (Gmail + Drive). Pour tester tout de suite : exécute <strong>analyserMails</strong>.</li>
     </ol>
-    <div class="muted" style="font-size:12px">${b.shared ? "Le fichier d'analyse a été partagé avec cette adresse (écriture)." : "⚠️ Le partage automatique a échoué : partage à la main le fichier « " + esc(b.fileName) + " » (Drive) avec cette adresse, en écriture."}
+    <div class="muted" style="font-size:14px">${b.shared ? "Le fichier d'analyse a été partagé avec cette adresse (écriture)." : "⚠️ Le partage automatique a échoué : partage à la main le fichier « " + esc(b.fileName) + " » (Drive) avec cette adresse, en écriture."}
       ${b.dataShared ? " Le fichier de données lui est partagé en lecture (contacts)." : " Le fichier de données n'a pas pu être partagé : les relances de contacts ne seront pas calculées pour cette boîte, mais la correspondance le sera."}</div>
     <div style="margin-top:12px"><button class="btn" data-modal-close>Fermer</button></div>`);
   document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
@@ -1357,7 +1357,7 @@ function renderMailboxes() {
       <input id="mbLabel" class="grow" placeholder="Nom (ex. Boîte perso)" style="min-width:140px"/>
       <input id="mbEmail" class="grow" type="email" placeholder="adresse@gmail.com" inputmode="email" style="min-width:200px"/>
       <button class="btn small" data-add-mailbox>+ Ajouter une boîte</button></div>
-      <div class="muted" style="font-size:12px;margin-top:6px">Chaque boîte est lue par le script Google installé dans son compte. Une boîte qui n'est pas chez Google (Outlook, OVH…) peut être rapatriée dans l'une de tes boîtes Gmail (Gmail → Paramètres → Comptes → « Consulter d'autres comptes de messagerie »), puis lue par ce script.</div></div>`;
+      <div class="muted" style="font-size:14px;margin-top:6px">Chaque boîte est lue par le script Google installé dans son compte. Une boîte qui n'est pas chez Google (Outlook, OVH…) peut être rapatriée dans l'une de tes boîtes Gmail (Gmail → Paramètres → Comptes → « Consulter d'autres comptes de messagerie »), puis lue par ce script.</div></div>`;
 }
 function mailRow(it, extra) {
   const link = it.link ? `<a class="btn ghost small" href="${esc(it.link)}" target="_blank" rel="noopener">Ouvrir</a>` : "";
@@ -1370,15 +1370,15 @@ function mailRow(it, extra) {
 function receiptsBlock() {
   const miss = missingReceipts();
   if (!miss.length) return `<div class="section-h">🧾 Justificatifs manquants <span class="muted">(0)</span></div>
-    <div class="muted" style="padding:4px 2px;font-size:13px">Toutes les écritures ont un justificatif. 👌</div>`;
+    <div class="muted" style="padding:4px 2px;font-size:15px">Toutes les écritures ont un justificatif. 👌</div>`;
   const rows = miss.slice(0, 60).map((v) => `<div class="row" data-open-invoice="${v.id}" style="border-left-color:#d23c3c">
     <div class="grow"><div class="r-title">${esc(v.title || "Écriture sans intitulé")}</div>
       <div class="r-sub">${[fmtDate(v.startDate), euros(v.amount), esc(companyName(v.companyId)), v.direction === "recette" ? "Recette" : "Dépense"].filter(Boolean).join(" · ")}</div></div>
     <span class="muted">›</span></div>`).join("");
   return `<div class="section-h">🧾 Justificatifs manquants <span class="muted">(${miss.length})</span></div>
-    <div class="muted" style="font-size:12px;margin-bottom:6px">Ouvre l'écriture pour coller le lien du justificatif, ou coche « Aucun justificatif nécessaire ».</div>
+    <div class="muted" style="font-size:14px;margin-bottom:6px">Ouvre l'écriture pour coller le lien du justificatif, ou coche « Aucun justificatif nécessaire ».</div>
     <div class="list">${rows}</div>
-    ${miss.length > 60 ? `<div class="muted" style="font-size:12px;margin-top:6px">… et ${miss.length - 60} autre(s).</div>` : ""}`;
+    ${miss.length > 60 ? `<div class="muted" style="font-size:14px;margin-top:6px">… et ${miss.length - 60} autre(s).</div>` : ""}`;
 }
 function renderRelances() {
   const head = `<div class="toolbar"><div class="page-title grow" style="margin:0">Relances</div>
@@ -1402,7 +1402,7 @@ function renderRelances() {
   const grp = (title, ic, arr, extra) => `<div class="section-h">${ic} ${title} <span class="muted">(${(arr || []).length})</span></div>
     <div class="list">${(arr || []).length ? arr.map((x) => mailRow(x, (it) => [extra ? extra(it) : null, multi ? it.box : null].filter(Boolean).join(" · "))).join("") : '<div class="muted" style="padding:4px 2px">—</div>'}</div>`;
   const when = m && m.generatedAt ? `Dernière analyse : ${new Date(m.generatedAt).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })}` : "";
-  return head + receipts + boxes + `<div class="muted" style="font-size:12px;margin:14px 0 8px">${esc(when)}</div>`
+  return head + receipts + boxes + `<div class="muted" style="font-size:14px;margin:14px 0 8px">${esc(when)}</div>`
     + grp("Non lus de contacts", "📩", merged("unread"))
     + grp("À relancer", "⏰", merged("relance"), (it) => `sans réponse depuis ${it.jours != null ? it.jours : "?"} j`)
     + grp("Nouveaux expéditeurs", "🆕", merged("nouveau"))
@@ -1505,7 +1505,7 @@ function renderMissions() {
         <div class="kb-body">${cards || '<div class="kb-empty">Aucun projet</div>'}</div></div>`;
     }).join("");
     return head + banner
-      + `<div class="muted" style="font-size:11px;margin-bottom:10px">Glisse un projet vers une autre colonne pour changer son statut, ou utilise ‹ ›.</div>
+      + `<div class="muted" style="font-size:13px;margin-bottom:10px">Glisse un projet vers une autre colonne pour changer son statut, ou utilise ‹ ›.</div>
          <div class="kb-board cols4">${cols}</div>
          <button class="btn fab" data-add-mission>+</button>`;
   }
@@ -1614,12 +1614,12 @@ function renderMissionDetail(id) {
         <button class="btn danger small" data-stop-entry="${e.id}" data-m="${m.id}">■ Arrêter</button></div>`).join("")
     : `<div class="inline" style="margin-bottom:12px;flex-wrap:wrap">
         <button class="btn" data-project-timer="${m.id}">▶ Suivi du projet</button>
-        <span class="muted" style="font-size:12px">Temps total : <span class="timer" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span> · cette semaine : ${fmtDuration(projectWeekSeconds(m))}</span></div>`;
+        <span class="muted" style="font-size:14px">Temps total : <span class="timer" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span> · cette semaine : ${fmtDuration(projectWeekSeconds(m))}</span></div>`;
   const tabs = PROJECT_TABS.map(([tid, lbl]) => `<button class="chip ${projectTab === tid ? "active" : ""}" data-projtab="${tid}">${lbl}</button>`).join("");
   const body = projectTab === "gestion" ? renderProjectGestion(m) : projectTab === "courrier" ? renderProjectCourrier(m) : renderProjectResume(m);
   return `<button class="back" data-back>‹ Projets</button>
     <div class="toolbar">
-      <input class="grow" data-bind="missions|${m.id}|title" value="${esc(m.title)}" placeholder="Intitulé du projet" style="font-size:20px;font-weight:700"/>
+      <input class="grow" data-bind="missions|${m.id}|title" value="${esc(m.title)}" placeholder="Intitulé du projet" style="font-size:22px;font-weight:700"/>
       <select data-bind="missions|${m.id}|statusCode" style="width:auto">${statusOpts}</select>
     </div>
     ${timerBar}
@@ -1657,9 +1657,9 @@ function renderProjectResume(m) {
       <div class="field-b"><span>${icon("bell")} Notifications de ce projet</span>
         <label class="inline-check"><input type="checkbox" data-notify="mails" data-m="${m.id}" ${projectNotify(m).mails ? "checked" : ""}/> <span>Nouveaux mails dans la correspondance</span></label>
         <label class="inline-check"><input type="checkbox" data-notify="deadlines" data-m="${m.id}" ${projectNotify(m).deadlines ? "checked" : ""}/> <span>Échéances des tâches, chaque jour à partir de J-7 (retards compris)</span></label>
-        <div class="muted" style="font-size:12px">Elles arrivent dans la cloche 🔔 ; un clic sur une notification l'ouvre et l'efface.</div>
+        <div class="muted" style="font-size:14px">Elles arrivent dans la cloche 🔔 ; un clic sur une notification l'ouvre et l'efface.</div>
       </div>
-      <div class="muted" style="font-size:12px">Dernier événement : ${missionLast(m) ? esc(fmtDate(missionLast(m))) : "—"}</div>
+      <div class="muted" style="font-size:14px">Dernier événement : ${missionLast(m) ? esc(fmtDate(missionLast(m))) : "—"}</div>
     </div>
     ${late.length ? `<div class="section-h" style="color:#d23c3c">⚠️ En retard <span class="muted">(${late.length})</span></div>
       <div class="list">${late.map((t) => `<div class="row" data-goto-gestion style="border-left-color:#d23c3c"><div class="grow"><div class="r-title">${esc(t.title || "Tâche")}</div><div class="r-sub">${esc(deadlineInfo(t.dueDate, false).label)}${t.assignee ? ` · ${esc(t.assignee)}` : ""}</div></div><span class="muted">›</span></div>`).join("")}</div>` : ""}
@@ -1717,16 +1717,16 @@ function renderProjectGestion(m) {
     const items = bySection(name);
     const head = name
       ? `<tr class="pm-section"><td colspan="7"><div class="inline"><input class="flat-input grow" data-section-name="${esc(name)}" data-m="${m.id}" value="${esc(name)}"/>
-          <span class="muted" style="font-size:12px">${items.filter(taskDone).length}/${items.length}</span>
+          <span class="muted" style="font-size:14px">${items.filter(taskDone).length}/${items.length}</span>
           <button class="btn ghost small" data-add-ptask="${m.id}" data-section="${esc(name)}">+ Tâche</button>
           <button class="btn ghost small" data-del-section="${esc(name)}" data-m="${m.id}" title="Retirer la section (les tâches restent)">✕</button></div></td></tr>`
       : `<tr class="pm-section"><td colspan="7"><div class="inline"><span class="grow muted">Sans section</span>
           <button class="btn ghost small" data-add-ptask="${m.id}" data-section="">+ Tâche</button></div></td></tr>`;
     if (!name && !items.length && sections.length) return "";
-    return head + (items.map(row).join("") || `<tr><td colspan="7" class="muted" style="padding:8px 12px;font-size:12px">Aucune tâche.</td></tr>`);
+    return head + (items.map(row).join("") || `<tr><td colspan="7" class="muted" style="padding:8px 12px;font-size:14px">Aucune tâche.</td></tr>`);
   };
   const body = sections.map(block).join("") + block("");
-  return `<div class="inline" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">${alerts || '<span class="muted" style="font-size:12px">Aucune tâche pour l\'instant.</span>'}
+  return `<div class="inline" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">${alerts || '<span class="muted" style="font-size:14px">Aucune tâche pour l\'instant.</span>'}
       <span class="grow"></span>
       <button class="btn ghost small" data-import-tasks="${m.id}" title="Importer des tâches depuis un fichier CSV (tableau de suivi) ou JSON">${icon("download")} Importer</button>
       <button class="btn secondary small" data-add-section="${m.id}">+ Section</button>
@@ -1735,7 +1735,7 @@ function renderProjectGestion(m) {
     <div class="table-wrap"><table class="pm-table">
       <thead><tr><th>Tâche</th><th>Personne en charge</th><th>Date limite</th><th>Avancement</th><th>Estimation</th><th>Temps</th><th></th></tr></thead>
       <tbody>${body}</tbody></table></div>
-    <div class="muted" style="font-size:11px;margin-top:8px">Une tâche à 100 % passe « Terminée » ; une tâche avec un avancement passe « En cours ». Les tâches se retrouvent aussi dans l'onglet Tâches et, si elles ont une date limite ou un créneau, dans Planning.</div>`;
+    <div class="muted" style="font-size:13px;margin-top:8px">Une tâche à 100 % passe « Terminée » ; une tâche avec un avancement passe « En cours ». Les tâches se retrouvent aussi dans l'onglet Tâches et, si elles ont une date limite ou un créneau, dans Planning.</div>`;
 }
 
 // ---- Notifications par projet ----
@@ -1832,13 +1832,13 @@ function showNotifPanel() {
   const rows = list.map((n) => `<div class="row" data-notif-open="${n.id}" style="border-left-color:${n.kind === "mail" ? "var(--positive)" : "#d23c3c"}">
       <div class="grow"><div class="r-title">${esc(n.title)}</div><div class="r-sub">${esc(n.body)}</div></div><span class="muted">›</span></div>`).join("");
   let sys;
-  if (!("Notification" in window)) sys = '<span class="muted" style="font-size:12px">Notifications système indisponibles sur cet appareil : elles restent dans l\'app.</span>';
-  else if (Notification.permission === "granted") sys = '<span class="muted" style="font-size:12px">Notifications système activées sur cet appareil (quand l\'app est ouverte).</span>';
-  else if (Notification.permission === "denied") sys = '<span class="muted" style="font-size:12px">Notifications système refusées dans le navigateur (réglages du site pour les réactiver).</span>';
+  if (!("Notification" in window)) sys = '<span class="muted" style="font-size:14px">Notifications système indisponibles sur cet appareil : elles restent dans l\'app.</span>';
+  else if (Notification.permission === "granted") sys = '<span class="muted" style="font-size:14px">Notifications système activées sur cet appareil (quand l\'app est ouverte).</span>';
+  else if (Notification.permission === "denied") sys = '<span class="muted" style="font-size:14px">Notifications système refusées dans le navigateur (réglages du site pour les réactiver).</span>';
   else sys = '<button class="btn secondary small" data-notif-sys>Activer les notifications système sur cet appareil</button>';
   showModal(`<div class="modal-head"><strong class="grow">${icon("bell")} Notifications${list.length ? ` (${list.length})` : ""}</strong>
       ${list.length ? '<button class="btn ghost small" data-notif-clear>Tout effacer</button>' : ""}<button class="btn ghost small" data-modal-close>✕</button></div>
-    ${list.length ? `<div class="list">${rows}</div>` : '<div class="center-empty">Aucune notification.<br><span style="font-size:12px">Active-les projet par projet, dans le résumé du projet.</span></div>'}
+    ${list.length ? `<div class="list">${rows}</div>` : '<div class="center-empty">Aucune notification.<br><span style="font-size:14px">Active-les projet par projet, dans le résumé du projet.</span></div>'}
     <div style="margin-top:12px">${sys}</div>`);
   document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
   document.querySelectorAll("[data-notif-open]").forEach((r) => r.onclick = () => openNotif(r.dataset.notifOpen));
@@ -2122,12 +2122,12 @@ function eventProposal(ev) {
   const stepList = steps.length ? `<div class="ev-steps">${steps.map((s, i) => `<label class="ev-step${done.indexOf(i) > -1 ? " done" : ""}">
       <input type="checkbox" data-ev-step="${ev.id}" data-i="${i}" ${done.indexOf(i) > -1 ? "checked" : ""}/>
       <span class="grow">${i + 1}. ${esc(s.etape)}</span>${s.estimationMin ? `<span class="muted">${esc(fmtEstim(s.estimationMin))}</span>` : ""}</label>`).join("")}
-    <div class="muted" style="font-size:11px;margin-top:4px">${done.length}/${steps.length} étapes faites${stepsTotal ? ` · ${esc(fmtEstim(stepsTotal))} au total` : ""}</div></div>` : "";
+    <div class="muted" style="font-size:13px;margin-top:4px">${done.length}/${steps.length} étapes faites${stepsTotal ? ` · ${esc(fmtEstim(stepsTotal))} au total` : ""}</div></div>` : "";
   return `<details class="ev-prop"><summary>${icon("lightbulb")} Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}</summary>
     ${p.reponse ? `<div class="ev-draft">${esc(p.reponse)}</div>
       <div class="ev-actions"><button class="btn ghost small" data-ev-copy="${ev.id}">Copier</button>
         ${compose ? `<a class="btn secondary small" href="${esc(compose)}" target="_blank" rel="noopener">${icon("mail")} Répondre dans Gmail</a>` : ""}
-        <span class="muted" style="font-size:11px">Rien n'est envoyé sans toi : Gmail s'ouvre pré-rempli, tu relis puis tu envoies.</span></div>` : ""}
+        <span class="muted" style="font-size:13px">Rien n'est envoyé sans toi : Gmail s'ouvre pré-rempli, tu relis puis tu envoies.</span></div>` : ""}
     ${t && t.titre ? `<div class="ev-ptask"><span class="grow">${complex ? '<span class="badge u2" title="Action complexe : un processus en plusieurs étapes est proposé">Complexe</span> ' : ""}Action proposée : <strong>${esc(t.titre)}</strong>${t.echeance ? ` · pour le ${esc(fmtDate(String(t.echeance).slice(0, 10)))}` : ""}${t.estimationMin ? ` · ${esc(fmtEstim(t.estimationMin))}` : ""}</span>
         <button class="btn secondary small" data-ev-ptask="${ev.id}" title="${steps.length ? "Une seule tâche, les étapes en description" : "Créer la tâche"}">✅ Créer la tâche</button>
         ${steps.length ? `<button class="btn ghost small" data-ev-psteps="${ev.id}" title="Une tâche par étape, avec son estimation">⋮ Une tâche par étape</button>` : ""}</div>
@@ -2146,7 +2146,7 @@ function eventRow(ev) {
        ${sameSender > 1 ? `<button class="btn ghost small" data-ev-ignore-sender="${ev.id}" title="Ignorer les ${sameSender} événements nouveaux de cet expéditeur">Ignorer l'expéditeur (${sameSender})</button>` : ""}
        <button class="btn ghost small" data-ev-statut="ignore" data-id="${ev.id}">Ignorer</button>
        <button class="btn small" data-ev-statut="traite" data-id="${ev.id}">Traité</button>`
-    : `<span class="muted" style="font-size:12px">${st === "traite" ? "Traité" : "Ignoré"}${ev.traiteLe ? " le " + esc(fmtDateTimeISO(ev.traiteLe)) : ""}</span>
+    : `<span class="muted" style="font-size:14px">${st === "traite" ? "Traité" : "Ignoré"}${ev.traiteLe ? " le " + esc(fmtDateTimeISO(ev.traiteLe)) : ""}</span>
        <button class="btn ghost small" data-ev-statut="nouveau" data-id="${ev.id}">Rouvrir</button>`;
   return `<div class="row ev-row ev-u${u}${st !== "nouveau" ? " ev-done" : ""}" data-ev="${ev.id}">
     <div class="grow">
@@ -2180,10 +2180,10 @@ function renderATraiter() {
   else if (eventError === "absent") info = "Le fichier « operations01-evenements.json » vient d'être créé sur ton Drive : le relais peut maintenant y écrire.";
   else info = eventError ? "Lecture impossible : " + esc(eventError) : "";
   const empty = all.length ? "Rien ne correspond à ces filtres." : "Aucun événement reçu pour l'instant.";
-  return head + `<div class="muted" style="font-size:12px;margin-bottom:10px">${info}</div>` + filters
+  return head + `<div class="muted" style="font-size:14px;margin-bottom:10px">${info}</div>` + filters
     + `<div class="list">${items.length ? items.map(eventRow).join("") : `<div class="center-empty">${empty}</div>`}</div>
-    <details class="ev-help"><summary class="muted" style="font-size:12px;cursor:pointer">Comment ça marche ?</summary>
-      <div class="muted" style="font-size:12px;margin-top:6px">Le Mac mini classe tes mails et messages (urgence, action proposée, résumé) et les envoie toutes les 5 minutes au script relais
+    <details class="ev-help"><summary class="muted" style="font-size:14px;cursor:pointer">Comment ça marche ?</summary>
+      <div class="muted" style="font-size:14px;margin-top:6px">Le Mac mini classe tes mails et messages (urgence, action proposée, résumé) et les envoie toutes les 5 minutes au script relais
       <code>appsscript-relais-evenements.gs</code>, installé dans ton compte Google principal, qui les dépose dans « operations01-evenements.json ».
       Ici tu décides : Traité, Ignorer, ou transformer l'événement en action ou en tâche. Jamais de contenu complet des messages : sujet et résumé seulement.</div></details>`;
 }
@@ -2305,7 +2305,7 @@ function renderBrief() {
     return `<details class="brief-group" ${open ? "open" : ""}><summary>${icon(ic)} ${esc(label)} <span class="pm-tag">${open ? `${open} à faire` : "tout fait"}</span></summary>${openRows.join("")}${doneRows.join("")}</details>`;
   }).join("");
   return `<div class="card brief"><div class="brief-head"><strong class="grow">${icon("sun", "brief-sun")} ${esc(b.titre || "Aujourd'hui")}</strong>
-      ${b.date && b.date !== today ? `<span class="muted" style="font-size:12px">brief du ${esc(fmtDate(b.date))}</span>` : ""}
+      ${b.date && b.date !== today ? `<span class="muted" style="font-size:14px">brief du ${esc(fmtDate(b.date))}</span>` : ""}
       ${els.length ? `<span class="pm-tag">${nbDone}/${els.length} fait${nbDone > 1 ? "s" : ""}${restMin ? ` · ${esc(fmtEstim(restMin))} restantes` : ""}</span>` : (b.totalEstimeMin ? `<span class="pm-tag">${esc(fmtEstim(b.totalEstimeMin))} estimées</span>` : "")}</div>
     ${els.length ? `<div class="brief-bar"><div style="width:${pct}%"></div></div>` : ""}
     ${b.texte ? `<div class="brief-text">${esc(b.texte)}</div>` : ""}
@@ -2327,7 +2327,7 @@ function renderBriefFil(fil) {
   const unite = fil.unite || "article";
   const n = Number(fil.posts) || 0;
   return `<details class="card brief-fil"><summary>${fil.icone ? esc(fil.icone) : icon(fil.icn || "newspaper")} ${esc(fil.titre || "Digest")}${n ? ` · ${n} ${esc(unite)}${n > 1 ? "s" : ""}` : ""}${fil.auteurs ? ` de ${esc(String(fil.auteurs))} auteur${fil.auteurs > 1 ? "s" : ""}` : ""} <span class="muted">(pour information, rien à traiter)</span></summary>
-    ${lines.length ? `<ul class="brief-fil-list">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : '<div class="muted" style="font-size:12px">Aucun résumé.</div>'}
+    ${lines.length ? `<ul class="brief-fil-list">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : '<div class="muted" style="font-size:14px">Aucun résumé.</div>'}
     ${fil.lien ? `<div style="margin-top:6px"><a class="btn ghost small" href="${esc(fil.lien)}" target="_blank" rel="noopener">Ouvrir la source</a></div>` : ""}</details>`;
 }
 // État d'une ligne du brief d'après les données de l'app : événement traité ou
@@ -2612,7 +2612,7 @@ function renderProjectCourrier(m) {
   const cnt = (arr) => `(${arr.length}${nbUnread(arr) ? ` · ${nbUnread(arr)} non lu${nbUnread(arr) > 1 ? "s" : ""}` : ""})`;
   const sugg = companyEmailSuggestions(m);
   const suggHtml = sugg.length
-    ? `<div class="muted" style="font-size:12px;margin-top:6px">Contacts de ${esc(companyName(m.companyId))} : ${sugg.slice(0, 12).map((x) => `<button class="chip" data-mail-addemail="${esc(x.email)}" data-m="${m.id}" title="Ajouter ${esc(x.email)} aux adresses du projet">+ ${esc(x.name)}</button>`).join(" ")}${sugg.length > 12 ? ` <span>… (${sugg.length - 12} de plus)</span>` : ""}</div>`
+    ? `<div class="muted" style="font-size:14px;margin-top:6px">Contacts de ${esc(companyName(m.companyId))} : ${sugg.slice(0, 12).map((x) => `<button class="chip" data-mail-addemail="${esc(x.email)}" data-m="${m.id}" title="Ajouter ${esc(x.email)} aux adresses du projet">+ ${esc(x.name)}</button>`).join(" ")}${sugg.length > 12 ? ` <span>… (${sugg.length - 12} de plus)</span>` : ""}</div>`
     : "";
   const conf = `<div class="card" style="margin-bottom:12px">
       <label class="field"><span>Mots-clés (séparés par des virgules), cherchés comme mots entiers dans l'objet et l'extrait — à défaut, les mots du titre du projet</span>
@@ -2620,29 +2620,29 @@ function renderProjectCourrier(m) {
       <label class="field"><span>Adresses e-mail liées au projet (un fil est suggéré si l'une d'elles y participe)</span>
         <input data-bind="missions|${m.id}|mailEmails" data-rerender value="${esc(m.mailEmails || "")}" placeholder="prenom@client.fr, autre@partenaire.com"/></label>
       ${suggHtml}
-      <div class="muted" style="font-size:12px;margin-top:8px">${Object.keys(projectMailEmails(m)).length} adresse(s) · ${projectKeywords(m).length} mot(s)-clé(s) · ${(state.mailboxes || []).length + 1} boîte(s) mail lue(s). Mes propres adresses ne comptent jamais comme critère.</div>
+      <div class="muted" style="font-size:14px;margin-top:8px">${Object.keys(projectMailEmails(m)).length} adresse(s) · ${projectKeywords(m).length} mot(s)-clé(s) · ${(state.mailboxes || []).length + 1} boîte(s) mail lue(s). Mes propres adresses ne comptent jamais comme critère.</div>
     </div>`;
   let body;
   if (!(window.DriveSync && DriveSync.isConnected())) body = '<div class="center-empty">Connecte-toi à Google Drive pour lire la correspondance.</div>';
   else if (!anyIndex) body = `<div class="center-empty">${mailLoading ? "Lecture des boîtes mail…" : "Aucun index de mails disponible.<br>Installe (ou mets à jour) le script « Mails » dans chaque boîte : il indexe les fils récents toutes les heures. Voir Relances → Boîtes mail."}</div>`;
   else body = `<div class="section-h">✓ Classés dans ce projet <span class="muted">${cnt(linked)}</span></div>
-      ${linked.length ? `<div class="list">${linked.map((th) => row(th, true)).join("")}</div>` : '<div class="muted" style="padding:4px 2px;font-size:13px">Aucun fil classé pour l\'instant : confirme une suggestion ci-dessous avec « ✓ Ce projet ».</div>'}
+      ${linked.length ? `<div class="list">${linked.map((th) => row(th, true)).join("")}</div>` : '<div class="muted" style="padding:4px 2px;font-size:15px">Aucun fil classé pour l\'instant : confirme une suggestion ci-dessous avec « ✓ Ce projet ».</div>'}
       <div class="section-h">Suggestions <span class="muted">${cnt(suggested)}</span></div>
-      <div class="muted" style="font-size:12px;margin-bottom:6px">Fils qui contiennent un mot-clé ou impliquent une adresse du projet. Classe chacun : ce projet, un autre projet, ou aucun.</div>
-      ${suggested.length ? `<div class="list">${suggested.map((th) => row(th, false)).join("")}</div>` : '<div class="muted" style="padding:4px 2px;font-size:13px">Aucune suggestion : précise des mots-clés ou des adresses ci-dessus.</div>'}`;
+      <div class="muted" style="font-size:14px;margin-bottom:6px">Fils qui contiennent un mot-clé ou impliquent une adresse du projet. Classe chacun : ce projet, un autre projet, ou aucun.</div>
+      ${suggested.length ? `<div class="list">${suggested.map((th) => row(th, false)).join("")}</div>` : '<div class="muted" style="padding:4px 2px;font-size:15px">Aucune suggestion : précise des mots-clés ou des adresses ci-dessus.</div>'}`;
   const manual = emailEntries.length
     ? `<div class="section-h">Mails notés dans l'historique <span class="muted">(${emailEntries.length})</span></div><div class="list">${emailEntries.map((e) => renderEntry(m.id, e)).join("")}</div>`
     : "";
   return `${conf}
     <div class="section-h">${icon("mail")} Correspondance <span class="muted">${cnt(linked.concat(suggested))}</span>
       <button class="btn ghost small" data-mail-refresh style="margin-left:8px">${mailLoading ? "…" : icon("refresh") + " Rafraîchir"}</button></div>
-    <div class="muted" style="font-size:12px;margin:-4px 0 8px">« ● Non lu » = fil non lu dans Gmail au dernier passage du script (toutes les 15 minutes). Un mail lu depuis peut le rester jusqu'au passage suivant.</div>
+    <div class="muted" style="font-size:14px;margin:-4px 0 8px">« ● Non lu » = fil non lu dans Gmail au dernier passage du script (toutes les 15 minutes). Un mail lu depuis peut le rester jusqu'au passage suivant.</div>
     ${body}${manual}`;
 }
 
 function renderEntry(mid, e) {
   const k = kindMeta(e.kind), running = !!e.timerStartedAt;
-  const urlLink = validURL(e.url) ? `<a class="btn ghost small" href="${esc(e.url)}" target="_blank" rel="noopener">↗ Ouvrir</a>` : (e.url ? '<span class="muted" style="font-size:12px">Lien invalide</span>' : "");
+  const urlLink = validURL(e.url) ? `<a class="btn ghost small" href="${esc(e.url)}" target="_blank" rel="noopener">↗ Ouvrir</a>` : (e.url ? '<span class="muted" style="font-size:14px">Lien invalide</span>' : "");
   const kindOpts = KINDS.map((x) => `<option value="${x.code}" ${x.code === e.kind ? "selected" : ""}>${x.ic} ${x.label}</option>`).join("");
   return `<div class="entry">
     <div class="entry-head" data-toggle="${e.id}" data-m="${mid}">
@@ -2664,7 +2664,7 @@ function renderEntry(mid, e) {
           <button class="btn ghost small" data-dur-add="15" data-m="${mid}" data-e="${e.id}">+15</button>
           <button class="btn ghost small" data-dur-zero data-m="${mid}" data-e="${e.id}">Remettre à 0</button>
         </div>
-        ${running && entryElapsed(e) > 8 * 3600 ? `<div style="color:#d23c3c;font-size:12px;margin-top:6px">⚠️ Chrono lancé depuis ${fmtDuration(entryElapsed(e))} — chrono probablement oublié : arrête-le puis corrige la durée ci-dessus.</div>` : ""}
+        ${running && entryElapsed(e) > 8 * 3600 ? `<div style="color:#d23c3c;font-size:14px;margin-top:6px">⚠️ Chrono lancé depuis ${fmtDuration(entryElapsed(e))} — chrono probablement oublié : arrête-le puis corrige la durée ci-dessus.</div>` : ""}
       </div>
       <div class="inline" style="margin-top:6px">
         <button class="btn ${running ? "danger" : "secondary"} small" data-timer="${e.id}" data-m="${mid}">${running ? "■ Arrêter le chrono" : "▶ Démarrer le chrono"}</button>
@@ -2740,10 +2740,10 @@ function renderCompanyDetail(id) {
         <input class="grow" style="min-width:130px" data-accfield="name" data-acc="${a.id}" value="${esc(a.name)}" placeholder="Nom du compte (ex. BNP courant)"/>
         <input type="number" style="width:120px" data-accfield="initialBalance" data-acc="${a.id}" value="${a.initialBalance || 0}" title="Solde initial (€)"/>
         <input type="date" style="width:150px" data-accfield="balanceDate" data-acc="${a.id}" value="${esc((a.balanceDate || "").slice(0, 10) || todayISO())}" title="À la date du"/>
-        <span class="muted" style="font-size:12px;white-space:nowrap">${euros(accountBalance(a, new Date()))}</span>
+        <span class="muted" style="font-size:14px;white-space:nowrap">${euros(accountBalance(a, new Date()))}</span>
         <button class="btn ghost small" data-del-acc="${a.id}">✕</button></div>`).join("") || '<div class="muted">Aucun compte bancaire.</div>'}
       <div style="margin-top:8px"><button class="btn secondary small" data-add-acc="${c.id}">+ Ajouter un compte</button></div>
-      <div class="muted" style="font-size:11px;margin-top:6px">Ces comptes sont proposés dans le bloc « Règlement » de chaque facture.</div></div>
+      <div class="muted" style="font-size:13px;margin-top:6px">Ces comptes sont proposés dans le bloc « Règlement » de chaque facture.</div></div>
     <div style="margin-top:18px"><button class="btn danger small" data-del-company="${c.id}">Supprimer la société</button></div>`;
 }
 
@@ -2792,7 +2792,7 @@ function financeFactures() {
     return `<div class="row" data-open-invoice="${v.id}" style="border-left-color:${v.direction === "recette" ? "var(--finance)" : "var(--alert)"}">
     <div class="grow"><div class="r-title">${mark} ${esc(v.title || "Nouvelle facture")}</div>
       <div class="r-sub">${[fmtDate(v.startDate), esc(companyName(v.companyId)), v.categoryName ? esc(v.categoryName) : null].filter(Boolean).join(" · ")}</div></div>
-    <div style="text-align:right"><div>${euros(v.amount)}</div><span class="badge aDemarrer" style="font-size:10px">${invStatusLabel(v.status)}</span></div></div>`;
+    <div style="text-align:right"><div>${euros(v.amount)}</div><span class="badge aDemarrer" style="font-size:12px">${invStatusLabel(v.status)}</span></div></div>`;
   }).join("");
   return `<div class="toolbar"><span class="grow"></span>
       <button class="btn secondary small" data-export-factures>${icon("download")} CSV</button>
@@ -2806,7 +2806,7 @@ function financeFactures() {
       <button class="chip ${f.noReceipt ? "active" : ""}" data-facture-noreceipt>⚠️ Sans justificatif${nbMissing ? ` (${nbMissing})` : ""}</button>
       ${active ? '<button class="btn ghost small" data-facture-reset>✕</button>' : ""}
     </div>
-    <div class="muted" style="font-size:12px;margin:2px 0 8px">${items.length} facture(s) · Total HT ${euros(totalHT)}</div>
+    <div class="muted" style="font-size:14px;margin:2px 0 8px">${items.length} facture(s) · Total HT ${euros(totalHT)}</div>
     <div class="list">${items.length ? rows : '<div class="center-empty">Aucune facture.</div>'}</div>`;
 }
 function financeCDR() {
@@ -2823,8 +2823,8 @@ function financeCDR() {
     <div class="inline" style="padding:6px 0;border-top:1px solid var(--line);margin-top:6px"><strong class="grow">Total ${title.toLowerCase()}</strong><strong style="color:${color}">${euros(tot)}</strong></div></div>`;
   return `${expBar}${block("Produits", produits, totP, "var(--finance)")}${block("Charges", charges, totC, "var(--alert)")}
     <div class="card" style="margin-top:12px"><div class="inline"><strong class="grow">Résultat à date</strong>
-      <strong style="color:${totP - totC >= 0 ? "var(--positive)" : "#d23c3c"};font-size:18px">${euros(totP - totC)}</strong></div>
-      <div class="muted" style="font-size:12px;margin-top:4px">Montants HT, toutes factures confondues.</div></div>`;
+      <strong style="color:${totP - totC >= 0 ? "var(--positive)" : "#d23c3c"};font-size:20px">${euros(totP - totC)}</strong></div>
+      <div class="muted" style="font-size:14px;margin-top:4px">Montants HT, toutes factures confondues.</div></div>`;
 }
 function financeTresorerie() {
   const now = new Date();
@@ -2832,14 +2832,14 @@ function financeTresorerie() {
   const perEnt = ents.map((c) => `<div class="inline" style="padding:5px 0"><span class="grow">${esc(c.name || "Sans nom")}</span><span class="timer">${euros(companyBalance(c, now))}</span></div>`).join("");
   return `<div class="toolbar"><span class="grow"></span><button class="btn secondary small" data-export-treso>${icon("file-text")} Exporter (PDF)</button></div>
     <div class="card"><div class="inline"><strong class="grow">Trésorerie consolidée</strong>
-      <strong style="color:${treasuryNow(now) >= 0 ? "var(--positive)" : "#d23c3c"};font-size:18px">${euros(treasuryNow(now))}</strong></div></div>
+      <strong style="color:${treasuryNow(now) >= 0 ? "var(--positive)" : "#d23c3c"};font-size:20px">${euros(treasuryNow(now))}</strong></div></div>
     <div class="section-h">Prévisionnel</div><div class="card">
       <div class="inline" style="padding:4px 0"><span class="grow">À 30 jours</span><span class="timer">${euros(treasuryProjected(now, 30))}</span></div>
       <div class="inline" style="padding:4px 0"><span class="grow">À 60 jours</span><span class="timer">${euros(treasuryProjected(now, 60))}</span></div>
       <div class="inline" style="padding:4px 0"><span class="grow">À 90 jours</span><span class="timer">${euros(treasuryProjected(now, 90))}</span></div></div>
     <div class="section-h">Par société</div><div class="card">${perEnt || '<div class="muted">—</div>'}</div>
-    ${state.accounts.length ? `<div class="section-h">Par compte bancaire</div><div class="card">${state.accounts.map((a) => `<div class="inline" style="padding:5px 0"><span class="grow">${esc(a.name || "Compte")}<span class="muted" style="font-size:11px"> · ${esc(companyName(a.companyId))}</span></span><span class="timer">${euros(accountBalance(a, now))}</span></div>`).join("")}</div>` : ""}
-    ${(() => { const t = associates().reduce((s, c) => s + ccaBalance(c.id), 0); return Math.abs(t) > 0.005 ? `<div class="section-h">Comptes courants d'associés</div><div class="card"><div class="inline"><span class="grow">Total dû aux associés</span><span class="timer" style="color:${t >= 0 ? "var(--positive)" : "#d23c3c"}">${euros(t)}</span></div><div class="muted" style="font-size:11px;margin-top:4px">Hors trésorerie : ces sommes n'ont pas transité par les comptes de l'entreprise.</div></div>` : ""; })()}`;
+    ${state.accounts.length ? `<div class="section-h">Par compte bancaire</div><div class="card">${state.accounts.map((a) => `<div class="inline" style="padding:5px 0"><span class="grow">${esc(a.name || "Compte")}<span class="muted" style="font-size:13px"> · ${esc(companyName(a.companyId))}</span></span><span class="timer">${euros(accountBalance(a, now))}</span></div>`).join("")}</div>` : ""}
+    ${(() => { const t = associates().reduce((s, c) => s + ccaBalance(c.id), 0); return Math.abs(t) > 0.005 ? `<div class="section-h">Comptes courants d'associés</div><div class="card"><div class="inline"><span class="grow">Total dû aux associés</span><span class="timer" style="color:${t >= 0 ? "var(--positive)" : "#d23c3c"}">${euros(t)}</span></div><div class="muted" style="font-size:13px;margin-top:4px">Hors trésorerie : ces sommes n'ont pas transité par les comptes de l'entreprise.</div></div>` : ""; })()}`;
 }
 function renderInvoiceDetail(id) {
   const v = state.invoices.find((x) => x.id === id);
@@ -2871,11 +2871,11 @@ function renderInvoiceDetail(id) {
       <label class="field"><span>Lien vers le justificatif (Google Drive, facture PDF…)</span>
         <input data-bind="invoices|${v.id}|receiptUrl" value="${esc(v.receiptUrl)}" inputmode="url" placeholder="https://drive.google.com/…"/></label>
       <div class="inline">
-        ${validURL(v.receiptUrl) ? `<a class="btn secondary small" href="${esc(v.receiptUrl)}" target="_blank" rel="noopener">↗ Ouvrir le justificatif</a>` : (v.receiptUrl ? '<span class="muted" style="font-size:12px">Lien invalide.</span>' : "")}
+        ${validURL(v.receiptUrl) ? `<a class="btn secondary small" href="${esc(v.receiptUrl)}" target="_blank" rel="noopener">↗ Ouvrir le justificatif</a>` : (v.receiptUrl ? '<span class="muted" style="font-size:14px">Lien invalide.</span>' : "")}
         <span class="grow"></span>
-        <label class="inline-check" style="margin:0"><input type="checkbox" data-no-receipt="${v.id}" ${v.noReceipt ? "checked" : ""}/> <span style="font-size:12px">Aucun justificatif nécessaire</span></label>
+        <label class="inline-check" style="margin:0"><input type="checkbox" data-no-receipt="${v.id}" ${v.noReceipt ? "checked" : ""}/> <span style="font-size:14px">Aucun justificatif nécessaire</span></label>
       </div>
-      ${!v.receiptUrl && !v.noReceipt ? '<div class="muted" style="font-size:12px;margin-top:8px">⚠️ Justificatif manquant : cette écriture apparaît dans les rappels tant que le lien n\'est pas renseigné.</div>' : ""}
+      ${!v.receiptUrl && !v.noReceipt ? '<div class="muted" style="font-size:14px;margin-top:8px">⚠️ Justificatif manquant : cette écriture apparaît dans les rappels tant que le lien n\'est pas renseigné.</div>' : ""}
     </div>
     <div style="margin-top:18px"><button class="btn danger small" data-del-invoice="${v.id}">Supprimer la facture</button></div>`;
 }
@@ -2895,13 +2895,13 @@ function financeCategories() {
       return `<div class="row" style="cursor:default;border-left-color:${nature === "produit" ? "var(--finance)" : "var(--alert)"}">
         <input class="grow" data-catfield="name" data-cat="${c.id}" data-old="${esc(c.name)}" value="${esc(c.name)}" placeholder="Nom de la catégorie"/>
         <select data-catfield="nature" data-cat="${c.id}" style="width:auto">${natOpts}</select>
-        <span class="muted" style="font-size:11px;white-space:nowrap">${used} fact.</span>
+        <span class="muted" style="font-size:13px;white-space:nowrap">${used} fact.</span>
         <button class="btn ghost small" data-del-cat="${c.id}">✕</button></div>`;
     }).join("");
     return `<div class="section-h">${label} <span class="muted">(${arr.length})</span></div>
       <div class="list">${arr.length ? rows : '<div class="muted" style="padding:4px 2px">Aucune catégorie.</div>'}</div>`;
   };
-  return `<div class="toolbar"><span class="grow muted" style="font-size:12px">Les catégories structurent le compte de résultat (produits / charges).</span>
+  return `<div class="toolbar"><span class="grow muted" style="font-size:14px">Les catégories structurent le compte de résultat (produits / charges).</span>
       <button class="btn small" data-add-cat="produit">+ Produit</button>
       <button class="btn small" data-add-cat="charge">+ Charge</button></div>
     ${block("produit", "Produits")}
@@ -2940,7 +2940,7 @@ function financeRecurrences() {
   const cards = state.recurrences.map((rec) => {
     const freqOpts = FREQS.map((fr) => `<option value="${fr.code}" ${fr.code === rec.frequency ? "selected" : ""}>${fr.label}</option>`).join("");
     const head = `<div class="inline"><strong class="grow">${rec.kind === "task" ? "✅ Tâche" : "€ Facture"} récurrente</strong>
-      <label class="inline-check" style="margin:0"><input type="checkbox" data-recfield="active" data-rec="${rec.id}" ${rec.active ? "checked" : ""}/> <span style="font-size:12px">Active</span></label></div>`;
+      <label class="inline-check" style="margin:0"><input type="checkbox" data-recfield="active" data-rec="${rec.id}" ${rec.active ? "checked" : ""}/> <span style="font-size:14px">Active</span></label></div>`;
     let fields = `<label class="field"><span>Intitulé</span><input data-recfield="title" data-rec="${rec.id}" value="${esc(rec.title)}"/></label>
       <label class="field"><span>Fréquence</span><select data-recfield="frequency" data-rec="${rec.id}">${freqOpts}</select></label>
       <label class="field"><span>Première échéance</span><input type="date" data-recfield="anchorDate" data-rec="${rec.id}" value="${esc(rec.anchorDate || todayISO())}"/></label>`;
@@ -2958,10 +2958,10 @@ function financeRecurrences() {
         <label class="field"><span>Société</span><select data-recfield="companyId" data-rec="${rec.id}">${comOpts}</select></label>`;
     }
     return `<div class="card" style="margin-bottom:12px">${head}${fields}
-      <div class="inline" style="margin-top:6px"><span class="grow muted" style="font-size:11px">${recCount(rec.id)} élément(s) généré(s)${rec.lastGenerated ? ` · dernier : ${fmtDate(rec.lastGenerated)}` : ""}</span>
+      <div class="inline" style="margin-top:6px"><span class="grow muted" style="font-size:13px">${recCount(rec.id)} élément(s) généré(s)${rec.lastGenerated ? ` · dernier : ${fmtDate(rec.lastGenerated)}` : ""}</span>
         <button class="btn ghost small" data-del-rec="${rec.id}">Supprimer</button></div></div>`;
   }).join("");
-  return `<div class="toolbar"><span class="grow muted" style="font-size:12px">Modèles générant automatiquement des factures ou tâches à chaque échéance.</span>
+  return `<div class="toolbar"><span class="grow muted" style="font-size:14px">Modèles générant automatiquement des factures ou tâches à chaque échéance.</span>
       <button class="btn small" data-add-rec="invoice">+ Facture</button>
       <button class="btn small" data-add-rec="task">+ Tâche</button></div>
     ${state.recurrences.length ? cards : '<div class="center-empty">Aucune récurrence.</div>'}
@@ -3058,7 +3058,7 @@ function financeImport() {
         <div style="overflow-x:auto"><table class="bank-table">
           <thead><tr><th></th><th>Date</th><th>Libellé</th><th style="text-align:right">Montant</th></tr></thead>
           <tbody>${list}</tbody></table></div>
-        <div class="inline" style="margin-top:10px;font-size:13px"><span class="grow muted">Crédits ${euros(credit)} · Débits ${euros(debit)}</span></div>
+        <div class="inline" style="margin-top:10px;font-size:15px"><span class="grow muted">Crédits ${euros(credit)} · Débits ${euros(debit)}</span></div>
       </div>
       <div class="inline" style="margin-top:12px">
         <button class="btn" data-bank-import>Importer les opérations cochées</button>
@@ -3066,12 +3066,12 @@ function financeImport() {
   }
   return `<div class="card">
       <div style="font-weight:600;margin-bottom:8px">Importer un relevé bancaire</div>
-      <div class="muted" style="font-size:13px;line-height:1.5;margin-bottom:12px">Exporte un relevé depuis ta banque au format <strong>CSV</strong> ou <strong>OFX</strong>, puis charge-le ici. Les opérations sont ajoutées comme factures <em>payées</em> (crédit = recette, débit = dépense) et alimentent la trésorerie.</div>
+      <div class="muted" style="font-size:15px;line-height:1.5;margin-bottom:12px">Exporte un relevé depuis ta banque au format <strong>CSV</strong> ou <strong>OFX</strong>, puis charge-le ici. Les opérations sont ajoutées comme factures <em>payées</em> (crédit = recette, débit = dépense) et alimentent la trésorerie.</div>
       <label class="field"><span>Rattacher au compte</span><select id="bankCompany">${compOpts}</select></label>
       <label class="field"><span>Fichier du relevé (CSV ou OFX)</span><input type="file" id="bankFile" accept=".csv,.ofx,.txt,text/csv"/></label>
     </div>
     ${preview}
-    <div class="muted" style="font-size:11px;margin-top:12px;line-height:1.5">⚠️ Ces opérations sont des mouvements de trésorerie réels (montants TTC, TVA 0). Si tu saisis aussi les factures à la main, tu peux avoir un double comptage : range les opérations importées dans une catégorie dédiée pour les distinguer. Les doublons d'un même relevé ré-importé sont automatiquement ignorés.</div>`;
+    <div class="muted" style="font-size:13px;margin-top:12px;line-height:1.5">⚠️ Ces opérations sont des mouvements de trésorerie réels (montants TTC, TVA 0). Si tu saisis aussi les factures à la main, tu peux avoir un double comptage : range les opérations importées dans une catégorie dédiée pour les distinguer. Les doublons d'un même relevé ré-importé sont automatiquement ignorés.</div>`;
 }
 function doBankImport() {
   if (!bankImport.companyId) { alert("Choisis d'abord la société / le compte de rattachement."); return; }
@@ -3106,10 +3106,10 @@ function invoicePaymentFields(v) {
   ).join("");
   const second = mode === "associe"
     ? `<label class="field"><span>Payée par l'associé</span><select data-pay-assoc="${v.id}" data-rerender>${assoOpts}</select></label>
-       ${asso.length ? "" : '<div class="muted" style="font-size:12px">Aucun contact. Crée un contact de catégorie « Associé » dans Contacts.</div>'}
-       <div class="muted" style="font-size:12px;margin-top:6px">Cette facture n'impacte pas la trésorerie de la société : elle ${v.direction === "depense" ? "crédite" : "débite"} le compte courant de l'associé.</div>`
+       ${asso.length ? "" : '<div class="muted" style="font-size:14px">Aucun contact. Crée un contact de catégorie « Associé » dans Contacts.</div>'}
+       <div class="muted" style="font-size:14px;margin-top:6px">Cette facture n'impacte pas la trésorerie de la société : elle ${v.direction === "depense" ? "crédite" : "débite"} le compte courant de l'associé.</div>`
     : `<label class="field"><span>Compte de l'entreprise</span><select data-pay-account="${v.id}" data-rerender>${accOpts}</select></label>
-       ${accs.length ? "" : '<div class="muted" style="font-size:12px">Aucun compte bancaire pour cette société. Ajoute-les dans Groupe → la société → Comptes bancaires.</div>'}`;
+       ${accs.length ? "" : '<div class="muted" style="font-size:14px">Aucun compte bancaire pour cette société. Ajoute-les dans Groupe → la société → Comptes bancaires.</div>'}`;
   return `<label class="field"><span>Réglée depuis / vers</span>
       <select data-pay-mode="${v.id}" data-rerender>
         <option value="compte" ${mode === "compte" ? "selected" : ""}>Un compte de l'entreprise</option>
@@ -3127,21 +3127,21 @@ function financeCCA() {
     const parSociete = state.companies.map((co) => ({ co, s: ccaBalance(c.id, co.id) })).filter((x) => Math.abs(x.s) > 0.005);
     const lines = ccaLines(c.id).slice(0, 40).map((l) => `<tr>
       <td style="white-space:nowrap">${esc(fmtDate(l.date))}</td>
-      <td>${esc(l.label)}<div class="muted" style="font-size:11px">${esc(l.kind)}${l.detail ? " · " + esc(l.detail) : ""}</div></td>
+      <td>${esc(l.label)}<div class="muted" style="font-size:13px">${esc(l.kind)}${l.detail ? " · " + esc(l.detail) : ""}</div></td>
       <td class="num" style="color:${l.amount >= 0 ? "var(--positive)" : "#d23c3c"}">${euros(l.amount)}</td></tr>`).join("");
     return `<div class="card" style="margin-bottom:12px">
       <div class="inline"><strong class="grow">${esc(contactName(c))}</strong>
-        <strong style="color:${solde >= 0 ? "var(--positive)" : "#d23c3c"};font-size:17px">${euros(solde)}</strong></div>
-      <div class="muted" style="font-size:11px">${solde >= 0 ? "La société doit cette somme à l'associé." : "L'associé doit cette somme à la société."}</div>
-      ${parSociete.length > 1 ? `<div style="margin-top:8px">${parSociete.map((x) => `<div class="inline" style="padding:2px 0"><span class="grow muted" style="font-size:12px">${esc(x.co.name || "Société")}</span><span style="font-size:12px">${euros(x.s)}</span></div>`).join("")}</div>` : ""}
-      ${lines ? `<div style="overflow-x:auto;margin-top:10px"><table class="bank-table"><thead><tr><th>Date</th><th>Libellé</th><th class="num">Montant</th></tr></thead><tbody>${lines}</tbody></table></div>` : '<div class="muted" style="font-size:12px;margin-top:8px">Aucun mouvement.</div>'}
+        <strong style="color:${solde >= 0 ? "var(--positive)" : "#d23c3c"};font-size:19px">${euros(solde)}</strong></div>
+      <div class="muted" style="font-size:13px">${solde >= 0 ? "La société doit cette somme à l'associé." : "L'associé doit cette somme à la société."}</div>
+      ${parSociete.length > 1 ? `<div style="margin-top:8px">${parSociete.map((x) => `<div class="inline" style="padding:2px 0"><span class="grow muted" style="font-size:14px">${esc(x.co.name || "Société")}</span><span style="font-size:14px">${euros(x.s)}</span></div>`).join("")}</div>` : ""}
+      ${lines ? `<div style="overflow-x:auto;margin-top:10px"><table class="bank-table"><thead><tr><th>Date</th><th>Libellé</th><th class="num">Montant</th></tr></thead><tbody>${lines}</tbody></table></div>` : '<div class="muted" style="font-size:14px;margin-top:8px">Aucun mouvement.</div>'}
       <div class="inline" style="margin-top:8px"><button class="btn secondary small" data-add-cca="${c.id}">+ Mouvement</button></div>
     </div>`;
   }).join("");
-  return `<div class="toolbar"><span class="grow muted" style="font-size:12px">Avances faites par les associés, apports et remboursements.</span></div>
+  return `<div class="toolbar"><span class="grow muted" style="font-size:14px">Avances faites par les associés, apports et remboursements.</span></div>
     <div class="card" style="margin-bottom:14px"><div class="inline"><strong class="grow">Total dû aux associés</strong>
-      <strong style="color:${total >= 0 ? "var(--positive)" : "#d23c3c"};font-size:18px">${euros(total)}</strong></div>
-      <div class="muted" style="font-size:11px;margin-top:4px">Une facture réglée par un associé alimente automatiquement son compte courant (champ « Règlement » de la facture).</div></div>
+      <strong style="color:${total >= 0 ? "var(--positive)" : "#d23c3c"};font-size:20px">${euros(total)}</strong></div>
+      <div class="muted" style="font-size:13px;margin-top:4px">Une facture réglée par un associé alimente automatiquement son compte courant (champ « Règlement » de la facture).</div></div>
     ${actifs.length ? cards : '<div class="center-empty">Aucun mouvement de compte courant.<br>Indique « Un associé » dans le règlement d\'une facture, ou ajoute un mouvement à un associé.</div>'}
     ${!actifs.length && asso.length ? `<div class="inline" style="margin-top:10px">${asso.slice(0, 6).map((c) => `<button class="btn secondary small" data-add-cca="${c.id}">+ Mouvement · ${esc(contactName(c))}</button>`).join(" ")}</div>` : ""}`;
 }
@@ -3194,7 +3194,7 @@ function financeSalaires() {
       <div class="grow"><div class="r-title">${esc(salName(s))}</div>
         <div class="r-sub">${esc(companyName(s.companyId))} · brut ${euros(s.gross)} · charges ${euros(s.charges)} · net ${euros(s.net)}${inv ? " · écriture générée" : ""}</div></div>
       <div style="text-align:right"><div>${euros(salTotal(s))}</div>
-        <span class="badge ${s.status === "paye" ? "terminee" : "aDemarrer"}" style="font-size:10px">${s.status === "paye" ? "Payé" : "À payer"}</span></div>
+        <span class="badge ${s.status === "paye" ? "terminee" : "aDemarrer"}" style="font-size:12px">${s.status === "paye" ? "Payé" : "À payer"}</span></div>
       <button class="btn ghost small" data-edit-sal="${s.id}">✎</button></div>`;
   }).join("");
   const annee = cur.slice(0, 4);
@@ -3212,11 +3212,11 @@ function financeSalaires() {
       <div class="inline" style="padding:3px 0"><span class="grow">Charges patronales</span><strong>${euros(charges)}</strong></div>
       <div class="inline" style="padding:3px 0"><span class="grow">Net versé</span><strong>${euros(net)}</strong></div>
       <div class="inline" style="padding:6px 0;border-top:1px solid var(--line);margin-top:4px"><strong class="grow">Coût total employeur</strong>
-        <strong style="color:var(--primary);font-size:17px">${euros(gross + charges)}</strong></div>
-      <div class="muted" style="font-size:11px;margin-top:4px">Cumul ${annee} : ${euros(anneeTotal)} sur ${anneeItems.length} bulletin(s).</div></div>
+        <strong style="color:var(--primary);font-size:19px">${euros(gross + charges)}</strong></div>
+      <div class="muted" style="font-size:13px;margin-top:4px">Cumul ${annee} : ${euros(anneeTotal)} sur ${anneeItems.length} bulletin(s).</div></div>
     <div class="list">${items.length ? rows : '<div class="center-empty">Aucun salaire pour ce mois.</div>'}</div>
     ${nonGen ? `<div class="inline" style="margin-top:12px"><button class="btn secondary small" data-sal-generate>Générer les ${nonGen} écriture(s) comptable(s) du mois</button></div>
-      <div class="muted" style="font-size:11px;margin-top:6px">Crée une facture de charge « Salaires » par bulletin, pour alimenter le compte de résultat et la trésorerie (sans double comptage : un bulletin déjà généré est ignoré).</div>` : ""}`;
+      <div class="muted" style="font-size:13px;margin-top:6px">Crée une facture de charge « Salaires » par bulletin, pour alimenter le compte de résultat et la trésorerie (sans double comptage : un bulletin déjà généré est ignoré).</div>` : ""}`;
 }
 function salaryEditor(id) {
   const s = id ? state.salaries.find((x) => x.id === id) : null;
@@ -3288,8 +3288,8 @@ function renderDashboard() {
   const toPay = depenses().filter((v) => v.status !== "payee");
   const missionsEnCours = state.missions.filter((m) => m.statusCode === "enCours").length;
   const card = (title, value, sub, color) => `<div class="card" style="background:${color}1f">
-    <div class="timer" style="font-size:20px;font-weight:700;color:${color}">${value}</div>
-    <div style="margin-top:2px">${title}</div>${sub ? `<div class="muted" style="font-size:11px">${sub}</div>` : ""}</div>`;
+    <div class="timer" style="font-size:22px;font-weight:700;color:${color}">${value}</div>
+    <div style="margin-top:2px">${title}</div>${sub ? `<div class="muted" style="font-size:13px">${sub}</div>` : ""}</div>`;
   const grid = (items) => `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px">${items}</div>`;
   const alerts = [];
   if (overdue.length) alerts.push(`${overdue.length} facture(s) client en retard · ${euros(overdue.reduce((t, v) => t + invTTC(v), 0))}`);
@@ -3429,12 +3429,12 @@ function renderLeave() {
   }).join("");
   return `<div class="card" style="background:rgba(24,193,216,.08)">
       <div class="inline"><strong class="grow">Solde de congés</strong>
-        <strong style="color:${balance >= 0 ? "var(--positive)" : "#d23c3c"};font-size:22px">${esc(fmtH(balance).replace(/^\+/, ""))}</strong></div>
-      <div class="muted" style="font-size:12px;margin-top:2px">soit ${esc(fmtDays(balance, cfg.hoursPerDay))} · ${cfg.monthlyCredit}h créditées le 1er de chaque mois · quota ${cfg.weeklyQuota}h/semaine</div></div>
+        <strong style="color:${balance >= 0 ? "var(--positive)" : "#d23c3c"};font-size:24px">${esc(fmtH(balance).replace(/^\+/, ""))}</strong></div>
+      <div class="muted" style="font-size:14px;margin-top:2px">soit ${esc(fmtDays(balance, cfg.hoursPerDay))} · ${cfg.monthlyCredit}h créditées le 1er de chaque mois · quota ${cfg.weeklyQuota}h/semaine</div></div>
     <div class="card" style="margin-top:10px">
-      <div class="inline"><span class="grow">Semaine en cours <span class="muted" style="font-size:12px">(pas encore régularisée)</span></span>
+      <div class="inline"><span class="grow">Semaine en cours <span class="muted" style="font-size:14px">(pas encore régularisée)</span></span>
         <span class="timer">${esc(fmtH(current.worked).replace(/^\+/, ""))} / ${cfg.weeklyQuota}h</span></div>
-      <div class="muted" style="font-size:12px;margin-top:3px">À la clôture de la semaine : <strong style="color:${current.delta >= 0 ? "var(--positive)" : "#d23c3c"}">${esc(fmtH(current.delta))}</strong> → solde prévisionnel ${esc(fmtH(balance + current.delta).replace(/^\+/, ""))}</div></div>
+      <div class="muted" style="font-size:14px;margin-top:3px">À la clôture de la semaine : <strong style="color:${current.delta >= 0 ? "var(--positive)" : "#d23c3c"}">${esc(fmtH(current.delta))}</strong> → solde prévisionnel ${esc(fmtH(balance + current.delta).replace(/^\+/, ""))}</div></div>
     <div class="toolbar" style="margin-top:14px"><span class="grow"></span>
       <button class="btn secondary small" data-leave-adjust>+ Ajustement</button>
       <button class="btn secondary small" data-leave-settings>⚙︎ Paramètres</button></div>
@@ -3442,8 +3442,8 @@ function renderLeave() {
     <div class="card" style="padding:8px"><div style="overflow-x:auto"><table class="bank-table">
       <thead><tr><th>Date</th><th>Mouvement</th><th class="num">Variation</th><th class="num">Solde</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="4">Aucun mouvement. Vérifie le mois de départ dans les paramètres.</td></tr>'}</tbody></table></div>
-      ${moves.length > 80 ? `<div class="muted" style="font-size:11px;margin-top:6px">80 mouvements les plus récents sur ${moves.length}.</div>` : ""}</div>
-    <div class="muted" style="font-size:11px;margin-top:10px;line-height:1.5">⚠️ Une semaine sans temps saisi est comptée comme une semaine non travaillée (−${cfg.weeklyQuota}h). Règle le <strong>mois de départ</strong> sur le début réel de ton suivi pour éviter des débits sur des semaines non pointées.</div>`;
+      ${moves.length > 80 ? `<div class="muted" style="font-size:13px;margin-top:6px">80 mouvements les plus récents sur ${moves.length}.</div>` : ""}</div>
+    <div class="muted" style="font-size:13px;margin-top:10px;line-height:1.5">⚠️ Une semaine sans temps saisi est comptée comme une semaine non travaillée (−${cfg.weeklyQuota}h). Règle le <strong>mois de départ</strong> sur le début réel de ton suivi pour éviter des débits sur des semaines non pointées.</div>`;
 }
 function leaveSettings() {
   const cfg = leaveCfg();
@@ -3468,7 +3468,7 @@ function leaveSettings() {
 }
 function leaveAdjust() {
   showModal(`<div class="modal-head"><strong class="grow">Ajustement manuel</strong><button class="btn ghost small" data-modal-close>✕</button></div>
-    <div class="muted" style="font-size:12px;margin-bottom:8px">Pour une correction ou un congé non reflété par le temps saisi. Valeur négative = débit.</div>
+    <div class="muted" style="font-size:14px;margin-bottom:8px">Pour une correction ou un congé non reflété par le temps saisi. Valeur négative = débit.</div>
     <label class="field"><span>Date</span><input type="date" id="ajDate" value="${todayISO()}"/></label>
     <label class="field"><span>Heures (+ ou −)</span><input type="number" step="0.5" id="ajH" value="0"/></label>
     <label class="field"><span>Libellé</span><input id="ajNote" placeholder="Ex. Congé posé, régularisation…"/></label>
@@ -3505,7 +3505,7 @@ function renderTime() {
         : '<div class="muted">—</div>'}</div>`;
   }
   const moyenne = r.kind === "mois" && per.length
-    ? `<div class="muted" style="font-size:11px;margin-top:6px">${per.length} projet(s) · moyenne ${fmtDuration(total / per.length)} par projet</div>` : "";
+    ? `<div class="muted" style="font-size:13px;margin-top:6px">${per.length} projet(s) · moyenne ${fmtDuration(total / per.length)} par projet</div>` : "";
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Temps</div>
       <button class="btn secondary small" data-export-temps-csv>${icon("download")} CSV</button>
       <button class="btn secondary small" data-export-temps-pdf>${icon("file-text")} PDF</button></div>
@@ -3513,12 +3513,12 @@ function renderTime() {
     <div class="toolbar">
       <button class="btn ghost small" data-time-nav="-1" title="Période précédente">‹</button>
       <div class="grow" style="text-align:center">
-        <div class="muted" style="font-size:12px">${esc(r.sub)}</div>
+        <div class="muted" style="font-size:14px">${esc(r.sub)}</div>
         <strong style="text-transform:capitalize">${esc(r.label)}</strong></div>
       <button class="btn ghost small" data-time-nav="1" title="Période suivante">›</button>
       <button class="btn secondary small" data-time-now>${r.kind === "mois" ? "Ce mois" : "Cette semaine"}</button></div>
     <div class="card"><div class="inline"><strong class="grow">Temps total</strong>
-      <span class="timer" style="color:var(--primary);font-size:18px">${fmtDuration(total)}</span></div>${moyenne}</div>
+      <span class="timer" style="color:var(--primary);font-size:20px">${fmtDuration(total)}</span></div>${moyenne}</div>
     <div class="section-h">Par projet</div><div class="card">${rows}</div>
     ${weekly}`;
 }
@@ -3594,11 +3594,11 @@ function renderTasks() {
   }).join("");
   const legend = `<div class="dl-legend"><span class="muted">Échéance :</span>
     <span class="dl-grad"></span>
-    <span class="muted" style="font-size:11px">lointaine → imminente</span></div>`;
+    <span class="muted" style="font-size:13px">lointaine → imminente</span></div>`;
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tâches</div>
       <button class="btn" data-add-task="aFaire">+ Nouvelle tâche</button></div>
     ${legend}
-    <div class="muted" style="font-size:11px;margin-bottom:10px">Colonnes classées par échéance la plus proche · glisse une carte (⠿) ou utilise ‹ › pour la déplacer.</div>
+    <div class="muted" style="font-size:13px;margin-bottom:10px">Colonnes classées par échéance la plus proche · glisse une carte (⠿) ou utilise ‹ › pour la déplacer.</div>
     <div class="kb-board">${cols}</div>
     <button class="btn fab" data-add-task="aFaire">+</button>`;
 }
@@ -3618,7 +3618,7 @@ function renderActions() {
   };
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Actions</div>
       <button class="btn" data-add-action>+ Nouvelle action</button></div>
-    <div class="muted" style="font-size:12px;margin-bottom:10px">Suivi des documents ou informations à recevoir d'un interlocuteur. Tant qu'une action est ouverte, un rappel e-mail est envoyé chaque jour à 9h (via le script Google, voir la doc).</div>
+    <div class="muted" style="font-size:14px;margin-bottom:10px">Suivi des documents ou informations à recevoir d'un interlocuteur. Tant qu'une action est ouverte, un rappel e-mail est envoyé chaque jour à 9h (via le script Google, voir la doc).</div>
     <div class="section-h">Ouvertes <span class="muted">(${open.length})</span></div>
     <div class="list">${open.length ? open.map(card).join("") : '<div class="muted" style="padding:4px 2px">Aucune action ouverte.</div>'}</div>
     ${closed.length ? `<div class="section-h">Closes <span class="muted">(${closed.length})</span></div><div class="list">${closed.map(card).join("")}</div>` : ""}
@@ -3648,7 +3648,7 @@ function renderActionDetail(id) {
         ${a.closed
           ? `<button class="btn secondary small" data-reopen-action="${a.id}">Rouvrir</button>`
           : `<button class="btn small" data-close-action="${a.id}">Clore l'action</button>`}</div>
-      <div class="muted" style="font-size:12px;margin-top:6px">${a.closed && a.closedAt ? `Close le ${fmtDate(new Date(a.closedAt).toISOString().slice(0, 10))}.` : (a.reminderDaily ? "Un rappel est envoyé chaque matin à 9h au destinataire (script Google)." : "Rappel quotidien désactivé.")}</div>
+      <div class="muted" style="font-size:14px;margin-top:6px">${a.closed && a.closedAt ? `Close le ${fmtDate(new Date(a.closedAt).toISOString().slice(0, 10))}.` : (a.reminderDaily ? "Un rappel est envoyé chaque matin à 9h au destinataire (script Google)." : "Rappel quotidien désactivé.")}</div>
     </div>
     <div style="margin-top:18px"><button class="btn danger small" data-del-action="${a.id}">Supprimer l'action</button></div>`;
 }
@@ -3917,7 +3917,7 @@ function calNotice(quiet) {
   if (!err) return "";
   if (quiet && err.code === "off") return "";
   const box = (title, body, btn) => `<div class="card cal-notice">
-    <strong>${title}</strong><div class="muted" style="font-size:13px;margin-top:4px">${body}</div>
+    <strong>${title}</strong><div class="muted" style="font-size:15px;margin-top:4px">${body}</div>
     <div style="margin-top:10px">${btn}</div></div>`;
   if (err.code === "off") {
     return box("Relier ton agenda Google",
@@ -3940,7 +3940,7 @@ const calLinked = () => !!(window.DriveSync && DriveSync.calendarGranted && Driv
 function calFooter() {
   if (!calLinked()) return "";
   const when = calendar.at ? new Date(calendar.at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : null;
-  return `<div class="inline muted" style="font-size:12px;margin-top:12px">
+  return `<div class="inline muted" style="font-size:14px;margin-top:12px">
     <span class="grow">${calBusy ? "Lecture de l'agenda Google…" : (when ? `Agenda synchronisé à ${when}.` : "Agenda Google non chargé.")}</span>
     <button class="btn ghost small" data-cal-refresh>↻ Actualiser l'agenda</button>
     <button class="btn ghost small" data-cal-unlink>Délier l'agenda</button></div>`;
@@ -3988,7 +3988,7 @@ function renderCalEventDetail(eid) {
           <div class="grow"><div class="r-title">${esc(p.name)}</div>
           <div class="r-sub">${esc(sub)}</div></div></div>`;
       }).join("")
-    : `<div class="muted" style="padding:4px 2px;font-size:13px">Personne d'identifié${toFind ? "" : " — ni invité Google, ni nom dans le titre"}.</div>`;
+    : `<div class="muted" style="padding:4px 2px;font-size:15px">Personne d'identifié${toFind ? "" : " — ni invité Google, ni nom dans le titre"}.</div>`;
   const prep = calPrep(e);
   const links = [
     e.meet ? `<a class="btn secondary small" href="${esc(e.meet)}" target="_blank" rel="noopener">Rejoindre la visio</a>` : "",
@@ -3996,7 +3996,7 @@ function renderCalEventDetail(eid) {
   ].filter(Boolean).join(" ");
   return `<button class="back" data-back-rdv>‹ Rendez-vous</button>
     <div class="page-title">${esc(e.title)}</div>
-    <div class="muted" style="font-size:12px;margin:-8px 0 12px">Événement de ton agenda Google — lecture seule.</div>
+    <div class="muted" style="font-size:14px;margin:-8px 0 12px">Événement de ton agenda Google — lecture seule.</div>
     <div class="card">
       <div><strong>${esc(calWhen(e))}</strong>${e.mins ? ` <span class="muted">· ${fmtDurationShort(e.mins * 60)}</span>` : ""}</div>
       ${e.location ? `<div class="muted" style="margin-top:6px">📍 ${esc(e.location)}</div>` : ""}
@@ -4005,7 +4005,7 @@ function renderCalEventDetail(eid) {
       ${prep.kinds.length ? `<div style="margin-top:8px">${prep.kinds.map((k) => `<span class="cal-kind">${esc(calKindLabel(k))}</span>`).join(" ")}</div>` : ""}
       ${prep.todo.length
         ? `<div style="margin-top:8px"><span class="cal-tag">À préparer</span><ul class="cal-todo">${prep.todo.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`
-        : (prep.kinds.length ? `<div class="muted" style="margin-top:8px;font-size:13px">Rien à préparer.</div>` : "")}
+        : (prep.kinds.length ? `<div class="muted" style="margin-top:8px;font-size:15px">Rien à préparer.</div>` : "")}
       ${links ? `<div class="inline" style="margin-top:10px">${links}</div>` : ""}
     </div>
     ${e.notes ? `<div class="section-h">Description</div><div class="card"><div class="cal-notes">${esc(e.notes)}</div></div>` : ""}
@@ -4047,12 +4047,12 @@ function renderCalSummary() {
         <div class="grow"><div class="r-title">${esc(p.name)}</div>
           <div class="r-sub">${p.n} rendez-vous à venir${p.next ? ` · prochain le ${esc(fmtDate(p.next.date))}` : ""}</div></div>
         <span class="muted">›</span></div>`).join("")
-    : `<div class="muted" style="padding:4px 2px;font-size:13px">Aucun participant dans les événements à venir.
+    : `<div class="muted" style="padding:4px 2px;font-size:15px">Aucun participant dans les événements à venir.
         Google ne connaît des participants que si tu invites les gens par e-mail depuis ton agenda ;
         un rendez-vous noté pour toi seul n'en a aucun — écris alors le nom dans le titre.</div>`;
   const invit = s.noGuests.length
     ? s.noGuests.map((e) => evRow(e, calWhen(e) + " · aucun invité")).join("")
-    : '<div class="muted" style="padding:4px 2px;font-size:13px">Tous les rendez-vous à venir ont au moins un invité. 👌</div>';
+    : '<div class="muted" style="padding:4px 2px;font-size:15px">Tous les rendez-vous à venir ont au moins un invité. 👌</div>';
   const wait = s.waiting.length
     ? s.waiting.map((e) => {
         const n = e.guests.filter((g) => g.status === "needsAction").length;
@@ -4063,7 +4063,7 @@ function renderCalSummary() {
     : "";
   const prep = s.prep.length
     ? s.prep.map((x) => evRow(x.e, calWhen(x.e) + " · " + x.reasons.join(" · "))).join("")
-    : '<div class="muted" style="padding:4px 2px;font-size:13px">Rien qui demande une préparation particulière.</div>';
+    : '<div class="muted" style="padding:4px 2px;font-size:15px">Rien qui demande une préparation particulière.</div>';
   const stat = (n, lbl) => `<div class="cal-stat"><div class="cal-stat-n">${n}</div><div class="cal-stat-l">${lbl}</div></div>`;
   return `${notice}
     <div class="cal-stats">
@@ -4072,15 +4072,15 @@ function renderCalSummary() {
       ${stat(s.noGuests.length, "invités à trouver")}
       ${stat(s.prep.length, "à préparer")}
     </div>
-    <div class="muted" style="font-size:12px;margin:2px 0 10px">Synthèse des événements d'aujourd'hui jusqu'au ${esc(fmtDate(calHorizonISO()))}.</div>
+    <div class="muted" style="font-size:14px;margin:2px 0 10px">Synthèse des événements d'aujourd'hui jusqu'au ${esc(fmtDate(calHorizonISO()))}.</div>
     <div class="section-h">👥 Avec qui ? <span class="muted">(${s.contacts.length})</span></div>
     <div class="list">${people}</div>
     <div class="section-h">🙋 Invités à trouver <span class="muted">(${s.noGuests.length})</span></div>
-    <div class="muted" style="font-size:12px;margin-bottom:6px">Rendez-vous à venir sans aucun participant invité.</div>
+    <div class="muted" style="font-size:14px;margin-bottom:6px">Rendez-vous à venir sans aucun participant invité.</div>
     <div class="list">${invit}</div>
     ${s.waiting.length ? `<div class="section-h">⏳ Réponses en attente <span class="muted">(${s.waiting.length})</span></div><div class="list">${wait}</div>` : ""}
     <div class="section-h">📝 À préparer <span class="muted">(${s.prep.length})</span></div>
-    <div class="muted" style="font-size:12px;margin-bottom:6px">Ce qu'il reste à faire avant chaque événement : billets, dossier, supports, joueurs manquants…</div>
+    <div class="muted" style="font-size:14px;margin-bottom:6px">Ce qu'il reste à faire avant chaque événement : billets, dossier, supports, joueurs manquants…</div>
     <div class="list">${prep}</div>
     ${calFooter()}`;
 }
@@ -4123,7 +4123,7 @@ function renderRendezvous() {
     <div class="section-h">À venir <span class="muted">(${upcoming.length})</span></div>
     <div class="list">${upcoming.length ? upcoming.map(card).join("") : '<div class="muted" style="padding:4px 2px">Aucun rendez-vous à venir.</div>'}</div>
     ${calLinked() ? `<div class="section-h">🗓️ Agenda Google · à venir <span class="muted">(${gUp.length})</span></div>
-    <div class="list">${gUp.length ? gUp.map(gCard).join("") : `<div class="muted" style="padding:4px 2px;font-size:13px">${calBusy ? "Lecture de l'agenda Google…" : "Aucun événement à venir dans l'agenda Google."}</div>`}</div>` : ""}
+    <div class="list">${gUp.length ? gUp.map(gCard).join("") : `<div class="muted" style="padding:4px 2px;font-size:15px">${calBusy ? "Lecture de l'agenda Google…" : "Aucun événement à venir dans l'agenda Google."}</div>`}</div>` : ""}
     ${past.length ? `<div class="section-h">Passés <span class="muted">(${past.length})</span></div><div class="list">${past.map(card).join("")}</div>` : ""}
     ${calLinked() && gPast.length ? `<div class="section-h">🗓️ Agenda Google · passés <span class="muted">(${gPast.length})</span></div><div class="list">${gPast.slice(0, 60).map(gCard).join("")}</div>` : ""}
     ${calFooter()}
@@ -4207,7 +4207,7 @@ function renderAgenda() {
   const empty = !all.length ? '<div class="center-empty">Rien de planifié.<br>Ajoute des échéances aux tâches/actions ou crée des rendez-vous.</div>' : "";
   return `<div class="toolbar"><span class="grow"></span>
       <button class="btn" data-add-rdv>+ Rendez-vous</button></div>
-    <div class="muted" style="font-size:12px;margin-bottom:12px">Échéances des tâches et des actions ouvertes, rendez-vous et événements de l'agenda Google — par ordre chronologique.</div>
+    <div class="muted" style="font-size:14px;margin-bottom:12px">Échéances des tâches et des actions ouvertes, rendez-vous et événements de l'agenda Google — par ordre chronologique.</div>
     ${calNotice()}
     ${empty}${overdueHtml}
     ${upcoming.length ? `<div class="section-h">À venir <span class="muted">(${upcoming.length})</span></div>${groupsHtml}` : ""}
@@ -4339,7 +4339,7 @@ function renderTimetable() {
   return `<div class="toolbar">
       <button class="btn ghost small" data-day="-1">‹</button>
       <div class="grow" style="text-align:center"><strong style="text-transform:capitalize">${esc(dLabel)}</strong>
-        <div class="muted" style="font-size:11px">${slots.length} créneau(x) · ${fmtDuration(total * 60)}${gCount ? ` · ${gCount} événement(s) d'agenda` : ""}</div></div>
+        <div class="muted" style="font-size:13px">${slots.length} créneau(x) · ${fmtDuration(total * 60)}${gCount ? ` · ${gCount} événement(s) d'agenda` : ""}</div></div>
       <button class="btn ghost small" data-day="1">›</button>
       <button class="btn secondary small" data-day-today>Aujourd'hui</button>
       <button class="btn small" data-add-slot>+ Créneau</button></div>
@@ -4348,7 +4348,7 @@ function renderTimetable() {
     <div class="tt-layout">
       <div class="tt-side">
         <div class="section-h" style="margin-top:0">À planifier <span class="muted">(${unscheduledTasks().length})</span></div>
-        <div class="tt-chips">${chips || '<div class="muted" style="font-size:12px">Aucune tâche en attente.</div>'}</div>
+        <div class="tt-chips">${chips || '<div class="muted" style="font-size:14px">Aucune tâche en attente.</div>'}</div>
       </div>
       <div class="tt-wrap">
         <div class="tt-gutter" style="height:${height}px">${labels}</div>
@@ -4369,7 +4369,7 @@ function slotEditor(id) {
     </div>
     <label class="field"><span>Projet</span><select id="slMission">${misOpts}</select></label>
     <label class="field"><span>Notes</span><textarea id="slNotes">${esc(s.notes)}</textarea></label>
-    ${task ? `<div class="muted" style="font-size:12px">Lié à la tâche « ${esc(task.title || "")} » · statut : <strong>${esc(taskStatusLabel(task.status))}</strong>.</div>` : ""}
+    ${task ? `<div class="muted" style="font-size:14px">Lié à la tâche « ${esc(task.title || "")} » · statut : <strong>${esc(taskStatusLabel(task.status))}</strong>.</div>` : ""}
     <div class="inline" style="margin-top:12px">
       <button class="btn" id="slSave">Enregistrer</button>
       ${task ? `<button class="btn secondary small" id="slDone">${(task.status || "aFaire") === "termine" ? "↺ Rouvrir la tâche" : "✓ Marquer la tâche terminée"}</button>` : ""}
@@ -5187,13 +5187,13 @@ function exportJSON() {
 function renderDriveBar() {
   const el = document.getElementById("driveBar"); if (!el) return;
   const cfgOk = window.OPERATIONS01_CONFIG && OPERATIONS01_CONFIG.googleClientId;
-  if (!cfgOk) { el.innerHTML = `<div class="muted" style="font-size:11px;line-height:1.4">Google Drive non configuré.<br>Voir README → « Google Drive ».</div>`; return; }
+  if (!cfgOk) { el.innerHTML = `<div class="muted" style="font-size:13px;line-height:1.4">Google Drive non configuré.<br>Voir README → « Google Drive ».</div>`; return; }
   // IMPORTANT : tout le HTML est écrit en UNE fois. Un « innerHTML += » ultérieur
   // reconstruirait les nœuds et supprimerait les gestionnaires de clic déjà posés.
   const connected = window.DriveSync && DriveSync.isConnected();
   const reauth = connected && DriveSync.needsAuth();
   const main = connected
-    ? `<div style="font-size:12px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">${reauth ? "reconnexion nécessaire" : "synchronisé"}</span></div>
+    ? `<div style="font-size:14px">☁︎ <strong>Drive</strong> · <span id="driveStatus" class="muted">${reauth ? "reconnexion nécessaire" : "synchronisé"}</span></div>
        <button class="btn ${reauth ? "" : "ghost"} small" id="driveReconnect" style="width:100%;margin-top:6px">Reconnecter</button>
        <button class="btn ghost small" id="driveBackups" style="width:100%;margin-top:6px">${icon("archive")} Sauvegardes</button>`
     : `<button class="btn secondary small" id="driveConnect" style="width:100%">Se connecter à Google Drive</button>`;
@@ -5230,9 +5230,9 @@ function showModal(html) {
 }
 async function openBackups() {
   showModal(`<div class="modal-head"><strong class="grow">Sauvegardes Google Drive</strong><button class="btn ghost small" data-modal-close>✕</button></div>
-    <div class="muted" style="font-size:12px;margin-bottom:10px">Une sauvegarde automatique est créée chaque jour. Tu peux en restaurer une, ou en créer une maintenant.</div>
+    <div class="muted" style="font-size:14px;margin-bottom:10px">Une sauvegarde automatique est créée chaque jour. Tu peux en restaurer une, ou en créer une maintenant.</div>
     <div class="inline" style="margin-bottom:10px"><button class="btn small" data-backup-now>Sauvegarder maintenant</button></div>
-    <div id="backupList" class="muted" style="font-size:13px">Chargement…</div>`);
+    <div id="backupList" class="muted" style="font-size:15px">Chargement…</div>`);
   document.querySelector("[data-modal-close]").onclick = closeModal;
   document.querySelector("[data-backup-now]").onclick = async () => {
     try { await DriveSync.backupNow(state); await refreshBackupList(); } catch (e) { alert("Sauvegarde impossible : " + e.message); }
@@ -5248,8 +5248,8 @@ async function refreshBackupList() {
       const conflict = f.name.indexOf("conflit") > -1;
       const when = f.modifiedTime ? new Date(f.modifiedTime).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" }) : "";
       return `<div class="row" style="cursor:default;border-left-color:${conflict ? "var(--alert)" : "var(--primary)"}">
-        <div class="grow"><div class="r-title" style="font-size:13px">${conflict ? "⚠️ Conflit" : "🛟 Sauvegarde"} · ${esc(when)}</div>
-          <div class="r-sub" style="font-size:11px">${esc(f.name)}</div></div>
+        <div class="grow"><div class="r-title" style="font-size:15px">${conflict ? "⚠️ Conflit" : "🛟 Sauvegarde"} · ${esc(when)}</div>
+          <div class="r-sub" style="font-size:13px">${esc(f.name)}</div></div>
         <button class="btn ghost small" data-restore="${f.id}">Restaurer</button></div>`;
     }).join("");
     box.querySelectorAll("[data-restore]").forEach((b) => b.onclick = async () => {
@@ -5270,7 +5270,7 @@ function reconnectDrive() {
   if (!(window.DriveSync && DriveSync.configured())) { alert("Google Drive n'est pas configuré (identifiant client manquant dans config.js)."); return; }
   const p = DriveSync.reconnect();
   p.then((remote) => {
-    if (remote === null && DriveSync.needsAuth() === false && !DriveSync.isConnected()) return; // redirection en cours
+    if (remote === null && DriveSync.redirecting && DriveSync.redirecting()) return; // redirection en cours
     applyRemote(remote);
     renderDriveBar(); render(); loadMails(); loadCalendar(true);
     toast("Google Drive reconnecté ✓");
@@ -5296,7 +5296,7 @@ async function connectDrive() {
 function fmtK(v) { const a = Math.abs(v); if (a >= 1000) return (v / 1000).toFixed(a >= 10000 ? 0 : 1).replace(".", ",") + "k"; return Math.round(v) + ""; }
 function svgLineChart(series, opts) {
   opts = opts || {}; const w = opts.w || 560, h = opts.h || 170, pad = { l: 46, r: 14, t: 12, b: 24 }, color = opts.color || "#18c1d8";
-  if (series.length < 2) return '<div class="muted" style="font-size:12px">Pas assez de données.</div>';
+  if (series.length < 2) return '<div class="muted" style="font-size:14px">Pas assez de données.</div>';
   const xs = series.map((p) => p.x), ys = series.map((p) => p.y);
   const minX = Math.min(...xs), maxX = Math.max(...xs);
   let minY = Math.min(...ys, 0), maxY = Math.max(...ys, 0); if (minY === maxY) maxY = minY + 1;
@@ -5314,7 +5314,7 @@ function svgLineChart(series, opts) {
 }
 function svgBarChart(series, opts) {
   opts = opts || {}; const w = opts.w || 560, h = opts.h || 170, pad = { l: 46, r: 14, t: 12, b: 26 }, color = opts.color || "#4dc8bb";
-  if (!series.length) return '<div class="muted" style="font-size:12px">Pas de données.</div>';
+  if (!series.length) return '<div class="muted" style="font-size:14px">Pas de données.</div>';
   const ys = series.map((s) => s.value);
   let minY = Math.min(...ys, 0), maxY = Math.max(...ys, 0); if (minY === maxY) maxY = minY + 1;
   const n = series.length, bw = (w - pad.l - pad.r) / n;
@@ -5481,15 +5481,50 @@ if (window.DriveSync && DriveSync.onSynced) DriveSync.onSynced((content) => setS
 // Appareil laissé ouvert : on relit Drive toutes les deux minutes et au retour
 // au premier plan, pour reprendre ce que les autres appareils ont écrit.
 // Jamais pendant une saisie (le rendu remplacerait le champ en cours).
-const PULL_EVERY = 2 * 60000;
+// Relecture fréquente quand l'app est à l'écran (façon Google Docs : ce qu'on
+// fait sur le téléphone apparaît sur le Mac en quelques secondes), plus espacée
+// quand elle est en arrière-plan. Une relecture ne coûte qu'un appel de
+// métadonnées tant que rien n'a changé.
+const PULL_VISIBLE = 20000, PULL_HIDDEN = 2 * 60000;
+let lastPull = 0;
 async function pullRemote() {
   if (!(window.DriveSync && DriveSync.refresh && DriveSync.isConnected())) return;
   const ae = document.activeElement;
   if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || "")) return;
+  lastPull = Date.now();
   try { await DriveSync.refresh(state); } catch (e) {}
 }
-setInterval(pullRemote, PULL_EVERY);
+setInterval(() => {
+  const every = document.visibilityState === "hidden" ? PULL_HIDDEN : PULL_VISIBLE;
+  if (Date.now() - lastPull >= every - 500) pullRemote();
+}, PULL_VISIBLE);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pullRemote(); });
+
+// Renouvellement invisible du jeton Google (Safari, iPhone) : la page se
+// recharge le temps d'un aller-retour chez Google. On ne le fait qu'à un moment
+// calme — rien en cours de saisie, aucune fenêtre ouverte, pas de geste depuis
+// 20 s — ou quand l'app est en arrière-plan ; et on revient sur le même écran.
+const VIEW_KEY = "op01_view";
+let lastActivity = Date.now();
+["pointerdown", "keydown", "touchstart"].forEach((ev) => document.addEventListener(ev, () => { lastActivity = Date.now(); }, { capture: true, passive: true }));
+if (window.DriveSync && DriveSync.setSilentGate) DriveSync.setSilentGate(() => {
+  if (document.visibilityState === "hidden") return true;
+  if (document.getElementById("modalOverlay")) return false;
+  const ae = document.activeElement;
+  if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || "")) return false;
+  return Date.now() - lastActivity > 20000;
+});
+if (window.DriveSync && DriveSync.onBeforeRedirect) DriveSync.onBeforeRedirect(() => {
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify({ view, t: Date.now() })); } catch (e) {}
+});
+(function restoreViewAfterRedirect() {
+  if (!(window.DriveSync && DriveSync.cameBack && DriveSync.cameBack())) return;
+  try {
+    const j = JSON.parse(localStorage.getItem(VIEW_KEY) || "null");
+    localStorage.removeItem(VIEW_KEY);
+    if (j && j.view && Date.now() - (j.t || 0) < 10 * 60000 && SECTIONS.some((s) => s.id === j.view.section)) { view = j.view; render(); }
+  } catch (e) {}
+})();
 if (window.DriveSync) DriveSync.onStatus((s) => {
   const el = document.getElementById("driveStatus");
   if (el) el.textContent = s;
