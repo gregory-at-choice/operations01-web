@@ -557,3 +557,21 @@ label.field.inline-check > span { margin-bottom: 0; }
 .sheet-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .sheet-foot span { flex: 1; }
 .tab-more.active { color: var(--primary); }
+
+/* Assistant vocal */
+.voice-fab { position: fixed; right: 82px; bottom: calc(78px + env(safe-area-inset-bottom, 0px)); width: 54px; height: 54px; border-radius: 50%; z-index: 20; justify-content: center; padding: 0; box-shadow: 0 6px 18px rgba(0,0,0,.18); background: var(--card); color: var(--primary); border: 1px solid var(--line); }
+.voice-fab .i { width: 24px; height: 24px; }
+@media (min-width: 721px) { .voice-fab { bottom: 28px; right: 88px; } }
+.voice-body { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
+.voice-mic { align-self: center; width: 76px; height: 76px; border-radius: 50%; border: none; cursor: pointer; background: var(--primary); color: #fff; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 8px 22px rgba(24,193,216,.35); transition: transform .15s ease; }
+.voice-mic .i { width: 34px; height: 34px; }
+.voice-mic:active { transform: scale(.96); }
+.voice-mic.listening { animation: micpulse 1.2s infinite; background: #d23c3c; box-shadow: 0 0 0 0 rgba(210,60,60,.5); }
+@keyframes micpulse { 0% { box-shadow: 0 0 0 0 rgba(210,60,60,.5); } 70% { box-shadow: 0 0 0 16px rgba(210,60,60,0); } 100% { box-shadow: 0 0 0 0 rgba(210,60,60,0); } }
+.voice-transcript { min-height: 22px; text-align: center; font-style: italic; color: var(--muted); }
+.voice-transcript:not(:empty)::before { content: "« "; } .voice-transcript:not(:empty)::after { content: " »"; }
+.voice-reply { background: var(--bg); border-radius: 12px; padding: 10px 14px; font-size: 15px; line-height: 1.45; }
+.voice-reply:empty { display: none; }
+.voice-reply p { margin: 0 0 6px; } .voice-reply ol { margin: 0; padding-left: 20px; } .voice-reply li { margin: 3px 0; }
+.voice-suggest .chip { font-size: 12px; white-space: normal; text-align: left; }
+#voiceInput { flex: 1; }

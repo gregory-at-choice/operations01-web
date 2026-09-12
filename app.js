@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v79";
+const APP_VERSION = "v80";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -250,6 +250,7 @@ const ICONS = {
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
+  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10a7 7 0 0 1-14 0"/><path d="M12 17v5M8 22h8"/>',
   "panel-open": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
   "panel-close": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
   sparkles: '<path d="m12 3 1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3Z"/>'
@@ -5817,4 +5818,214 @@ if (window.DriveSync) DriveSync.onStatus((s) => {
     if (generateRecurrences() > 0) save();
     renderDriveBar(); render(); loadMails(); loadCalendar(true);
   }).catch(() => { renderDriveBar(); });
+})();
+
+// ----------------------------- Assistant vocal (niveau 1 : sans réseau, sans IA) -----------------------------
+// Bouton micro → reconnaissance vocale du navigateur → moteur de réponses sur les données
+// de l'app (agenda, brief, tâches, temps, trésorerie) → réponse affichée et lue à voix haute.
+// Tout est local : aucun serveur, aucun coût.
+let voiceClock = () => new Date();          // remplaçable dans les tests
+const VOICE_SPEAK_KEY = "op01_voice_speak";
+let voiceSpeak = (() => { try { return localStorage.getItem(VOICE_SPEAK_KEY) !== "0"; } catch (e) { return true; } })();
+const voiceNorm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[’']/g, " ").replace(/\s+/g, " ").trim();
+const voiceHour = (hhmm) => { if (!hhmm) return ""; const [h, m] = hhmm.split(":"); return `${Number(h)} h${m && m !== "00" ? " " + m : ""}`; };
+const voiceEuros = (v) => `${Math.round(v).toLocaleString("fr-FR")} €`;
+function voiceMinutes(q) {
+  let m;
+  if (/demi[- ]heure/.test(q)) return 30;
+  if (/quart d heure/.test(q)) return 15;
+  if (/trois quarts d heure/.test(q)) return 45;
+  if ((m = q.match(/(\d+)\s*h(?:eures?)?\s*(\d+)?/))) return Number(m[1]) * 60 + (Number(m[2]) || 0);
+  if (/\b(une|1) heure\b/.test(q)) return 60;
+  if (/\bdeux heures\b/.test(q)) return 120;
+  if ((m = q.match(/(\d+)\s*(min|minutes?)\b/))) return Number(m[1]);
+  return null;
+}
+// Agenda d'un jour : rendez-vous saisis + agenda Google, triés par heure.
+function voiceAgenda(dateISO) {
+  const items = state.rendezvous.filter((r) => r.date === dateISO).map((r) => ({ time: r.time || "", title: r.title || "Rendez-vous", who: r.withName || contactNameById(r.contactId) || "" }))
+    .concat((calendar.events || []).filter((e) => e.date === dateISO).map((e) => ({ time: e.allDay ? "" : (e.time || ""), title: e.title, who: "" })));
+  const seen = new Set();
+  return items.filter((x) => { const k = x.time + "|" + voiceNorm(x.title); if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => (a.time || "00:00").localeCompare(b.time || "00:00"));
+}
+function voiceNextEvent() {
+  const now = voiceClock(), today = localISO(now), hhmm = now.toTimeString().slice(0, 5);
+  return voiceAgenda(today).find((x) => x.time && x.time > hhmm) || null;
+}
+const voiceTaskEstim = (t) => t.estimationMin || (estimationOf(t.id) && estimationOf(t.id).assistantMin) || 0;
+const voiceTaskLabel = (t) => t.title + (t.missionId && findMission(t.missionId) ? " · " + (findMission(t.missionId).title || "") : "");
+// Éléments à faire, par ordre de priorité : le brief du matin s'il existe, sinon retards, échéances du jour, messages urgents.
+function voicePriorities() {
+  const b = briefOf(), today = localISO(voiceClock()), out = [];
+  if (b && Array.isArray(b.elements)) {
+    b.elements.forEach((el) => {
+      if (briefElementState(el).done) return;
+      const p = briefLabelParts(el);
+      const label = p.action ? `${p.action} ${p.qui} — ${p.sujet}` : p.parent ? `${p.parent}, étape ${p.step} sur ${p.steps} : ${p.sujet}` : p.sujet;
+      out.push({ label, min: Number(el.estimationMin) || 0, kind: el.type, id: el.id });
+    });
+  }
+  if (!out.length) {
+    state.tasks.filter((t) => !taskDone(t) && t.dueDate && t.dueDate < today).sort((a, b) => a.dueDate.localeCompare(b.dueDate)).forEach((t) => out.push({ label: voiceTaskLabel(t) + " (en retard)", min: voiceTaskEstim(t), kind: "task", id: t.id }));
+    state.tasks.filter((t) => !taskDone(t) && t.dueDate === today).forEach((t) => out.push({ label: voiceTaskLabel(t), min: voiceTaskEstim(t), kind: "task", id: t.id }));
+    eventsNew().filter((e) => (Number(e.urgence) || 4) <= 2).forEach((e) => out.push({ label: `${EVENT_ACTION_VERB[e.action] || "Traiter"} ${(e.expediteur && e.expediteur.nom) || ""} — ${e.sujet || ""}`, min: 0, kind: "evenement", id: e.id }));
+  }
+  return out;
+}
+const EVENT_ACTION_VERB = { repondre: "Répondre à", planifier: "Planifier avec", lire: "Lire :", deleguer: "Déléguer à", archiver: "Archiver :" };
+// Ce qui tient dans N minutes : éléments prioritaires estimés, puis tâches estimées, en gardant l'ordre.
+function voiceFitIn(minutes) {
+  const seen = new Set(), pool = [];
+  voicePriorities().forEach((x) => { if (x.min > 0) { pool.push(x); seen.add(x.id); } });
+  state.tasks.filter((t) => !taskDone(t) && !seen.has(t.id) && voiceTaskEstim(t) > 0)
+    .sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999"))
+    .forEach((t) => pool.push({ label: voiceTaskLabel(t), min: voiceTaskEstim(t), kind: "task", id: t.id }));
+  const chosen = []; let left = minutes;
+  pool.forEach((x) => { if (chosen.length < 5 && x.min <= left) { chosen.push(x); left -= x.min; } });
+  return chosen;
+}
+function voiceList(intro, items, fmt) {
+  const lines = items.map(fmt);
+  return { text: intro + (lines.length ? " " + lines.map((l, i) => `${i + 1}. ${l}`).join(". ") + "." : ""),
+    html: `<p>${esc(intro)}</p>` + (lines.length ? `<ol>${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ol>` : "") };
+}
+const VOICE_HELP = ["Qu'est-ce que j'ai dans mon agenda aujourd'hui ?", "Qu'est-ce que je dois faire en priorité ?", "J'ai 30 minutes avant mon prochain call, que puis-je faire ?", "Qu'est-ce qui est en retard ?", "Combien de messages à traiter ?", "Combien d'heures cette semaine ?", "Où en est la trésorerie ?"];
+function voiceAnswer(question) {
+  const q = voiceNorm(question);
+  const now = voiceClock(), today = localISO(now);
+  if (!q) return { text: "Je t'écoute.", html: "<p>Je t'écoute.</p>" };
+  // Créneau : « j'ai 30 minutes », « une demi-heure avant mon prochain call »
+  let minutes = voiceMinutes(q);
+  const nextRef = /prochain (call|rendez[- ]?vous|rdv|reunion|point|appel)/.test(q);
+  const wantsSlot = /j ai|avant|que puis|qu est ce que je peux|faire|avancer|creneau|libre/.test(q);
+  if (minutes == null && nextRef && wantsSlot) {
+    const nx = voiceNextEvent();
+    if (nx) { const [h, m] = nx.time.split(":").map(Number); minutes = Math.max(0, h * 60 + m - (now.getHours() * 60 + now.getMinutes())); }
+  }
+  if (minutes != null && wantsSlot) {
+    const nx = nextRef ? voiceNextEvent() : null;
+    const items = voiceFitIn(minutes);
+    const intro = `Avec ${fmtEstim(minutes) || "0 min"}${nx ? ` avant « ${nx.title} » à ${voiceHour(nx.time)}` : ""}, tu peux :`;
+    if (!items.length) {
+      const pr = voicePriorities().slice(0, 3);
+      return voiceList(`Aucune tâche estimée ne tient dans ${fmtEstim(minutes) || "ce créneau"}. Les priorités du moment :`, pr, (x) => x.label);
+    }
+    const total = items.reduce((t, x) => t + x.min, 0);
+    const r = voiceList(intro, items, (x) => `${x.label} (${fmtEstim(x.min)})`);
+    r.text += ` Soit ${fmtEstim(total)} au total.`; r.html += `<p class="muted">Soit ${esc(fmtEstim(total))} au total.</p>`;
+    return r;
+  }
+  if (nextRef) {
+    const nx = voiceNextEvent();
+    return nx ? { text: `Ton prochain rendez-vous : ${nx.title} à ${voiceHour(nx.time)}.`, html: `<p>Prochain rendez-vous : <strong>${esc(nx.title)}</strong> à ${esc(voiceHour(nx.time))}.</p>` }
+      : { text: "Plus de rendez-vous aujourd'hui.", html: "<p>Plus de rendez-vous aujourd'hui.</p>" };
+  }
+  if (/agenda|rendez[- ]?vous|rdv|reunion|calendrier|journee|programme/.test(q)) {
+    const tomorrow = /demain/.test(q);
+    const d = tomorrow ? localISO(new Date(now.getTime() + 86400000)) : today;
+    const items = voiceAgenda(d);
+    const when = tomorrow ? "Demain" : "Aujourd'hui";
+    if (!items.length) return { text: `${when}, rien dans ton agenda.`, html: `<p>${when}, rien dans ton agenda.</p>` };
+    return voiceList(`${when}, ${items.length} rendez-vous :`, items, (x) => `${x.time ? "à " + voiceHour(x.time) + ", " : ""}${x.title}${x.who ? " avec " + x.who : ""}`);
+  }
+  if (/retard/.test(q)) {
+    const late = state.tasks.filter((t) => !taskDone(t) && t.dueDate && t.dueDate < today).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    if (!late.length) return { text: "Rien en retard. Bravo.", html: "<p>Rien en retard. Bravo.</p>" };
+    return voiceList(`${late.length} tâche${late.length > 1 ? "s" : ""} en retard. Les plus anciennes :`, late.slice(0, 5), (t) => `${voiceTaskLabel(t)}, prévue le ${fmtDate(t.dueDate)}`);
+  }
+  if (/a traiter|message|mail|courrier|boite/.test(q)) {
+    const evs = eventsNew().slice().sort((a, b) => (Number(a.urgence) || 4) - (Number(b.urgence) || 4));
+    if (!evs.length) return { text: "Aucun message à traiter.", html: "<p>Aucun message à traiter.</p>" };
+    return voiceList(`${evs.length} message${evs.length > 1 ? "s" : ""} à traiter. Les plus urgents :`, evs.slice(0, 5), (e) => `${EVENT_ACTION_VERB[e.action] || "Traiter"} ${(e.expediteur && e.expediteur.nom) || ""} — ${e.sujet || ""}`);
+  }
+  if (/priorit|d abord|en premier|commenc|urgent|dois[- ]je faire|quoi faire|je fais quoi|to ?do|liste du jour|brief|a faire/.test(q)) {
+    const pr = voicePriorities();
+    if (!pr.length) return { text: "Rien de prioritaire : ni brief, ni retard, ni échéance aujourd'hui.", html: "<p>Rien de prioritaire : ni brief, ni retard, ni échéance aujourd'hui.</p>" };
+    return voiceList(`${pr.length} chose${pr.length > 1 ? "s" : ""} à faire. Dans l'ordre :`, pr.slice(0, 5), (x) => x.label + (x.min ? ` (${fmtEstim(x.min)})` : ""));
+  }
+  if (/temps|travaill|heures|chrono/.test(q)) {
+    const secs = weekWorkedSeconds(), running = state.missions.filter(missionRunning).map((m) => m.title || "un projet");
+    const t = `Cette semaine, ${secs > 0 ? fmtDurationShort(secs) : "aucun temps"} enregistré${secs > 0 ? "" : ""}.` + (running.length ? ` Un chronomètre tourne sur ${running.join(" et ")}.` : "");
+    return { text: t, html: `<p>${esc(t)}</p>` };
+  }
+  if (/tresorerie|solde|banque|compte|argent|cash/.test(q)) {
+    const ents = treasuryEntities();
+    if (!ents.length) return { text: "Aucune trésorerie renseignée.", html: "<p>Aucune trésorerie renseignée.</p>" };
+    return voiceList("Trésorerie :", ents, (c) => `${c.name || "Société"} : ${voiceEuros(companyBalance(c, now))}`);
+  }
+  if (/aide|que sais|que peux|comment|bonjour|salut/.test(q)) return voiceList("Tu peux me demander par exemple :", VOICE_HELP, (x) => x);
+  return voiceList("Je n'ai pas compris. Essaie par exemple :", VOICE_HELP.slice(0, 4), (x) => x);
+}
+// --- Voix : synthèse et reconnaissance du navigateur ---
+let voiceRec = null, voiceListening = false;
+function voiceSpeakText(text) {
+  if (!voiceSpeak || typeof speechSynthesis === "undefined" || typeof SpeechSynthesisUtterance === "undefined") return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(String(text).replace(/€/g, "euros").replace(/·/g, ","));
+    u.lang = "fr-FR"; u.rate = 1;
+    const voices = speechSynthesis.getVoices ? speechSynthesis.getVoices() : [];
+    const fr = voices.filter((v) => /^fr/i.test(v.lang));
+    const pick = fr.find((v) => /am[ée]lie|audrey|aur[ée]lie|thomas|marie/i.test(v.name)) || fr[0];
+    if (pick) u.voice = pick;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+const voiceRecognitionAvailable = () => typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+function voiceAsk(question) {
+  const a = voiceAnswer(question);
+  const t = document.getElementById("voiceTranscript"), r = document.getElementById("voiceReply");
+  if (t) t.textContent = question;
+  if (r) r.innerHTML = a.html;
+  voiceSpeakText(a.text);
+  return a;
+}
+function voiceStart() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const st = document.getElementById("voiceStatus"), mic = document.getElementById("voiceMic");
+  if (!SR) { if (st) st.textContent = "La dictée n'est pas disponible ici : écris ta question ci-dessous."; return; }
+  if (voiceListening && voiceRec) { try { voiceRec.stop(); } catch (e) {} return; }
+  try { if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel(); } catch (e) {}
+  const rec = new SR(); voiceRec = rec;
+  rec.lang = "fr-FR"; rec.interimResults = true; rec.maxAlternatives = 1; rec.continuous = false;
+  let finalText = "";
+  rec.onstart = () => { voiceListening = true; if (mic) mic.classList.add("listening"); if (st) st.textContent = "Je t'écoute…"; };
+  rec.onresult = (ev) => {
+    let interim = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++) { const r = ev.results[i]; if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript; }
+    const t = document.getElementById("voiceTranscript"); if (t) t.textContent = finalText || interim;
+  };
+  rec.onerror = (ev) => { if (st) st.textContent = ev.error === "not-allowed" ? "Micro refusé : autorise-le dans les réglages du navigateur, ou écris ta question." : "Je n'ai pas entendu. Réessaie, ou écris ta question."; };
+  rec.onend = () => {
+    voiceListening = false; if (mic) mic.classList.remove("listening");
+    if (finalText.trim()) { if (st) st.textContent = ""; voiceAsk(finalText.trim()); }
+    else if (st && !/refusé|entendu|disponible/.test(st.textContent)) st.textContent = "Appuie sur le micro et pose ta question.";
+  };
+  try { rec.start(); } catch (e) { if (st) st.textContent = "Impossible de démarrer le micro."; }
+}
+function openVoice(initialQuestion) {
+  showModal(`<div class="modal-head"><img src="logo.png?v=${APP_VERSION.replace(/^v/, "")}" alt="choice" style="height:22px"/><span class="grow"></span>
+      <label class="inline-check" style="margin:0;font-size:13px"><input type="checkbox" id="voiceSpeakToggle" ${voiceSpeak ? "checked" : ""}/> <span>Lire à voix haute</span></label>
+      <button class="btn ghost small" data-modal-close>${icon("x")}</button></div>
+    <div class="voice-body">
+      <button class="voice-mic" id="voiceMic" title="Parler">${icon("mic")}</button>
+      <div class="muted" id="voiceStatus" style="font-size:13px;text-align:center">${voiceRecognitionAvailable() ? "Appuie sur le micro et pose ta question." : "La dictée n'est pas disponible ici : écris ta question ci-dessous."}</div>
+      <div class="voice-transcript" id="voiceTranscript"></div>
+      <div class="voice-reply" id="voiceReply"></div>
+      <form class="inline" id="voiceForm" style="gap:8px"><input id="voiceInput" placeholder="Ou écris ta question…" autocomplete="off"/><button class="btn small" type="submit">Envoyer</button></form>
+      <div class="chip-row voice-suggest">${VOICE_HELP.slice(0, 4).map((h) => `<button class="chip" data-voice-q="${esc(h)}">${esc(h)}</button>`).join("")}</div>
+    </div>`);
+  document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = () => { try { if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel(); if (voiceRec) voiceRec.abort(); } catch (e) {} closeModal(); });
+  const mic = document.getElementById("voiceMic"); if (mic) mic.onclick = voiceStart;
+  const tg = document.getElementById("voiceSpeakToggle"); if (tg) tg.onchange = () => { voiceSpeak = tg.checked; try { localStorage.setItem(VOICE_SPEAK_KEY, voiceSpeak ? "1" : "0"); } catch (e) {} if (!voiceSpeak && typeof speechSynthesis !== "undefined") speechSynthesis.cancel(); };
+  const form = document.getElementById("voiceForm"), input = document.getElementById("voiceInput");
+  if (form) form.onsubmit = (ev) => { ev.preventDefault(); const q = (input.value || "").trim(); if (q) { voiceAsk(q); input.value = ""; } };
+  document.querySelectorAll("[data-voice-q]").forEach((b) => b.onclick = () => voiceAsk(b.dataset.voiceQ));
+  if (initialQuestion) voiceAsk(initialQuestion);
+  else if (voiceRecognitionAvailable() && !initialQuestion) voiceStart();
+}
+(function wireVoiceFab() {
+  const b = document.getElementById("voiceFab"); if (!b) return;
+  b.innerHTML = icon("mic"); b.onclick = () => openVoice();
 })();
