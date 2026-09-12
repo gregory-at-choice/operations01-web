@@ -50,7 +50,7 @@ body {
 .app.rail .sidebar { width: 64px; padding: 14px 8px; position: absolute; top: 0; bottom: 0; left: 0; z-index: 40; }
 .app.rail .content { grid-column: 2; }
 .app.rail .sidebar:hover, .app.rail .sidebar:focus-within { width: 268px; padding: 16px 10px; box-shadow: 8px 0 28px rgba(0,0,0,.12); }
-.app.rail .sidebar:not(:hover):not(:focus-within) .brand-name,
+.app.rail .sidebar:not(:hover):not(:focus-within) .brand-logo,
 .app.rail .sidebar:not(:hover):not(:focus-within) .nav-lbl,
 .app.rail .sidebar:not(:hover):not(:focus-within) .notif-bell,
 .app.rail .sidebar:not(:hover):not(:focus-within) .drivebar { display: none; }
@@ -63,12 +63,12 @@ body {
 .side-toggle { width: 30px; height: 30px; border-radius: 8px; border: none; background: none; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 .side-toggle:hover { background: rgba(24,193,216,.1); color: var(--primary); }
 .side-toggle .i { width: 18px; height: 18px; }
-.app.rail .sidebar:not(:hover):not(:focus-within) .brand .dot { display: none; }
-.brand { display:flex; align-items:center; gap:8px; padding: 6px 6px 14px 10px; font-weight: 700; font-size: 18px; }
-/* Le nom se tronque avant que les boutons (cloche, replier) ne débordent. */
-.brand .brand-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app.rail .sidebar:not(:hover):not(:focus-within) .brand-mark { display: block; margin: 0 auto 6px; }
+.brand { display:flex; align-items:center; gap:8px; padding: 8px 6px 14px 10px; }
+/* Logo « choice » : mot-image dépliée, marque « c » seule quand la barre est repliée. */
+.brand .brand-logo { height: 30px; width: auto; max-width: 160px; flex: 1 1 auto; object-fit: contain; object-position: left center; }
+.brand .brand-mark { display: none; width: 28px; height: 28px; object-fit: contain; }
 .brand .notif-bell, .brand .side-toggle { flex: 0 0 auto; }
-.brand .dot { width: 26px; height: 26px; border-radius: 8px; background: linear-gradient(135deg, var(--primary), var(--activity)); }
 .nav-item {
   display: flex; align-items: center; gap: 11px; padding: 8px 12px; border-radius: 9px;
   cursor: pointer; color: var(--text); font-size: 15px; font-weight: 500; border: none; background: none; text-align: left; width: 100%;

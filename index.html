@@ -4,17 +4,17 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#18c1d8" />
-  <title>Operations01</title>
+  <title>choice</title>
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="icon" href="icon.svg" />
-  <link rel="apple-touch-icon" href="icon.svg" />
-  <link rel="stylesheet" href="vendor/fonts/ubuntu.css?v=78" />
-  <link rel="stylesheet" href="styles.css?v=78" />
+  <link rel="icon" type="image/png" href="icon-64.png?v=79" />
+  <link rel="apple-touch-icon" href="icon-180.png?v=79" />
+  <link rel="stylesheet" href="vendor/fonts/ubuntu.css?v=79" />
+  <link rel="stylesheet" href="styles.css?v=79" />
 </head>
 <body>
   <div class="app">
     <aside class="sidebar" id="sidebar">
-      <div class="brand"><span class="dot"></span> <span class="grow brand-name">Operations01</span><button id="notifBell" class="notif-bell" title="Notifications"></button><button id="sideToggle" class="side-toggle" title="Replier le menu"></button></div>
+      <div class="brand"><img class="brand-logo grow" src="logo.png?v=79" alt="choice" /><img class="brand-mark" src="logo-mark.png?v=79" alt="choice" /><button id="notifBell" class="notif-bell" title="Notifications"></button><button id="sideToggle" class="side-toggle" title="Replier le menu"></button></div>
       <!-- éléments de navigation injectés par app.js -->
       <div class="drivebar" id="driveBar"></div>
     </aside>
@@ -27,7 +27,7 @@
 
   <div class="install-banner" id="installBanner">
     <div class="grow">
-      <strong>Installer Operations01</strong>
+      <strong>Installer choice</strong>
       <div class="muted" style="font-size:13px">Ajoutez l'app à votre écran d'accueil / bureau.</div>
     </div>
     <button class="btn small" id="installBtn">Installer</button>
@@ -35,9 +35,9 @@
   </div>
 
   <script src="https://accounts.google.com/gsi/client" async></script>
-  <script src="config.js?v=78"></script>
-  <script src="drive.js?v=78"></script>
-  <script src="app.js?v=78"></script>
+  <script src="config.js?v=79"></script>
+  <script src="drive.js?v=79"></script>
+  <script src="app.js?v=79"></script>
   <script>
     // Enregistrement du service worker (hors ligne + installation)
     if ("serviceWorker" in navigator) {

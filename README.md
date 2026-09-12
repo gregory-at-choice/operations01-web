@@ -1,4 +1,4 @@
-# Operations01 — Web App (PWA)
+# choice — web app (PWA) de pilotage : projets, tâches, temps, finances, courrier. (Anciennement Operations01 ; les fichiers Drive et les scripts gardent ce nom.)
 
 Version web installable d'Operations01. Application **web** autonome : les données sont
 stockées **localement dans le navigateur** (fonctionne hors ligne, aucune installation de

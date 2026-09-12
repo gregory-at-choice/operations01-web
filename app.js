@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v78";
+const APP_VERSION = "v79";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -854,7 +854,7 @@ function printCurrentDoc() {
   if (txt == null) { toast("Document pas encore chargé — ouvre-le d'abord."); return; }
   const fontCss = (MD_FONTS.find((f) => f.code === reader.font) || MD_FONTS[0]).css;
   const nom = String(d.name || "Document").replace(/\.(md|markdown|txt)$/i, "");
-  printReport("Operations01 - " + nom, nom,
+  printReport("choice - " + nom, nom,
     `<div class="md-doc md-print" style="font-family:${fontCss}">${mdToHtml(txt)}</div>`);
 }
 // ----------------------------- Lecteur PDF -----------------------------
@@ -4192,7 +4192,7 @@ function calNotice(quiet) {
     <div style="margin-top:10px">${btn}</div></div>`;
   if (err.code === "off") {
     return box("Relier ton agenda Google",
-      "Operations01 peut afficher ici les événements de ton agenda Google, <strong>en lecture seule</strong> : rien n'y sera jamais modifié. Tu peux délier l'agenda à tout moment.",
+      "choice peut afficher ici les événements de ton agenda Google, <strong>en lecture seule</strong> : rien n'y sera jamais modifié. Tu peux délier l'agenda à tout moment.",
       '<button class="btn small" data-cal-enable>Relier mon agenda Google</button>');
   }
   if (err.code === "scope") {
@@ -4282,7 +4282,7 @@ function renderCalEventDetail(eid) {
     ${e.notes ? `<div class="section-h">Description</div><div class="card"><div class="cal-notes">${esc(e.notes)}</div></div>` : ""}
     <div class="section-h">Participants <span class="muted">(${people.length}${toFind ? ` · ${toFind} à trouver` : ""})</span></div>
     <div class="list">${guests}</div>
-    <div style="margin-top:18px"><button class="btn secondary small" data-cal-import="${esc(e.id)}">+ Créer un rendez-vous Operations01 à partir de cet événement</button></div>`;
+    <div style="margin-top:18px"><button class="btn secondary small" data-cal-import="${esc(e.id)}">+ Créer un rendez-vous dans choice à partir de cet événement</button></div>`;
 }
 function calStatusLabel(s) {
   return s === "accepted" ? "a accepté" : s === "declined" ? "a décliné" : s === "tentative" ? "peut-être" : "sans réponse";
@@ -4762,10 +4762,10 @@ function wire() {
 
   // exports PDF / CSV
   const onclick = (sel, fn) => c.querySelectorAll(sel).forEach((b) => b.onclick = fn);
-  onclick("[data-export-cdr]", () => printReport("Operations01 - Compte de resultat", "Compte de résultat", reportCDR()));
-  onclick("[data-export-treso]", () => printReport("Operations01 - Tresorerie", "Trésorerie", reportTresorerie()));
-  onclick("[data-export-dashboard]", () => printReport("Operations01 - Tableau de bord", "Tableau de bord", reportDashboard()));
-  onclick("[data-export-temps-pdf]", () => printReport("Operations01 - Suivi du temps", "Suivi du temps (semaine)", reportTemps()));
+  onclick("[data-export-cdr]", () => printReport("choice - Compte de resultat", "Compte de résultat", reportCDR()));
+  onclick("[data-export-treso]", () => printReport("choice - Tresorerie", "Trésorerie", reportTresorerie()));
+  onclick("[data-export-dashboard]", () => printReport("choice - Tableau de bord", "Tableau de bord", reportDashboard()));
+  onclick("[data-export-temps-pdf]", () => printReport("choice - Suivi du temps", "Suivi du temps (semaine)", reportTemps()));
   onclick("[data-export-temps-csv]", exportTempsCSV);
   // Temps : bascule semaine/mois et navigation dans les périodes
   c.querySelectorAll("[data-ttab]").forEach((b) => b.onclick = () => { timeTab = b.dataset.ttab; render(); });
@@ -5613,7 +5613,7 @@ function reportHeader(subtitle) {
   const d = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
   return `<div class="rep-head"><div>${LOGO_SVG}</div>
     <div style="flex:1"></div>
-    <div style="text-align:right"><div class="rep-title">${esc(subtitle)}</div><div class="rep-date">Édité le ${d} · Operations01</div></div></div>`;
+    <div style="text-align:right"><div class="rep-title">${esc(subtitle)}</div><div class="rep-date">Édité le ${d} · choice</div></div></div>`;
 }
 function printReport(fileTitle, subtitle, bodyHtml) {
   let pa = document.getElementById("printArea");

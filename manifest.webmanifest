@@ -1,7 +1,7 @@
 {
-  "name": "Operations01",
-  "short_name": "Operations01",
-  "description": "Pilotage de groupe — missions, historique, temps.",
+  "name": "choice",
+  "short_name": "choice",
+  "description": "choice — ton assistant : projets, tâches, temps, finances, courrier.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",
@@ -9,7 +9,8 @@
   "theme_color": "#18c1d8",
   "lang": "fr",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
