@@ -479,6 +479,19 @@
     const copy = Object.assign({}, data); delete copy._fileId;
     return updateFile(id, JSON.stringify(copy));
   }
+  // Banque : relevés et factures lus sur le Drive par le script « Operations01 banque ».
+  // Fichier créé par l'app (vide) ; le script le remplit à chaque passage.
+  const BANQUE_FILE = "operations01-banque.json";
+  const EMPTY_BANQUE = () => JSON.stringify({ updatedAt: 0, version: 0, releves: [], factures: [], erreurs: [] });
+  async function readBanque() {
+    if (!accessToken) return null;
+    const f = await findByName(BANQUE_FILE);
+    if (!f) {
+      try { await createNamed(BANQUE_FILE, EMPTY_BANQUE()); } catch (e) {}
+      return { updatedAt: 0, version: 0, releves: [], factures: [], erreurs: [], _fresh: true };
+    }
+    try { const j = JSON.parse(await download(f.id)); j._fileId = f.id; j._modifiedTime = f.modifiedTime; return j; } catch (e) { return null; }
+  }
 
   // ---- Agenda Google (lecture seule) -------------------------------------
   // Les occurrences des séries sont dépliées (singleEvents) pour que chaque
@@ -869,6 +882,7 @@
     fileModifiedTime,
     readAssistant,
     writeAssistant,
+    readBanque,
     listEvents,
     listCalendars,
     calendarGranted: calGranted,

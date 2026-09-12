@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v77";
+const APP_VERSION = "v78";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, bankRules: [], bankMap: {}, bankSkip: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -86,9 +86,9 @@ function adoptRemote(remote, why) {
 // distant qui ne fait que « revenir en arrière » (vieille copie poussée par un
 // appareil resté fermé) est reconnu à ses dates et ne fait rien perdre.
 const BASE_KEY = "operations01_base";
-const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs"];
+const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules"];
 const SYNC_NESTED = { missions: "entries" };
-const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps"];
+const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "bankMap", "bankSkip"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
 let syncBase = (() => { try { const r = localStorage.getItem(BASE_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } })();
 function setSyncBase(obj) {
@@ -2751,12 +2751,12 @@ function renderCompanyDetail(id) {
 let financeTab = "factures";
 function renderFinances() {
   if (view.detailId) return renderInvoiceDetail(view.detailId);
-  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"], ["cca", "Compte courant d'associé"], ["salaires", "Salaires"], ["categories", "Catégories"], ["recurrences", "Récurrences"], ["import", "Import bancaire"]]
+  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"], ["cca", "Compte courant d'associé"], ["salaires", "Salaires"], ["categories", "Catégories"], ["recurrences", "Récurrences"], ["banque", "Banque"]]
     .map(([id, lbl]) => `<button class="chip ${financeTab === id ? "active" : ""}" data-ftab="${id}">${lbl}</button>`).join("");
   let body = "";
   if (financeTab === "factures") body = financeFactures();
   else if (financeTab === "cdr") body = financeCDR();
-  else if (financeTab === "import") body = financeImport();
+  else if (financeTab === "banque" || financeTab === "import") body = financeBanque();
   else if (financeTab === "categories") body = financeCategories();
   else if (financeTab === "recurrences") body = financeRecurrences();
   else if (financeTab === "cca") body = financeCCA();
@@ -3061,7 +3061,7 @@ function financeImport() {
         <div class="inline" style="margin-top:10px;font-size:14px"><span class="grow muted">Crédits ${euros(credit)} · Débits ${euros(debit)}</span></div>
       </div>
       <div class="inline" style="margin-top:12px">
-        <button class="btn" data-bank-import>Importer les opérations cochées</button>
+        <button class="btn" data-bank-csv-import>Importer les opérations cochées</button>
         <button class="btn ghost small" data-bank-clear>Annuler</button></div>`;
   }
   return `<div class="card">
@@ -3091,6 +3091,277 @@ function doBankImport() {
   bankImport.rows = []; bankImport.fileName = "";
   alert(`Import terminé : ${added} opération(s) ajoutée(s)${skipped ? `, ${skipped} déjà présente(s) ignorée(s)` : ""}.`);
   financeTab = "factures"; render();
+}
+
+// ----------------------------- Banque (relevés et factures lus sur le Drive) -----------------------------
+// Le script Apps Script « Operations01 banque » (appsscript-banque.gs) lit les relevés SG et
+// les factures PDF déjà sur le Drive et remplit operations01-banque.json. Ici : import des
+// opérations en écritures, catégorisation par règles, rapprochement avec les factures, alertes.
+let banqueStore = null, banqueLoading = false, banqueError = "", banqueLoadedAt = 0;
+const banqueOpen = {};   // relevé (fileId) déplié
+const banqueVisible = () => view.section === "finances" && (financeTab === "banque" || financeTab === "import") && !view.detailId;
+async function loadBanque(force) {
+  if (!(window.DriveSync && DriveSync.readBanque && DriveSync.isConnected()) || banqueLoading) return;
+  if (!force && banqueStore && Date.now() - banqueLoadedAt < 60000) return;
+  banqueLoading = true; banqueLoadedAt = Date.now();
+  if (banqueVisible()) render();
+  try {
+    const d = await DriveSync.readBanque();
+    if (d) { banqueStore = d; banqueError = ""; } else banqueError = "Fichier illisible.";
+  } catch (e) { banqueError = e.message || "erreur"; }
+  banqueLoading = false;
+  if (banqueVisible()) render();
+}
+const banqueReleves = () => (banqueStore && banqueStore.releves) || [];
+const banqueFactures = () => (banqueStore && banqueStore.factures) || [];
+const banqueOps = () => banqueReleves().reduce((acc, r) => acc.concat((r.ops || []).map((o) => Object.assign({ _compte: r.compte, _titulaire: r.titulaire }, o))), []);
+const bankHaystack = (op) => ((op.nature || "") + " " + (op.detail || "")).toUpperCase();
+// Contrepartie : « DE: ENGIE ID: … » → ENGIE ; « POUR: SAS MAJ AND CO REF: … » → SAS MAJ AND CO.
+function bankCounterparty(op) {
+  const d = " " + (op.detail || "") + " ";
+  const m = /(?:POUR CPTE DE:|DE:|POUR:)\s*(.+?)\s+(?:ID:|REF:|REF |DATE:|MOTIF:|REMISE|CHEZ:|MANDAT|\d{2} \d{2} SG)/.exec(d) || /(?:POUR CPTE DE:|DE:|POUR:)\s*([^:]{2,40})$/.exec(d.trim());
+  return m ? m[1].trim() : "";
+}
+function bankOpLabel(op) {
+  const n = (op.nature || "").toUpperCase(), who = bankCounterparty(op);
+  if (/ECHEANCEPRET|ECHEANCE PRET/.test(n)) return "Échéance de prêt " + (n.match(/N°\s*(\d+)/) ? "n°" + n.match(/N°\s*(\d+)/)[1] : "").trim() + (/PGE/.test(bankHaystack(op)) ? " (garantie PGE)" : "");
+  if (/COTISATION/.test(n)) return "Cotisation bancaire Jazz Pro";
+  if (/FRAIS/.test(n)) return "Frais bancaires" + (/ETUDE/.test(n) ? " (frais d'étude)" : "");
+  if (/CION|COMMISSION/.test(n)) return "Commission de tenue de compte";
+  if (/PRELEVEMENT|PRLV/.test(n)) return "Prélèvement " + (who || n);
+  if (/VIR/.test(n) && /EMIS/.test(n)) return "Virement à " + (who || "?");
+  if (/VIR/.test(n)) return "Virement de " + (who || "?");
+  if (/CARTE|CB /.test(n)) return "Carte " + (who || (op.detail || "").slice(0, 40));
+  if (/REMISE|CHEQUE|CHQ/.test(n)) return "Remise " + (who || (op.detail || "").slice(0, 40));
+  return who ? who : (op.nature || "Opération");
+}
+// Règles par défaut (si aucune règle personnelle ne s'applique). `noReceipt` : le relevé
+// ou l'avis d'échéance suffit, aucune facture n'est attendue.
+const DEFAULT_BANK_RULES = [
+  { re: /ECHEANCEPRET|ECHEANCE PRET|PGE - PRIME/, cat: "Emprunts", nature: "charge", noReceipt: true },
+  { re: /COTISATION.*JAZZ|FRAIS|CIONS?TENUE|COMMISSION/, cat: "Frais bancaires", nature: "charge", noReceipt: true },
+  { re: /URSSAF/, cat: "Charges sociales", nature: "charge", noReceipt: true },
+  { re: /DGFIP.*TVA|TVA\d|MOTIF: TVA/, cat: "TVA", nature: "charge", noReceipt: true },
+  { re: /DGFIP|IMPOT|TRESOR PUBLIC/, cat: "Impôts et taxes", nature: "charge", noReceipt: true },
+  { re: /AG2R|MALAKOFF|HUMANIS|KLESIA|RETRAITE|PREVOYANCE/, cat: "Retraite et prévoyance", nature: "charge", noReceipt: true },
+  { re: /SOGECAP|SOGESSUR|ASSURANCE|AXA |ALLIANZ|MAIF|MACIF|GENERALI/, cat: "Assurances", nature: "charge", noReceipt: false },
+  { re: /BOUYGUES|ORANGE|SFR|FREE MOBILE|FREE TELECOM|OVH|GOOGLE|MICROSOFT|APPLE\.COM/, cat: "Télécom et informatique", nature: "charge", noReceipt: false },
+  { re: /ENGIE|EDF|TOTALENERGIES|GRDF|VEOLIA|SUEZ/, cat: "Énergie et fluides", nature: "charge", noReceipt: false },
+  { re: /AUTOROUTES|VINCI|SANEF|APRR|SNCF|UBER|AIR FRANCE|EASYJET|HOTEL/, cat: "Déplacements", nature: "charge", noReceipt: false },
+];
+const normName = (s) => String(s || "").toUpperCase().replace(/\b(SAS|SASU|SARL|EURL|SCI|SA|SNC)\b/g, "").replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+// Virement interne : la contrepartie est l'une de mes sociétés (titulaires des relevés ou sociétés du Groupe).
+function bankInternalFor(op) {
+  const who = normName(bankCounterparty(op)); if (!who) return false;
+  const mine = []
+    .concat(((banqueStore && banqueStore.comptes) || []).map((c) => normName(c.titulaire)))
+    .concat(state.companies.map((c) => normName(c.name)))
+    .filter((x) => x.length >= 3 && x !== normName(op._titulaire));
+  return mine.some((m) => who === m || who.indexOf(m) === 0 || m.indexOf(who) === 0);
+}
+function bankRuleFor(op) {
+  const hay = bankHaystack(op);
+  const own = [...state.bankRules].filter((r) => r.motif).sort((a, b) => b.motif.length - a.motif.length).find((r) => hay.indexOf(String(r.motif).toUpperCase()) > -1);
+  if (own) return { categoryName: own.categoryName || "", noReceipt: !!own.noReceipt, source: "règle" };
+  if (bankInternalFor(op)) return { categoryName: "Virements internes", noReceipt: true, source: "interne", nature: op.montant >= 0 ? "produit" : "charge" };
+  const d = DEFAULT_BANK_RULES.find((x) => x.re.test(hay));
+  if (d) return { categoryName: d.cat, noReceipt: d.noReceipt, source: "défaut", nature: d.nature };
+  return { categoryName: "", noReceipt: false, source: null };
+}
+function ensureCategory(name, nature) {
+  if (!name) return;
+  if (!state.categories.some((c) => c.name === name)) state.categories.push({ id: uid(), name, nature: nature || "charge" });
+}
+// Société rattachée à un compte : correspondance mémorisée, sinon devinée d'après le titulaire.
+function bankCompanyFor(compte, titulaire) {
+  const m = state.bankMap[compte]; if (m && state.companies.some((c) => c.id === m)) return m;
+  const t = normName(titulaire); if (!t) return null;
+  const c = state.companies.find((x) => { const n = normName(x.name); return n && (n === t || n.indexOf(t) === 0 || t.indexOf(n) === 0 || t.split(" ")[0] === n.split(" ")[0]); });
+  return c ? c.id : null;
+}
+const invoiceOfOp = (opId) => state.invoices.find((v) => v.bankOpId === opId);
+// Importe les opérations nouvelles d'un relevé (ni déjà importées, ni ignorées) en écritures payées.
+function importReleve(r) {
+  const cid = bankCompanyFor(r.compte, r.titulaire);
+  if (!cid) return { added: 0, error: "Indique d'abord à quelle société correspond le compte " + r.compte + "." };
+  if (!state.bankMap[r.compte]) state.bankMap[r.compte] = cid;
+  const acc = companyAccounts(cid)[0];
+  let added = 0;
+  (r.ops || []).forEach((op) => {
+    if (state.bankSkip[op.id] || invoiceOfOp(op.id)) return;
+    const full = Object.assign({ _compte: r.compte, _titulaire: r.titulaire }, op);
+    const rule = bankRuleFor(full);
+    if (rule.categoryName) ensureCategory(rule.categoryName, rule.nature || (op.montant >= 0 ? "produit" : "charge"));
+    state.invoices.push({ id: uid(), title: bankOpLabel(full), reference: "", direction: op.montant >= 0 ? "recette" : "depense", status: "payee",
+      amount: Math.abs(op.montant), vatRate: 0, startDate: op.date, hasDueDate: false, dueDate: "", paymentDate: op.date,
+      companyId: cid, contactId: null, categoryName: rule.categoryName, payMode: "compte", accountId: acc ? acc.id : null, associateId: null,
+      receiptUrl: "", noReceipt: !!rule.noReceipt, bankOpId: op.id, bankCompte: r.compte, bankDetail: (op.detail || "").slice(0, 200) });
+    added++;
+  });
+  if (added) save();
+  return { added, error: "" };
+}
+// Factures candidates pour une opération : même montant (obligatoire), date proche, nom du fournisseur dans le libellé.
+function factureCandidates(op) {
+  const amt = Math.abs(op.montant), hay = bankHaystack(op);
+  const used = new Set(state.invoices.map((v) => v.bankFactureId).filter(Boolean));
+  return banqueFactures().map((f) => {
+    if (used.has(f.fileId)) return null;
+    const amounts = [f.montant].concat(f.montants || []).filter((x) => x != null);
+    if (!amounts.some((x) => Math.abs(x - amt) < 0.011)) return null;
+    let score = f.montant != null && Math.abs(f.montant - amt) < 0.011 ? 3 : 2;
+    if (f.date && op.date) { const days = Math.abs((new Date(f.date) - new Date(op.date)) / 86400000); if (days <= 45) score += 1; else if (days > 200) score -= 1; }
+    const words = normName((f.fournisseur || "") + " " + (f.nom || "")).split(" ").filter((w) => w.length >= 4 && !/^(INVOICE|FACTURE|RECU|PDF|\d+)$/.test(w));
+    if (words.some((w) => hay.indexOf(w) > -1)) score += 2;
+    return { f, score };
+  }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 3);
+}
+function applyFacture(inv, f) { inv.receiptUrl = f.url; inv.bankFactureId = f.fileId; inv.noReceipt = false; save(); }
+// Factures du Drive dont aucun paiement n'est repéré (ni rapprochées, ni un montant identique parmi les opérations).
+function facturesSansPaiement() {
+  const used = new Set(state.invoices.map((v) => v.bankFactureId).filter(Boolean));
+  const urls = new Set(state.invoices.map((v) => v.receiptUrl).filter(Boolean));
+  const amounts = banqueOps().map((o) => Math.abs(o.montant));
+  return banqueFactures().filter((f) => f.montant != null && f.montant > 0 && !used.has(f.fileId) && !urls.has(f.url)
+    && !amounts.some((a) => Math.abs(a - f.montant) < 0.011));
+}
+// Règle personnelle créée quand Grégory classe une opération : la contrepartie devient le motif.
+function learnBankRule(op, categoryName) {
+  const motif = (bankCounterparty(op) || (op.nature || "").split(" ")[0] || "").toUpperCase().trim();
+  if (!motif || motif.length < 3) return null;
+  const ex = state.bankRules.find((r) => String(r.motif).toUpperCase() === motif);
+  if (ex) { ex.categoryName = categoryName; return ex; }
+  const r = { id: uid(), motif, categoryName, noReceipt: false, createdAt: Date.now() };
+  state.bankRules.push(r);
+  // Les autres écritures importées sans catégorie et de même contrepartie suivent.
+  banqueOps().forEach((o) => { const v = invoiceOfOp(o.id); if (v && !v.categoryName && bankHaystack(o).indexOf(motif) > -1) v.categoryName = categoryName; });
+  return r;
+}
+function financeBanque() {
+  if (!banqueStore && !banqueLoading && !banqueError) setTimeout(loadBanque, 0);
+  const connected = window.DriveSync && DriveSync.isConnected();
+  const st = banqueStore;
+  const releves = banqueReleves(), factures = banqueFactures();
+  const ops = banqueOps();
+  const imported = ops.map((o) => invoiceOfOp(o.id)).filter(Boolean);
+  const sansJustif = imported.filter(receiptMissing);
+  const sansPaiement = facturesSansPaiement();
+  const ecarts = releves.filter((r) => r.equilibre === false);
+  const erreurs = (st && st.erreurs) || [];
+  const nouvelles = ops.filter((o) => !invoiceOfOp(o.id) && !state.bankSkip[o.id]);
+  const when = st && st.parcouruLe ? fmtDateTimeISO(st.parcouruLe) : null;
+  let head = `<div class="card" style="margin-bottom:12px"><div class="inline" style="flex-wrap:wrap;gap:8px">
+      <div class="grow"><div style="font-weight:600">Relevés et factures lus sur le Drive</div>
+        <div class="muted" style="font-size:13px">${!connected ? "Connecte-toi à Google Drive pour activer cette rubrique."
+          : banqueLoading ? "Lecture en cours…"
+          : banqueError ? "Erreur : " + esc(banqueError)
+          : !st || st._fresh || (!releves.length && !factures.length && !when) ? "Le script « Operations01 banque » n'a encore rien déposé. Installe-le (voir README, « Banque »), puis exécute « parcourir »."
+          : `Dernier passage du script : ${esc(when)} · ${releves.length} relevé(s) · ${factures.length} facture(s)${st.restant ? ` · ${st.restant} fichier(s) encore à analyser (passage suivant)` : ""}${erreurs.length ? ` · ${erreurs.length} fichier(s) illisible(s)` : ""}`}</div></div>
+      <button class="btn secondary small" data-banque-refresh ${banqueLoading ? "disabled" : ""}>${icon("refresh")} Actualiser</button>
+      ${nouvelles.length ? `<button class="btn small" data-banque-import-all>Importer les ${nouvelles.length} nouvelles opérations</button>` : ""}
+    </div></div>`;
+  // Comptes → sociétés
+  const comptes = (st && st.comptes) || [];
+  const compOpts = (sel) => ['<option value="">— Société ? —</option>'].concat(state.companies.map((c) => `<option value="${c.id}" ${c.id === sel ? "selected" : ""}>${esc(c.name || "Sans nom")}</option>`)).join("");
+  const comptesHtml = comptes.length ? `<div class="section-h">${icon("building")} Comptes</div><div class="card" style="padding:8px 12px">${comptes.map((c) => `<div class="inline" style="padding:6px 0;gap:10px"><span class="grow"><strong>${esc(c.titulaire || "?")}</strong> <span class="muted">· n° ${esc(c.compte)}</span></span><select data-bank-map="${esc(c.compte)}" style="width:auto">${compOpts(bankCompanyFor(c.compte, c.titulaire) || "")}</select></div>`).join("")}</div>` : "";
+  // Alertes
+  const alerts = [];
+  if (sansJustif.length) alerts.push(`<button class="chip" data-banque-alert="justif">⚠️ ${sansJustif.length} opération(s) sans justificatif</button>`);
+  if (sansPaiement.length) alerts.push(`<span class="chip">📄 ${sansPaiement.length} facture(s) sans paiement repéré</span>`);
+  if (ecarts.length) alerts.push(`<span class="chip">⚠️ ${ecarts.length} relevé(s) dont le solde ne tombe pas juste</span>`);
+  if (erreurs.length) alerts.push(`<span class="chip" title="${esc(erreurs.map((e) => e.nom + " : " + e.erreur).join("\n"))}">⛔ ${erreurs.length} fichier(s) illisible(s)</span>`);
+  const alertsHtml = alerts.length ? `<div class="section-h">${icon("bell")} Alertes</div><div class="chip-row" style="margin-bottom:12px">${alerts.join("")}</div>` : "";
+  // Relevés
+  const catOpts = (sel) => ['<option value="">— Catégorie —</option>'].concat([...state.categories].sort((a, b) => (a.name || "").localeCompare(b.name || "", "fr")).map((c) => `<option value="${esc(c.name)}" ${c.name === sel ? "selected" : ""}>${esc(c.name)}</option>`)).join("");
+  const relevesHtml = releves.map((r) => {
+    const rops = r.ops || [];
+    const nImp = rops.filter((o) => invoiceOfOp(o.id)).length, nSkip = rops.filter((o) => state.bankSkip[o.id]).length, nNew = rops.length - nImp - nSkip;
+    const open = !!banqueOpen[r.fileId];
+    const title = `${r.au ? monthLabel(r.au.slice(0, 7)) : esc(r.nom)} — ${esc(r.titulaire || r.compte || "")}`;
+    const sub = `${rops.length} opération(s) · ${nImp} importée(s)${nNew ? ` · <strong>${nNew} nouvelle(s)</strong>` : ""}${nSkip ? ` · ${nSkip} ignorée(s)` : ""} · solde fin ${euros(r.soldeFin)}${r.equilibre === false ? ` · <span style="color:#d23c3c">écart ${euros(r.ecart)}</span>` : ""}`;
+    let body = "";
+    if (open) {
+      body = `<div style="overflow-x:auto;margin-top:8px"><table class="bank-table"><thead><tr><th>Date</th><th>Opération</th><th style="text-align:right">Montant</th><th>Catégorie</th><th>Justificatif</th></tr></thead><tbody>` + rops.map((o) => {
+        const full = Object.assign({ _compte: r.compte, _titulaire: r.titulaire }, o);
+        const inv = invoiceOfOp(o.id);
+        const skipped = !!state.bankSkip[o.id];
+        const label = `<div>${esc(bankOpLabel(full))}${o.doute ? ' <span title="Montant ou sens à vérifier" style="color:#d23c3c">?</span>' : ""}</div><div class="muted" style="font-size:12px;white-space:normal">${esc((o.detail || o.nature || "").slice(0, 110))}</div>`;
+        let cat = "", just = "";
+        if (inv) {
+          cat = `<select data-bank-cat="${inv.id}" style="width:auto;max-width:180px">${catOpts(inv.categoryName)}</select>`;
+          if (inv.receiptUrl) just = `<a class="btn ghost small" href="${esc(inv.receiptUrl)}" target="_blank" rel="noopener">📎 Ouvrir</a> <button class="btn ghost small" data-bank-unmatch="${inv.id}" title="Retirer le justificatif">✕</button>`;
+          else if (inv.noReceipt) just = `<span class="muted" style="font-size:12px">Sans justificatif</span> <button class="btn ghost small" data-bank-needreceipt="${inv.id}" title="Un justificatif est attendu">↺</button>`;
+          else {
+            const cands = factureCandidates(full);
+            just = (cands.length ? cands.map((c) => `<button class="chip" data-bank-match="${inv.id}|${esc(c.f.fileId)}" title="${esc(c.f.nom)} · ${esc(c.f.dossier || "")}">${esc((c.f.fournisseur || c.f.nom || "").slice(0, 28))} · ${euros(c.f.montant)}${c.f.date ? " · " + fmtDate(c.f.date) : ""}</button>`).join(" ") : `<span class="muted" style="font-size:12px">Aucune facture trouvée</span>`)
+              + ` <button class="btn ghost small" data-bank-noreceipt="${inv.id}" title="Aucun justificatif nécessaire">Sans</button> <button class="btn ghost small" data-open-invoice="${inv.id}" title="Ouvrir l'écriture">↗</button>`;
+          }
+        } else if (skipped) {
+          cat = `<span class="muted" style="font-size:12px">Ignorée</span>`; just = `<button class="btn ghost small" data-bank-unskip="${esc(o.id)}">Rétablir</button>`;
+        } else {
+          cat = `<span class="muted" style="font-size:12px">${esc(bankRuleFor(full).categoryName || "—")}</span>`;
+          just = `<button class="btn small" data-bank-import-one="${esc(r.fileId)}|${esc(o.id)}">Importer</button> <button class="btn ghost small" data-bank-skip="${esc(o.id)}">Ignorer</button>`;
+        }
+        return `<tr><td style="white-space:nowrap">${fmtDate(o.date)}</td><td>${label}</td><td style="text-align:right;white-space:nowrap;color:${o.montant >= 0 ? "var(--positive)" : "#d23c3c"}">${euros(o.montant)}</td><td>${cat}</td><td>${just}</td></tr>`;
+      }).join("") + `</tbody></table></div>`;
+    }
+    return `<div class="card" style="margin-bottom:10px;padding:10px 14px">
+      <div class="inline" style="gap:10px;flex-wrap:wrap"><div class="grow" style="cursor:pointer" data-bank-toggle="${esc(r.fileId)}"><div class="r-title">${title}</div><div class="r-sub">${sub}</div></div>
+        ${nNew ? `<button class="btn small" data-bank-import="${esc(r.fileId)}">Importer ${nNew}</button>` : ""}
+        <a class="btn ghost small" href="${esc(r.url)}" target="_blank" rel="noopener" title="Ouvrir le relevé PDF">📄</a>
+        <button class="btn secondary small" data-bank-toggle="${esc(r.fileId)}">${open ? "Replier" : "Voir"}</button></div>${body}</div>`;
+  }).join("");
+  const relevesBlock = releves.length ? `<div class="section-h">${icon("file-text")} Relevés</div>${relevesHtml}` : "";
+  // Factures sans paiement repéré
+  const spHtml = sansPaiement.length ? `<div class="section-h">${icon("euro")} Factures du Drive sans paiement repéré</div><div class="card" style="padding:6px 12px">` + sansPaiement.slice(0, 20).map((f) => `<div class="inline" style="padding:6px 0;gap:10px;flex-wrap:wrap"><span class="grow"><a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.fournisseur || f.nom)}</a> <span class="muted" style="font-size:12px">· ${esc(f.dossier || "")} · ${f.date ? fmtDate(f.date) : "date ?"}</span></span><strong>${f.devise && f.devise !== "EUR" ? f.montant + " " + f.devise : euros(f.montant)}</strong><button class="btn ghost small" data-bank-facture-inv="${esc(f.fileId)}" title="Créer une écriture « à payer » avec ce justificatif">+ Écriture</button></div>`).join("") + (sansPaiement.length > 20 ? `<div class="muted" style="font-size:12px;padding:6px 0">… et ${sansPaiement.length - 20} autre(s)</div>` : "") + `</div>` : "";
+  // Règles
+  const rulesHtml = `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer;font-size:13px">Règles de catégorisation (${state.bankRules.length})</summary><div class="card" style="margin-top:8px;padding:6px 12px">${state.bankRules.length ? state.bankRules.map((ru) => `<div class="inline" style="padding:4px 0;gap:8px"><span class="grow"><code>${esc(ru.motif)}</code> → ${esc(ru.categoryName || "—")}${ru.noReceipt ? ' <span class="muted" style="font-size:12px">(sans justificatif)</span>' : ""}</span><button class="btn ghost small" data-bank-rule-del="${ru.id}">✕</button></div>`).join("") : '<div class="muted" style="font-size:13px">Aucune règle personnelle. Choisis une catégorie sur une opération importée : la règle se crée toute seule.</div>'}<div class="muted" style="font-size:12px;margin-top:6px">Règles automatiques : emprunts, frais bancaires, URSSAF, TVA, impôts, retraite, assurances, télécom, énergie, déplacements, virements entre tes sociétés.</div></div></details>`;
+  const manual = `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer;font-size:13px">Import manuel d'un fichier CSV ou OFX</summary><div style="margin-top:8px">${financeImport()}</div></details>`;
+  return head + comptesHtml + alertsHtml + relevesBlock + spHtml + rulesHtml + manual;
+}
+function wireBanque(c) {
+  const rf = c.querySelector("[data-banque-refresh]"); if (rf) rf.onclick = () => loadBanque(true);
+  c.querySelectorAll("[data-bank-map]").forEach((s) => s.onchange = () => { if (s.value) state.bankMap[s.dataset.bankMap] = s.value; else delete state.bankMap[s.dataset.bankMap]; save(); render(); });
+  c.querySelectorAll("[data-bank-toggle]").forEach((b) => b.onclick = (ev) => { if (ev.target.closest("a,button:not([data-bank-toggle]),select")) return; banqueOpen[b.dataset.bankToggle] = !banqueOpen[b.dataset.bankToggle]; render(); });
+  const importOf = (fileId) => { const r = banqueReleves().find((x) => x.fileId === fileId); if (!r) return; const res = importReleve(r); if (res.error) alert(res.error); else toast(`${res.added} opération(s) importée(s)`); render(); };
+  c.querySelectorAll("[data-bank-import]").forEach((b) => b.onclick = () => importOf(b.dataset.bankImport));
+  const all = c.querySelector("[data-banque-import-all]"); if (all) all.onclick = () => {
+    let n = 0, err = "";
+    banqueReleves().forEach((r) => { const res = importReleve(r); n += res.added; if (res.error && !err) err = res.error; });
+    if (err) alert(err); toast(`${n} opération(s) importée(s)`); render();
+  };
+  c.querySelectorAll("[data-bank-import-one]").forEach((b) => b.onclick = () => {
+    const [fileId, opId] = b.dataset.bankImportOne.split("|");
+    const r = banqueReleves().find((x) => x.fileId === fileId); if (!r) return;
+    const one = Object.assign({}, r, { ops: (r.ops || []).filter((o) => o.id === opId) });
+    const res = importReleve(one); if (res.error) alert(res.error); render();
+  });
+  c.querySelectorAll("[data-bank-skip]").forEach((b) => b.onclick = () => { state.bankSkip[b.dataset.bankSkip] = 1; save(); render(); });
+  c.querySelectorAll("[data-bank-unskip]").forEach((b) => b.onclick = () => { delete state.bankSkip[b.dataset.bankUnskip]; save(); render(); });
+  c.querySelectorAll("[data-bank-cat]").forEach((s) => s.onchange = () => {
+    const inv = state.invoices.find((v) => v.id === s.dataset.bankCat); if (!inv) return;
+    inv.categoryName = s.value;
+    const op = banqueOps().find((o) => o.id === inv.bankOpId);
+    const rule = op && s.value ? learnBankRule(op, s.value) : null;
+    save(); render();
+    if (rule) toast(`Règle : « ${rule.motif} » → ${rule.categoryName}`);
+  });
+  c.querySelectorAll("[data-bank-match]").forEach((b) => b.onclick = () => {
+    const [invId, fileId] = b.dataset.bankMatch.split("|");
+    const inv = state.invoices.find((v) => v.id === invId), f = banqueFactures().find((x) => x.fileId === fileId);
+    if (inv && f) { applyFacture(inv, f); toast("Justificatif rattaché ✓"); render(); }
+  });
+  c.querySelectorAll("[data-bank-unmatch]").forEach((b) => b.onclick = () => { const inv = state.invoices.find((v) => v.id === b.dataset.bankUnmatch); if (inv) { inv.receiptUrl = ""; delete inv.bankFactureId; save(); render(); } });
+  c.querySelectorAll("[data-bank-noreceipt]").forEach((b) => b.onclick = () => { const inv = state.invoices.find((v) => v.id === b.dataset.bankNoreceipt); if (inv) { inv.noReceipt = true; save(); render(); } });
+  c.querySelectorAll("[data-bank-needreceipt]").forEach((b) => b.onclick = () => { const inv = state.invoices.find((v) => v.id === b.dataset.bankNeedreceipt); if (inv) { inv.noReceipt = false; save(); render(); } });
+  c.querySelectorAll("[data-bank-rule-del]").forEach((b) => b.onclick = () => { state.bankRules = state.bankRules.filter((r) => r.id !== b.dataset.bankRuleDel); save(); render(); });
+  const al = c.querySelector("[data-banque-alert]"); if (al) al.onclick = () => { factureFilter.noReceipt = true; financeTab = "factures"; render(); };
+  c.querySelectorAll("[data-bank-facture-inv]").forEach((b) => b.onclick = () => {
+    const f = banqueFactures().find((x) => x.fileId === b.dataset.bankFactureInv); if (!f) return;
+    const cid = state.companies[0] ? state.companies[0].id : null;
+    const x = { id: uid(), title: f.fournisseur || f.nom, reference: "", direction: "depense", status: "aPayer", amount: f.montant || 0, vatRate: 20, startDate: f.date || todayISO(), hasDueDate: false, dueDate: "", paymentDate: "", companyId: cid, contactId: null, categoryName: "", payMode: "compte", accountId: null, associateId: null, receiptUrl: f.url, noReceipt: false, bankFactureId: f.fileId };
+    state.invoices.push(x); save(); openDetail("finances", x.id);
+  });
 }
 
 // Bloc « Règlement » d'une facture : compte de l'entreprise ou associé.
@@ -4433,6 +4704,7 @@ function wire() {
 
   // onglets Finances
   c.querySelectorAll("[data-ftab]").forEach((b) => b.onclick = () => { financeTab = b.dataset.ftab; render(); });
+  wireBanque(c);
 
   // comptes bancaires (fiche société)
   c.querySelectorAll("[data-add-acc]").forEach((b) => b.onclick = () => { state.accounts.push({ id: uid(), companyId: b.dataset.addAcc, name: "", initialBalance: 0, balanceDate: todayISO() }); save(); render(); });
@@ -4866,7 +5138,7 @@ function wire() {
     r.readAsArrayBuffer(f);
   };
   const bankClear = c.querySelector("[data-bank-clear]"); if (bankClear) bankClear.onclick = () => { bankImport.rows = []; bankImport.fileName = ""; render(); };
-  const bankImp = c.querySelector("[data-bank-import]"); if (bankImp) bankImp.onclick = doBankImport;
+  const bankImp = c.querySelector("[data-bank-csv-import]"); if (bankImp) bankImp.onclick = doBankImport;
 
   // import / export / reset
   c.querySelectorAll("[data-import]").forEach((b) => b.onclick = importClick);

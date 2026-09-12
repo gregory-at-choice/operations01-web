@@ -75,3 +75,25 @@ Par défaut, les données sont dans le navigateur. Pour les stocker **sur votre 
 > À savoir : la portée demandée est **drive.file** — l'app n'accède **qu'au fichier qu'elle
 > crée**, rien d'autre dans votre Drive. Le navigateur garde une copie locale (hors ligne) ;
 > Drive est la copie durable et partagée entre navigateurs.
+
+## Banque : relevés et factures déjà sur le Drive (Finances → Banque)
+
+Un script Apps Script (`appsscript-banque.gs`) lit les relevés de compte PDF (Société Générale,
+fichiers `releve_…pdf`) et les factures PDF rangées dans les dossiers du Drive, en extrait le
+texte et dépose le résultat dans `operations01-banque.json` (fichier créé par l'app). L'app
+importe ensuite les opérations en écritures payées, les classe par règles (les tiennes, apprises
+au fil de l'eau, plus des règles par défaut : emprunts, frais bancaires, URSSAF, TVA, impôts,
+retraite, assurances, télécom, énergie, déplacements, virements entre tes sociétés), propose pour
+chaque opération la facture du Drive qui correspond (même montant, date proche, nom du
+fournisseur) et signale : opérations sans justificatif, factures sans paiement repéré, relevés
+dont le solde ne tombe pas juste.
+
+Installation (une fois, dans le compte Google qui porte le Drive) :
+1. Dans Operations01, ouvrir Finances → Banque une première fois (crée le fichier vide).
+2. script.google.com → Nouveau projet → nom « Operations01 banque » → coller `appsscript-banque.gs`.
+3. À gauche, « Services » (+) → « Drive API » → Ajouter.
+4. Exécuter la fonction `parcourir` → autoriser. Puis exécuter `installerDeclencheur` (un passage par heure).
+5. Dans l'app, Finances → Banque → Actualiser : les relevés apparaissent ; associer chaque compte à sa société, puis « Importer ».
+
+Vingt fichiers au plus sont analysés par passage : le rattrapage initial prend quelques heures.
+Les dossiers de factures parcourus sont listés dans `DOSSIERS_FACTURES` en tête du script.
