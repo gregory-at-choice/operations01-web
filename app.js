@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v80";
+const APP_VERSION = "v81";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -5981,28 +5981,48 @@ function voiceAsk(question) {
   voiceSpeakText(a.text);
   return a;
 }
+// iPhone/iPad : dans l'app installée sur l'écran d'accueil, la reconnaissance vocale de
+// Safari est annoncée mais ne démarre jamais. On passe alors par la dictée du clavier iOS
+// (touche micro du clavier), qui marche partout.
+const voiceIsIOS = () => typeof navigator !== "undefined" && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+const voiceIOSStandalone = () => voiceIsIOS() && (navigator.standalone === true || (typeof matchMedia === "function" && matchMedia("(display-mode: standalone)").matches));
+function voiceKeyboardDictation(msg) {
+  const st = document.getElementById("voiceStatus"), input = document.getElementById("voiceInput");
+  if (st) st.innerHTML = msg || (voiceIsIOS() ? "Ici, la dictée passe par le clavier : appuie sur la touche <strong>micro du clavier</strong>, parle, puis « Envoyer »." : "La dictée n'est pas disponible ici : écris ta question ci-dessous.");
+  if (input) { try { input.focus(); } catch (e) {} }
+}
 function voiceStart() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const st = document.getElementById("voiceStatus"), mic = document.getElementById("voiceMic");
-  if (!SR) { if (st) st.textContent = "La dictée n'est pas disponible ici : écris ta question ci-dessous."; return; }
+  if (!SR || voiceIOSStandalone()) { voiceKeyboardDictation(); return; }
   if (voiceListening && voiceRec) { try { voiceRec.stop(); } catch (e) {} return; }
   try { if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel(); } catch (e) {}
   const rec = new SR(); voiceRec = rec;
   rec.lang = "fr-FR"; rec.interimResults = true; rec.maxAlternatives = 1; rec.continuous = false;
-  let finalText = "";
-  rec.onstart = () => { voiceListening = true; if (mic) mic.classList.add("listening"); if (st) st.textContent = "Je t'écoute…"; };
+  let finalText = "", started = false, ended = false;
+  const alive = () => { started = true; clearTimeout(watchdog); };
+  // Garde-fou : si rien ne se passe en 2,5 s (ni démarrage, ni erreur), on bascule sur le clavier.
+  const watchdog = setTimeout(() => { if (!started && !ended) { try { rec.abort(); } catch (e) {} voiceListening = false; if (mic) mic.classList.remove("listening"); voiceKeyboardDictation(); } }, 2500);
+  rec.onstart = () => { alive(); voiceListening = true; if (mic) mic.classList.add("listening"); if (st) st.textContent = "Je t'écoute…"; };
+  rec.onaudiostart = alive; rec.onsoundstart = alive; rec.onspeechstart = alive;
   rec.onresult = (ev) => {
+    alive();
     let interim = "";
     for (let i = ev.resultIndex; i < ev.results.length; i++) { const r = ev.results[i]; if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript; }
     const t = document.getElementById("voiceTranscript"); if (t) t.textContent = finalText || interim;
   };
-  rec.onerror = (ev) => { if (st) st.textContent = ev.error === "not-allowed" ? "Micro refusé : autorise-le dans les réglages du navigateur, ou écris ta question." : "Je n'ai pas entendu. Réessaie, ou écris ta question."; };
+  rec.onerror = (ev) => {
+    alive(); ended = true;
+    if (ev.error === "not-allowed" || ev.error === "service-not-allowed") voiceKeyboardDictation("Micro refusé par le navigateur. " + (voiceIsIOS() ? "Utilise la touche <strong>micro du clavier</strong>, puis « Envoyer »." : "Autorise-le dans les réglages du site, ou écris ta question."));
+    else if (st) st.textContent = "Je n'ai pas entendu. Réessaie, ou écris ta question.";
+  };
   rec.onend = () => {
+    ended = true; clearTimeout(watchdog);
     voiceListening = false; if (mic) mic.classList.remove("listening");
     if (finalText.trim()) { if (st) st.textContent = ""; voiceAsk(finalText.trim()); }
-    else if (st && !/refusé|entendu|disponible/.test(st.textContent)) st.textContent = "Appuie sur le micro et pose ta question.";
+    else if (st && !/refusé|entendu|clavier|disponible/.test(st.textContent)) st.textContent = "Appuie sur le micro et pose ta question.";
   };
-  try { rec.start(); } catch (e) { if (st) st.textContent = "Impossible de démarrer le micro."; }
+  try { rec.start(); } catch (e) { clearTimeout(watchdog); voiceKeyboardDictation("Impossible de démarrer le micro. " + (voiceIsIOS() ? "Utilise la touche <strong>micro du clavier</strong>, puis « Envoyer »." : "Écris ta question ci-dessous.")); }
 }
 function openVoice(initialQuestion) {
   showModal(`<div class="modal-head"><img src="logo.png?v=${APP_VERSION.replace(/^v/, "")}" alt="choice" style="height:22px"/><span class="grow"></span>
@@ -6010,7 +6030,7 @@ function openVoice(initialQuestion) {
       <button class="btn ghost small" data-modal-close>${icon("x")}</button></div>
     <div class="voice-body">
       <button class="voice-mic" id="voiceMic" title="Parler">${icon("mic")}</button>
-      <div class="muted" id="voiceStatus" style="font-size:13px;text-align:center">${voiceRecognitionAvailable() ? "Appuie sur le micro et pose ta question." : "La dictée n'est pas disponible ici : écris ta question ci-dessous."}</div>
+      <div class="muted" id="voiceStatus" style="font-size:13px;text-align:center">${voiceRecognitionAvailable() && !voiceIOSStandalone() ? "Appuie sur le micro et pose ta question." : (voiceIsIOS() ? "Ici, la dictée passe par le clavier : appuie sur la touche <strong>micro du clavier</strong>, parle, puis « Envoyer »." : "La dictée n'est pas disponible ici : écris ta question ci-dessous.")}</div>
       <div class="voice-transcript" id="voiceTranscript"></div>
       <div class="voice-reply" id="voiceReply"></div>
       <form class="inline" id="voiceForm" style="gap:8px"><input id="voiceInput" placeholder="Ou écris ta question…" autocomplete="off"/><button class="btn small" type="submit">Envoyer</button></form>
@@ -6023,7 +6043,8 @@ function openVoice(initialQuestion) {
   if (form) form.onsubmit = (ev) => { ev.preventDefault(); const q = (input.value || "").trim(); if (q) { voiceAsk(q); input.value = ""; } };
   document.querySelectorAll("[data-voice-q]").forEach((b) => b.onclick = () => voiceAsk(b.dataset.voiceQ));
   if (initialQuestion) voiceAsk(initialQuestion);
-  else if (voiceRecognitionAvailable() && !initialQuestion) voiceStart();
+  else if (voiceRecognitionAvailable() && !voiceIOSStandalone()) voiceStart();
+  else voiceKeyboardDictation();
 }
 (function wireVoiceFab() {
   const b = document.getElementById("voiceFab"); if (!b) return;
