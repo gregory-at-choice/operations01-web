@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v83";
+const APP_VERSION = "v84";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2281,10 +2281,12 @@ function briefRow(el, s, parts) {
 // jugé mal fait. Les digests « pour information » (Le Monde, Bluesky…) restent.
 // Passer BRIEF_ENABLED à true pour le réafficher.
 let BRIEF_ENABLED = false;
+// Les digests (Le Monde, New York Times, Nature, Bluesky) ne sont plus affichés non plus.
+let FILS_ENABLED = false;
 function renderBrief() {
   const b = briefOf();
   if (!b) return "";
-  if (!BRIEF_ENABLED) return renderBriefFils(b);
+  if (!BRIEF_ENABLED) return FILS_ENABLED ? renderBriefFils(b) : "";
   const today = todayISO();
   const els = (b.elements || []).map((el) => ({ el, s: briefElementState(el), p: briefLabelParts(el) }));
   const nbDone = els.filter((x) => x.s.done).length;
