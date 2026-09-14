@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v81";
+const APP_VERSION = "v82";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2277,9 +2277,14 @@ function briefRow(el, s, parts) {
         : `${u ? `<span class="badge ev-urg u${u}">${esc(EVENT_URGENCES[u])}</span>` : ""}${el.estimationMin ? `<span class="brief-est">${esc(fmtEstim(el.estimationMin))}</span>` : ""}`}
       ${!s.done && s.can ? `<button class="btn ghost small brief-ok" data-brief-done="${esc(el.type || "")}" data-id="${esc(el.id || "")}" title="Marquer comme fait">✓</button>` : ""}</span></div>`;
 }
+// Le brief du matin (to-do calculée par la session « assistants ») n'est plus affiché :
+// jugé mal fait. Les digests « pour information » (Le Monde, Bluesky…) restent.
+// Passer BRIEF_ENABLED à true pour le réafficher.
+let BRIEF_ENABLED = false;
 function renderBrief() {
   const b = briefOf();
   if (!b) return "";
+  if (!BRIEF_ENABLED) return renderBriefFils(b);
   const today = todayISO();
   const els = (b.elements || []).map((el) => ({ el, s: briefElementState(el), p: briefLabelParts(el) }));
   const nbDone = els.filter((x) => x.s.done).length;
@@ -5857,7 +5862,7 @@ const voiceTaskEstim = (t) => t.estimationMin || (estimationOf(t.id) && estimati
 const voiceTaskLabel = (t) => t.title + (t.missionId && findMission(t.missionId) ? " · " + (findMission(t.missionId).title || "") : "");
 // Éléments à faire, par ordre de priorité : le brief du matin s'il existe, sinon retards, échéances du jour, messages urgents.
 function voicePriorities() {
-  const b = briefOf(), today = localISO(voiceClock()), out = [];
+  const b = BRIEF_ENABLED ? briefOf() : null, today = localISO(voiceClock()), out = [];
   if (b && Array.isArray(b.elements)) {
     b.elements.forEach((el) => {
       if (briefElementState(el).done) return;
