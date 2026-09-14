@@ -518,11 +518,25 @@
   // Les agendas de l'utilisateur, hors ceux qu'il a décochés dans Google.
   // Ne lire que « primary » laisserait de côté les jours fériés, les agendas
   // partagés et les agendas repris d'un collègue.
-  async function listCalendars() {
+  // Tous les agendas du compte sont lus (les siens et ceux partagés avec lui), sauf ceux
+  // décochés dans l'app (liste mémorisée sur l'appareil). La case « afficher » de Google
+  // Agenda n'est plus prise en compte : elle masquait des agendas sans que rien ne le dise.
+  const CAL_OFF_KEY = "op01_cal_off";
+  const calOffIds = () => { try { return JSON.parse(localStorage.getItem(CAL_OFF_KEY) || "[]") || []; } catch (e) { return []; } };
+  let calList = [];
+  async function listCalendars(all) {
     if (!hasSession() || !calGranted()) return [];
     const r = await api("https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader&maxResults=250");
     const j = await r.json();
-    return (j.items || []).filter((c) => c.id && c.selected !== false);
+    calList = (j.items || []).filter((c) => c.id).map((c) => ({ id: c.id, summary: c.summary || c.id, primary: !!c.primary, selected: c.selected !== false }));
+    if (all) return calList;
+    const off = calOffIds();
+    return calList.filter((c) => off.indexOf(c.id) === -1);
+  }
+  function setCalendarOff(id, off) {
+    const cur = calOffIds().filter((x) => x !== id);
+    if (off) cur.push(id);
+    try { localStorage.setItem(CAL_OFF_KEY, JSON.stringify(cur)); } catch (e) {}
   }
 
   async function eventsOf(calId, fromISO, toISO, out, seen) {
@@ -885,6 +899,9 @@
     readBanque,
     listEvents,
     listCalendars,
+    calendars: () => calList,
+    calendarOff: (id) => calOffIds().indexOf(id) > -1,
+    setCalendarOff,
     calendarGranted: calGranted,
     enableCalendar,
     disableCalendar,

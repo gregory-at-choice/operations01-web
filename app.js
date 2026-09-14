@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v82";
+const APP_VERSION = "v83";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -4214,13 +4214,23 @@ function calNotice(quiet) {
   return box("Agenda Google indisponible", esc(err.msg), '<button class="btn small" data-cal-refresh>Réessayer</button>');
 }
 const calLinked = () => !!(window.DriveSync && DriveSync.calendarGranted && DriveSync.calendarGranted());
+// Grille : une ligne discrète quand l'agenda n'est pas relié (le gros encadré reste
+// réservé aux onglets Agenda et Rendez-vous).
+function calHint() {
+  if (calLinked()) return calFooter();
+  return `<div class="inline muted" style="font-size:13px;margin-top:12px"><span class="grow">Agenda Google non relié : les rendez-vous de ton agenda n'apparaissent pas dans la grille.</span><button class="btn ghost small" data-cal-enable>Relier mon agenda</button></div>`;
+}
 function calFooter() {
   if (!calLinked()) return "";
   const when = calendar.at ? new Date(calendar.at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : null;
-  return `<div class="inline muted" style="font-size:13px;margin-top:12px">
-    <span class="grow">${calBusy ? "Lecture de l'agenda Google…" : (when ? `Agenda synchronisé à ${when}.` : "Agenda Google non chargé.")}</span>
+  const cals = (window.DriveSync && DriveSync.calendars) ? DriveSync.calendars() : [];
+  const nOn = cals.filter((c) => !DriveSync.calendarOff(c.id)).length;
+  const list = cals.length ? `<details class="cal-list"><summary class="muted" style="cursor:pointer;font-size:13px">Agendas lus : ${nOn}/${cals.length}</summary>
+      <div class="chip-row" style="margin-top:6px">${cals.map((c) => `<label class="inline-check" style="margin:0;font-size:13px"><input type="checkbox" data-cal-toggle="${esc(c.id)}" ${DriveSync.calendarOff(c.id) ? "" : "checked"}/> <span>${esc(c.summary)}</span></label>`).join("")}</div></details>` : "";
+  return `<div class="inline muted" style="font-size:13px;margin-top:12px;flex-wrap:wrap">
+    <span class="grow">${calBusy ? "Lecture de l'agenda Google…" : (when ? `Agenda synchronisé à ${when} · ${calendar.events.length} événement(s).` : "Agenda Google non chargé.")}</span>
     <button class="btn ghost small" data-cal-refresh>↻ Actualiser l'agenda</button>
-    <button class="btn ghost small" data-cal-unlink>Délier l'agenda</button></div>`;
+    <button class="btn ghost small" data-cal-unlink>Délier l'agenda</button></div>${list}`;
 }
 // Demande d'autorisation de l'agenda : uniquement sur un clic de l'utilisateur.
 function enableCalendar() {
@@ -4459,7 +4469,7 @@ function renderPlanning() {
   const tabs = [["grille", "Emploi du temps"], ["agenda", "Agenda"], ["synthese", "Synthèse agenda"]]
     .map(([id, lbl]) => `<button class="chip ${planningTab === id ? "active" : ""}" data-ptab="${id}">${lbl}</button>`).join("");
   const body = planningTab === "grille" ? renderTimetable() : planningTab === "synthese" ? renderCalSummary() : renderAgenda();
-  return `<div class="page-title">Planning</div><div class="chip-row" style="margin-bottom:14px">${tabs}</div>${body}`;
+  return `<div class="page-title">Planning</div><div class="chip-row" style="margin-bottom:14px">${tabs}</div>${body}${planningTab === "grille" ? calHint() : ""}`;
 }
 function renderAgenda() {
   const today = todayISO();
@@ -5250,6 +5260,7 @@ function wire() {
   c.querySelectorAll("[data-cal-refresh]").forEach((b) => b.onclick = () => loadCalendar(true));
   c.querySelectorAll("[data-cal-enable]").forEach((b) => b.onclick = () => enableCalendar());
   c.querySelectorAll("[data-cal-unlink]").forEach((b) => b.onclick = () => unlinkCalendar());
+  c.querySelectorAll("[data-cal-toggle]").forEach((cb) => cb.onchange = () => { DriveSync.setCalendarOff(cb.dataset.calToggle, !cb.checked); calendar = { events: calendar.events, at: 0, error: null }; loadCalendar(true); });
   const calImp = c.querySelector("[data-cal-import]");
   if (calImp) calImp.onclick = () => importCalEvent(calImp.dataset.calImport);
   wireTimetable(c);
