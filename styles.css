@@ -575,3 +575,8 @@ label.field.inline-check > span { margin-bottom: 0; }
 .voice-reply p { margin: 0 0 6px; } .voice-reply ol { margin: 0; padding-left: 20px; } .voice-reply li { margin: 3px 0; }
 .voice-suggest .chip { font-size: 12px; white-space: normal; text-align: left; }
 #voiceInput { flex: 1; }
+
+/* To-do du jour */
+.brief.todo > summary { list-style: none; cursor: pointer; }
+.brief.todo > summary::-webkit-details-marker { display: none; }
+.brief.todo:not([open]) > summary { margin-bottom: 0; }

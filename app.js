@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v84";
+const APP_VERSION = "v85";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1520,7 +1520,7 @@ function renderMissions() {
         <div class="r-sub">${meta(m)}</div>
         <div class="r-sub">${dates(m)}</div></div></div>`;
   }).join("");
-  return head + renderBrief() + banner
+  return head + renderTodo() + renderBrief() + banner
     + `<div class="list">${all.length ? rows : '<div class="center-empty">Aucun projet.</div>'}</div>
        <button class="btn fab" data-add-mission>+</button>`;
 }
@@ -2277,6 +2277,52 @@ function briefRow(el, s, parts) {
         : `${u ? `<span class="badge ev-urg u${u}">${esc(EVENT_URGENCES[u])}</span>` : ""}${el.estimationMin ? `<span class="brief-est">${esc(fmtEstim(el.estimationMin))}</span>` : ""}`}
       ${!s.done && s.can ? `<button class="btn ghost small brief-ok" data-brief-done="${esc(el.type || "")}" data-id="${esc(el.id || "")}" title="Marquer comme fait">✓</button>` : ""}</span></div>`;
 }
+// ----------------------------- To-do du jour (calculée dans l'app) -----------------------------
+// Remplace le brief de la session « assistants » : tout vient des données de choice.
+// Retards, échéances du jour, messages urgents, rendez-vous du jour. Coche = fait.
+// Aides partagées avec l'assistant vocal (définies ici : utilisées dès le premier rendu).
+const voiceNorm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[’']/g, " ").replace(/\s+/g, " ").trim();
+const voiceHour = (hhmm) => { if (!hhmm) return ""; const [h, m] = hhmm.split(":"); return `${Number(h)} h${m && m !== "00" ? " " + m : ""}`; };
+const voiceEuros = (v) => `${Math.round(v).toLocaleString("fr-FR")} €`;
+const voiceTaskEstim = (t) => t.estimationMin || (estimationOf(t.id) && estimationOf(t.id).assistantMin) || 0;
+const voiceTaskLabel = (t) => t.title + (t.missionId && findMission(t.missionId) ? " · " + (findMission(t.missionId).title || "") : "");
+const EVENT_ACTION_VERB = { repondre: "Répondre à", planifier: "Planifier avec", lire: "Lire :", deleguer: "Déléguer à", archiver: "Archiver :" };
+const TODO_OPEN_KEY = "op01_todo_open";
+const TODO_MAX_LATE = 8;
+function todoElements() {
+  const today = todayISO(), els = [];
+  const late = state.tasks.filter((t) => !taskDone(t) && t.dueDate && t.dueDate < today).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  late.slice(0, TODO_MAX_LATE).forEach((t) => {
+    const days = Math.round((new Date(today + "T12:00:00") - new Date(t.dueDate + "T12:00:00")) / 86400000);
+    els.push({ type: "retard", id: t.id, libelle: `${voiceTaskLabel(t)} (J+${days})`, estimationMin: voiceTaskEstim(t) });
+  });
+  state.tasks.filter((t) => !taskDone(t) && t.dueDate === today).forEach((t) => els.push({ type: "echeance", id: t.id, libelle: voiceTaskLabel(t), estimationMin: voiceTaskEstim(t) }));
+  eventsNew().filter((e) => (Number(e.urgence) || 4) <= 2).sort((a, b) => (Number(a.urgence) || 4) - (Number(b.urgence) || 4)).slice(0, 10)
+    .forEach((e) => { const p = e.proposition && e.proposition.tache; els.push({ type: "evenement", id: e.id, urgence: e.urgence, libelle: `${EVENT_ACTION_VERB[e.action] || "Traiter :"} ${(e.expediteur && e.expediteur.nom) || (e.expediteur && e.expediteur.adresse) || "?"} — ${e.sujet || ""}`, estimationMin: p && p.estimationMin ? Number(p.estimationMin) : 0 }); });
+  voiceAgenda(today).forEach((x, i) => els.push({ type: "rdv", id: "cal-" + i, libelle: `${x.time ? voiceHour(x.time) + " " : ""}${x.title}${x.who ? " avec " + x.who : ""}` }));
+  return { els, lateTotal: late.length };
+}
+function renderTodo() {
+  const { els, lateTotal } = todoElements();
+  const today = todayISO();
+  const open = (() => { try { return localStorage.getItem(TODO_OPEN_KEY) !== "0"; } catch (e) { return true; } })();
+  const todo = els.filter((el) => el.type !== "rdv");
+  const totalMin = todo.reduce((a, el) => a + (Number(el.estimationMin) || 0), 0);
+  const dLabel = new Date(today + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  const groups = BRIEF_GROUPS.map(([type, ic, label]) => {
+    const items = els.filter((el) => el.type === type);
+    if (!items.length) return "";
+    const rows = items.map((el) => briefRow(el, briefElementState(el))).join("");
+    const more = type === "retard" && lateTotal > items.length ? `<div class="muted" style="font-size:13px;padding:6px 0 0 4px"><button class="btn ghost small" data-todo-all-late>… et ${lateTotal - items.length} autre(s) en retard</button></div>` : "";
+    return `<details class="brief-group" open><summary>${icon(ic)} ${esc(label)} <span class="pm-tag">${type === "rdv" ? items.length : `${items.length} à faire`}</span></summary>${rows}${more}</details>`;
+  }).join("");
+  const empty = !els.length ? `<div class="muted" style="font-size:14px;padding:6px 0">Rien en retard, aucune échéance ni message urgent aujourd'hui.</div>` : "";
+  return `<details class="card brief todo" ${open ? "open" : ""} data-todo-card>
+    <summary class="brief-head"><strong class="grow">${icon("sun", "brief-sun")} <span style="text-transform:capitalize">${esc(dLabel)}</span></strong>
+      <span class="pm-tag">${todo.length} à faire${totalMin ? ` · ${esc(fmtEstim(totalMin))}` : ""}</span></summary>
+    ${empty}${groups}</details>`;
+}
+
 // Le brief du matin (to-do calculée par la session « assistants ») n'est plus affiché :
 // jugé mal fait. Les digests « pour information » (Le Monde, Bluesky…) restent.
 // Passer BRIEF_ENABLED à true pour le réafficher.
@@ -3575,7 +3621,7 @@ function renderDashboard() {
   if (toPay.length) alerts.push(`${toPay.length} facture(s) fournisseur à payer · ${euros(toPay.reduce((t, v) => t + invTTC(v), 0))}`);
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tableau de bord</div>
       <button class="btn secondary small" data-export-dashboard>${icon("file-text")} Exporter (PDF)</button></div>
-    ${renderBrief()}
+    ${renderTodo()}${renderBrief()}
     <div class="section-h">Activité (HT)</div>
     ${grid(card("CA facturé", euros(caFacture), "émises + payées", "#18c1d8") + card("CA encaissé", euros(caEncaisse), "payées", "#4dc8bb") + card("CA à émettre", euros(caAEmettre), "en attente", "#c3d679") + card("Résultat à date", euros(produits - charges), "produits − charges", produits - charges >= 0 ? "#4dc8bb" : "#d23c3c"))}
     <div class="section-h">Trésorerie consolidée (TTC)</div>
@@ -5029,6 +5075,8 @@ function wire() {
   c.querySelectorAll("[data-accept-estim]").forEach((b) => b.onclick = () => { acceptEstimation(b.dataset.acceptEstim); toast("Estimation acceptée ✓"); });
   c.querySelectorAll("[data-brief-open]").forEach((r) => r.onclick = () => openBriefElement(r.dataset.briefOpen, r.dataset.id));
   c.querySelectorAll("[data-brief-done]").forEach((b) => b.onclick = (ev) => { ev.stopPropagation(); markBriefDone(b.dataset.briefDone, b.dataset.id); toast("Marqué comme fait ✓"); });
+  c.querySelectorAll("[data-todo-card]").forEach((d) => d.addEventListener("toggle", () => { try { localStorage.setItem(TODO_OPEN_KEY, d.open ? "1" : "0"); } catch (e) {} }));
+  c.querySelectorAll("[data-todo-all-late]").forEach((b) => b.onclick = (ev) => { ev.stopPropagation(); go("tasks"); });
 
   // relances (mails) — et correspondance des projets
   c.querySelectorAll("[data-mail-refresh]").forEach((b) => b.onclick = loadMails);
@@ -5845,9 +5893,6 @@ if (window.DriveSync) DriveSync.onStatus((s) => {
 let voiceClock = () => new Date();          // remplaçable dans les tests
 const VOICE_SPEAK_KEY = "op01_voice_speak";
 let voiceSpeak = (() => { try { return localStorage.getItem(VOICE_SPEAK_KEY) !== "0"; } catch (e) { return true; } })();
-const voiceNorm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[’']/g, " ").replace(/\s+/g, " ").trim();
-const voiceHour = (hhmm) => { if (!hhmm) return ""; const [h, m] = hhmm.split(":"); return `${Number(h)} h${m && m !== "00" ? " " + m : ""}`; };
-const voiceEuros = (v) => `${Math.round(v).toLocaleString("fr-FR")} €`;
 function voiceMinutes(q) {
   let m;
   if (/demi[- ]heure/.test(q)) return 30;
@@ -5871,8 +5916,6 @@ function voiceNextEvent() {
   const now = voiceClock(), today = localISO(now), hhmm = now.toTimeString().slice(0, 5);
   return voiceAgenda(today).find((x) => x.time && x.time > hhmm) || null;
 }
-const voiceTaskEstim = (t) => t.estimationMin || (estimationOf(t.id) && estimationOf(t.id).assistantMin) || 0;
-const voiceTaskLabel = (t) => t.title + (t.missionId && findMission(t.missionId) ? " · " + (findMission(t.missionId).title || "") : "");
 // Éléments à faire, par ordre de priorité : le brief du matin s'il existe, sinon retards, échéances du jour, messages urgents.
 function voicePriorities() {
   const b = BRIEF_ENABLED ? briefOf() : null, today = localISO(voiceClock()), out = [];
@@ -5891,7 +5934,6 @@ function voicePriorities() {
   }
   return out;
 }
-const EVENT_ACTION_VERB = { repondre: "Répondre à", planifier: "Planifier avec", lire: "Lire :", deleguer: "Déléguer à", archiver: "Archiver :" };
 // Ce qui tient dans N minutes : éléments prioritaires estimés, puis tâches estimées, en gardant l'ordre.
 function voiceFitIn(minutes) {
   const seen = new Set(), pool = [];
