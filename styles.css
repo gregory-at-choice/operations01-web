@@ -598,3 +598,14 @@ label.field.inline-check > span { margin-bottom: 0; }
 /* Mise en évidence de la ligne visée (ouverture depuis la to-do ou un message) */
 @keyframes flashRow { 0%, 45% { background-color: rgba(24,193,216,.22); } 100% { background-color: transparent; } }
 .flash, tr.flash > td { animation: flashRow 2.6s ease-out; }
+
+/* À traiter : blocs par expéditeur */
+.ev-cluster > summary { list-style: none; }
+.ev-cluster > summary::-webkit-details-marker { display: none; }
+.ev-cluster > summary.row { cursor: pointer; }
+.ev-caret { display: inline-flex; margin-top: 3px; color: var(--muted); transition: transform .15s; }
+.ev-cluster[open] > summary .ev-caret { transform: rotate(90deg); }
+.ev-cluster-body { margin: 8px 0 6px 22px; }
+@media (max-width: 720px) { .ev-cluster-body { margin-left: 8px; } }
+.filterbar .inline-check { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.filterbar .inline-check input { flex: 0 0 auto; width: auto; min-width: 0; padding: 0; margin: 0; }

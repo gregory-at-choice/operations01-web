@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v87";
+const APP_VERSION = "v88";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1951,7 +1951,7 @@ function refreshNotifications() {
 let eventStore = null, eventLoading = false, eventLoadedAt = 0, eventError = "";
 const EVENT_FRESH = 5 * 60000;   // le Mac mini pousse toutes les 5 minutes
 const EVENT_RETRY = 5 * 60000;
-let eventFilter = { statut: "nouveau", source: "", compte: "" };
+let eventFilter = { statut: "nouveau", source: "", compte: "", expediteur: "" };
 const EVENT_SOURCES = { mail: "Mail", sms: "SMS", imessage: "iMessage", whatsapp: "WhatsApp", googlechat: "Google Chat", bluesky: "Bluesky", linkedin: "LinkedIn", x: "X" };
 const EVENT_SOURCE_ICONS = { mail: "mail", sms: "smartphone", imessage: "message", whatsapp: "message", googlechat: "message-square", bluesky: "feather", linkedin: "briefcase", x: "message-square" };
 const EVENT_COMPTES = { choicefinance: "Choice Finance", majandco: "Majandco", icarus: "Icarus Swarms", gmail: "Gmail", outlook: "Outlook", "messages-mac-mini": "Messages", "whatsapp-mac-mini": "WhatsApp" };
@@ -2290,9 +2290,47 @@ function eventButtons(ev) {
        <button class="btn ghost small" data-ev-statut="nouveau" data-id="${ev.id}">Rouvrir</button>`;
 }
 // Liste courante : filtres de l'onglet, tri par urgence puis date.
-function filteredEvents() {
+function filteredEvents(ignoreSender) {
   return sortEvents(eventsAll().filter((e) => (!eventFilter.statut || eventStatut(e) === eventFilter.statut)
-    && (!eventFilter.source || e.source === eventFilter.source) && (!eventFilter.compte || e.compte === eventFilter.compte)));
+    && (!eventFilter.source || e.source === eventFilter.source) && (!eventFilter.compte || e.compte === eventFilter.compte)
+    && (ignoreSender || !eventFilter.expediteur || eventSenderKey(e) === eventFilter.expediteur)));
+}
+// Regroupement par expéditeur : une newsletter quotidienne ne doit pas faire
+// 47 lignes. Les expéditeurs qui ont au moins EV_CLUSTER_MIN messages dans la
+// liste forment un bloc repliable, placé là où serait leur message le plus urgent,
+// avec « Tout traité » / « Ignorer tout ». Préférence mémorisée sur l'appareil.
+const EV_GROUP_KEY = "op01_ev_group";
+const EV_CLUSTER_MIN = 3;
+let eventGroup = (() => { try { return localStorage.getItem(EV_GROUP_KEY) !== "0"; } catch (e) { return true; } })();
+const evClusterOpen = {};   // expéditeur → bloc déplié (le temps de la session)
+const eventSenderLabel = (ev) => { const f = eventFrom(ev); return f.nom || f.adresse || "?"; };
+function clusterEvents(items) {
+  const counts = {};
+  items.forEach((e) => { const k = eventSenderKey(e); if (k) counts[k] = (counts[k] || 0) + 1; });
+  const seen = {}, out = [];
+  items.forEach((e) => {
+    const k = eventSenderKey(e);
+    if (k && counts[k] >= EV_CLUSTER_MIN) {
+      if (!seen[k]) { seen[k] = { cluster: true, sender: k, label: eventSenderLabel(e), items: [] }; out.push(seen[k]); }
+      seen[k].items.push(e);
+    } else out.push(e);
+  });
+  return out;
+}
+function eventClusterHtml(c) {
+  const news = c.items.filter((e) => eventStatut(e) === "nouveau"), ids = news.map((e) => e.id).join(",");
+  const u = Math.min.apply(null, c.items.map(eventUrgence));
+  const adr = eventFrom(c.items[0]).adresse || "";
+  const first = c.items[c.items.length - 1].recu_le, last = c.items[0].recu_le;
+  return `<details class="ev-cluster" data-ev-cluster="${esc(c.sender)}" ${evClusterOpen[c.sender] ? "open" : ""}>
+    <summary class="row ev-row ev-u${u}"><span class="ev-caret">${icon("chevron")}</span><div class="grow">
+      <div class="r-head"><span class="r-title">${esc(c.label)} <span class="nav-count">${c.items.length}</span></span><span class="badge ev-urg u${u}" title="Urgence la plus haute du groupe">${EVENT_URGENCES[u]}</span></div>
+      <div class="r-sub">${adr && adr !== c.label ? esc(adr) + " · " : ""}${c.items.length} messages${news.length !== c.items.length ? ` · ${news.length} nouveau${news.length > 1 ? "x" : ""}` : ""} · du ${esc(fmtDateTimeISO(first))} au ${esc(fmtDateTimeISO(last))}</div>
+      ${news.length ? `<div class="ev-actions"><button class="btn ghost small" data-ev-filter-sender="${esc(c.sender)}">Voir seulement cet expéditeur</button><span class="grow"></span>
+        <button class="btn ghost small" data-ev-bulk="ignore" data-ids="${ids}">Ignorer tout (${news.length})</button>
+        <button class="btn small" data-ev-bulk="traite" data-ids="${ids}">Tout traité (${news.length})</button></div>` : ""}
+    </div></summary>
+    <div class="list ev-cluster-body">${c.items.map(eventRow).join("")}</div></details>`;
 }
 // Page d'un message (absente du menu) : tout ce qu'on sait et ce que l'assistant
 // recommande, avec les mêmes décisions que dans la liste. Précédent / Suivant
@@ -2344,11 +2382,20 @@ function renderATraiter() {
   const all = eventsAll(), nb = eventsNew().length;
   const present = (key, labels) => { const m = {}; all.forEach((e) => { const k = e[key]; if (k) m[k] = labels[k] || k; }); return m; };
   const opts = (map, cur, all) => `<option value="">${all}</option>` + Object.keys(map).map((k) => `<option value="${esc(k)}" ${cur === k ? "selected" : ""}>${esc(map[k])}</option>`).join("");
+  // Expéditeurs présents dans la liste (hors filtre expéditeur), les plus fréquents d'abord.
+  const senders = {};
+  filteredEvents(true).forEach((e) => { const k = eventSenderKey(e); if (!k) return; senders[k] = senders[k] || { label: eventSenderLabel(e), n: 0 }; senders[k].n++; });
+  const senderKeys = Object.keys(senders).sort((a, b) => senders[b].n - senders[a].n || senders[a].label.localeCompare(senders[b].label, "fr")).slice(0, 60);
+  const senderOpts = `<option value="">Tous les expéditeurs</option>` + senderKeys.map((k) => `<option value="${esc(k)}" ${eventFilter.expediteur === k ? "selected" : ""}>${esc(senders[k].label)} (${senders[k].n})</option>`).join("")
+    + (eventFilter.expediteur && !senders[eventFilter.expediteur] ? `<option value="${esc(eventFilter.expediteur)}" selected>${esc(eventFilter.expediteur)}</option>` : "");
   const filters = `<div class="filterbar">
       <select data-evfilter="statut">${opts(EVENT_STATUTS, eventFilter.statut, "Tous les statuts")}</select>
       <select data-evfilter="source">${opts(present("source", EVENT_SOURCES), eventFilter.source, "Toutes les sources")}</select>
-      <select data-evfilter="compte">${opts(present("compte", EVENT_COMPTES), eventFilter.compte, "Tous les comptes")}</select></div>`;
+      <select data-evfilter="compte">${opts(present("compte", EVENT_COMPTES), eventFilter.compte, "Tous les comptes")}</select>
+      <select data-evfilter="expediteur">${senderOpts}</select>
+      <label class="inline-check" style="margin:0;font-size:13px;white-space:nowrap"><input type="checkbox" data-ev-group ${eventGroup ? "checked" : ""}/> <span>Grouper par expéditeur</span></label></div>`;
   const items = filteredEvents();
+  const rows = (eventGroup && !eventFilter.expediteur ? clusterEvents(items) : items).map((x) => x.cluster ? eventClusterHtml(x) : eventRow(x)).join("");
   let info;
   if (eventStore) info = `${nb} nouveau${nb > 1 ? "x" : ""} · dernière réception ${eventStore.generatedAt ? esc(fmtDateTimeISO(eventStore.generatedAt)) : "—"}`;
   else if (eventLoading) info = "Lecture du fichier d'événements…";
@@ -2356,7 +2403,7 @@ function renderATraiter() {
   else info = eventError ? "Lecture impossible : " + esc(eventError) : "";
   const empty = all.length ? "Rien ne correspond à ces filtres." : "Aucun événement reçu pour l'instant.";
   return head + `<div class="muted" style="font-size:13px;margin-bottom:10px">${info}</div>` + filters
-    + `<div class="list">${items.length ? items.map(eventRow).join("") : `<div class="center-empty">${empty}</div>`}</div>
+    + `<div class="list">${items.length ? rows : `<div class="center-empty">${empty}</div>`}</div>
     <details class="ev-help"><summary class="muted" style="font-size:13px;cursor:pointer">Comment ça marche ?</summary>
       <div class="muted" style="font-size:13px;margin-top:6px">Le Mac mini classe tes mails et messages (urgence, action proposée, résumé) et les envoie toutes les 5 minutes au script relais
       <code>appsscript-relais-evenements.gs</code>, installé dans ton compte Google principal, qui les dépose dans « operations01-evenements.json ».
@@ -5249,6 +5296,17 @@ function wire() {
   const backEv = c.querySelector("[data-back-ev]"); if (backEv) backEv.onclick = () => { view.detailId = null; render(); };
   c.querySelectorAll("[data-open-task]").forEach((b) => b.onclick = () => openTask(b.dataset.openTask));
   c.querySelectorAll("[data-evfilter]").forEach((s) => s.onchange = () => { eventFilter[s.dataset.evfilter] = s.value; render(); });
+  c.querySelectorAll("[data-ev-group]").forEach((cb) => cb.onchange = () => { eventGroup = cb.checked; try { localStorage.setItem(EV_GROUP_KEY, eventGroup ? "1" : "0"); } catch (e) {} render(); });
+  c.querySelectorAll("[data-ev-cluster]").forEach((d) => d.addEventListener("toggle", () => { evClusterOpen[d.dataset.evCluster] = d.open; }));
+  // Boutons placés dans le résumé d'un bloc : ne pas déplier/replier le bloc au clic.
+  c.querySelectorAll("[data-ev-filter-sender]").forEach((b) => b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); eventFilter.expediteur = b.dataset.evFilterSender; render(); });
+  c.querySelectorAll("[data-ev-bulk]").forEach((b) => b.onclick = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const ids = (b.dataset.ids || "").split(",").filter(Boolean); if (!ids.length) return;
+    const statut = b.dataset.evBulk;
+    if (statut === "ignore" && !confirm(`Ignorer ces ${ids.length} messages ?`)) return;
+    setEventStatuts(ids, statut); toast(`${ids.length} message(s) ${statut === "traite" ? "traité(s)" : "ignoré(s)"} ✓`);
+  });
   c.querySelectorAll("[data-ev-statut]").forEach((b) => b.onclick = () => setEventStatut(b.dataset.id, b.dataset.evStatut));
   c.querySelectorAll("[data-ev-ignore-sender]").forEach((b) => b.onclick = () => {
     const ev = eventsAll().find((e) => e.id === b.dataset.evIgnoreSender); if (!ev) return;
