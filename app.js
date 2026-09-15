@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v85";
+const APP_VERSION = "v86";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -65,13 +65,24 @@ function save(opts) {
     state.syncT = now;          // dernière modification réelle (jamais avancée par une écriture silencieuse)
     stampChanges(state, now);   // date chaque fiche modifiée (fusion entre appareils)
   }
-  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  storeState();
   if (window.DriveSync && DriveSync.isConnected()) DriveSync.push(state);
+}
+// Écriture locale de l'état. Un stockage plein (Safari limite à ~5 Mo) ne doit
+// pas faire échouer l'action : on prévient, et le Drive reste à jour.
+let storeFullWarned = false;
+function storeState() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); return true; }
+  catch (e) {
+    reportError(e, "enregistrement local");
+    if (!storeFullWarned) { storeFullWarned = true; try { toast("Stockage de l'appareil plein : les données restent sur le Drive."); } catch (e2) {} }
+    return false;
+  }
 }
 // L'état venant de Drive (fusionné avec le nôtre) devient l'état courant.
 function adoptRemote(remote, why) {
   state = Object.assign(blankState(), remote);
-  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  storeState();
   rebuildStampIndex(state);
   render(); renderNotifBell();
   if (why) toast(why);
@@ -200,7 +211,7 @@ function applyRemote(remote) {
   const merged = mergeStates(syncBase, state, remote);
   setSyncBase(remote);
   state = Object.assign(blankState(), merged);
-  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  storeState();
   rebuildStampIndex(state);
   if (sigOf(state) !== sigOf(remote)) DriveSync.push(state);
 }
@@ -365,12 +376,68 @@ function openDetail(section, id) { view = { section, detailId: id }; render(); }
 
 // ----------------------------- Rendu -----------------------------
 function render() {
-  renderNav();
   const content = document.getElementById("content");
   const sec = SECTIONS.find((s) => s.id === view.section) || SECTIONS.find((s) => s.id === HOME_SECTION);
-  content.innerHTML = sec.fn();
-  wire();
-  renderNotifBell();
+  // Une erreur dans le dessin d'un écran ne doit jamais figer l'app : on l'affiche
+  // (message + où), on la garde en mémoire (menu Plus → « Dernière erreur ») et
+  // les autres écrans restent accessibles.
+  try {
+    renderNav();
+    content.innerHTML = sec.fn();
+    wire();
+    renderNotifBell();
+  } catch (e) {
+    reportError(e, "affichage de « " + sec.label + " »");
+    try { renderNav(); } catch (e2) {}
+    content.innerHTML = renderErrorCard(e, sec);
+    content.querySelectorAll("[data-err-retry]").forEach((b) => b.onclick = () => render());
+    content.querySelectorAll("[data-err-home]").forEach((b) => b.onclick = () => go(HOME_SECTION));
+    content.querySelectorAll("[data-err-details]").forEach((b) => b.onclick = showErrorPanel);
+  }
+}
+// ----------------------------- Erreurs : jamais silencieuses -----------------------------
+// Sur iPhone il n'y a pas de console : les erreurs sont mémorisées sur l'appareil
+// (5 dernières) et consultables dans le menu « Plus », avec un bouton « Copier »
+// pour les transmettre.
+const ERR_KEY = "op01_errors";
+const errorLog = () => { try { return JSON.parse(localStorage.getItem(ERR_KEY) || "[]") || []; } catch (e) { return []; } };
+function reportError(e, where) {
+  const msg = e && e.message ? e.message : String(e);
+  const stack = (e && e.stack ? String(e.stack) : "").split("\n").slice(0, 6).join("\n");
+  const entry = { t: new Date().toISOString(), v: APP_VERSION, where: where || "", msg, stack, section: view && view.section, ua: (typeof navigator !== "undefined" && navigator.userAgent || "").slice(0, 120) };
+  try { localStorage.setItem(ERR_KEY, JSON.stringify([entry].concat(errorLog()).slice(0, 5))); } catch (e2) {}
+  try { console.error("[choice]", where, e); } catch (e2) {}
+  return entry;
+}
+function clearErrors() { try { localStorage.removeItem(ERR_KEY); } catch (e) {} }
+function errorReportText() {
+  return errorLog().map((x) => `${x.t} · ${x.v} · ${x.where}\n${x.msg}\n${x.stack}\n${x.ua}`).join("\n\n");
+}
+function renderErrorCard(e, sec) {
+  const msg = e && e.message ? e.message : String(e);
+  return `<div class="page-title">${esc(sec.label)}</div>
+    <div class="card" style="border-left:4px solid #d9534f">
+      <div style="font-weight:600;margin-bottom:6px">Cet écran n'a pas pu s'afficher</div>
+      <div class="muted" style="font-size:14px;margin-bottom:10px">Erreur : <code>${esc(msg)}</code></div>
+      <div class="inline" style="flex-wrap:wrap;gap:8px">
+        <button class="btn small" data-err-retry>Réessayer</button>
+        <button class="btn ghost small" data-err-home>Revenir à l'accueil</button>
+        <button class="btn ghost small" data-err-details>Détails à transmettre</button></div></div>`;
+}
+function showErrorPanel() {
+  const list = errorLog();
+  showModal(`<div class="modal-head"><strong class="grow">Dernières erreurs</strong><button class="btn ghost small" data-modal-close>${icon("x")}</button></div>
+    ${list.length ? `<pre style="white-space:pre-wrap;font-size:12px;max-height:50vh;overflow:auto;background:var(--bg,#f4f6f6);padding:10px;border-radius:10px">${esc(errorReportText())}</pre>` : `<div class="muted">Aucune erreur enregistrée.</div>`}
+    <div class="inline" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+      ${list.length ? `<button class="btn small" data-err-copy>Copier</button><button class="btn ghost small" data-err-clear>Effacer</button>` : ""}</div>`);
+  document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
+  const cp = document.querySelector("[data-err-copy]");
+  if (cp) cp.onclick = () => { const txt = errorReportText(); const done = () => { cp.textContent = "Copié ✓"; }; if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, () => prompt("Copie ce texte :", txt)); else prompt("Copie ce texte :", txt); };
+  const cl = document.querySelector("[data-err-clear]"); if (cl) cl.onclick = () => { clearErrors(); closeModal(); };
+}
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("error", (ev) => { reportError(ev.error || new Error(ev.message || "erreur"), "script" + (ev.filename ? " " + String(ev.filename).split("/").pop() + ":" + ev.lineno : "")); });
+  window.addEventListener("unhandledrejection", (ev) => { reportError(ev.reason || new Error("promesse rejetée"), "tâche de fond"); });
 }
 // Compteur affiché à droite de chaque entrée du menu (null = rien).
 function navCount(id) {
@@ -404,7 +471,12 @@ function fmtDurationShort(sec) {
   const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
   return h > 0 ? `${h}h${m > 0 ? String(m).padStart(2, "0") : ""}` : `${m}min`;
 }
+// Le menu est aussi redessiné par des tâches de fond (pastilles) : une erreur là
+// ne doit pas remonter jusqu'au navigateur.
 function renderNav() {
+  try { renderNavInner(); } catch (e) { reportError(e, "menu"); }
+}
+function renderNavInner() {
   const sidebar = document.getElementById("sidebar");
   sidebar.querySelectorAll(".nav-item").forEach((n) => n.remove());
   const driveBar = document.getElementById("driveBar");
@@ -456,8 +528,10 @@ function showMoreSheet() {
     <button class="sheet-item" data-sheet-notifs><span class="ic">${icon("bell")}</span><span class="grow">Notifications</span>${n ? `<span class="nav-count">${n}</span>` : ""}</button>
     <div class="sheet-grid">${items}</div>
     ${driveSheetRow()}
-    <div class="sheet-foot"><span class="muted" style="font-size:13px">Version ${APP_VERSION}</span><button class="btn ghost small" data-sheet-backups>${icon("archive")} Sauvegardes</button><button class="btn ghost small" data-sheet-update>${icon("refresh")} Mettre à jour</button></div>`);
+    <div class="sheet-foot"><span class="muted" style="font-size:13px">Version ${APP_VERSION}</span><button class="btn ghost small" data-sheet-backups>${icon("archive")} Sauvegardes</button><button class="btn ghost small" data-sheet-update>${icon("refresh")} Mettre à jour</button></div>
+    ${errorLog().length ? `<div class="sheet-foot" style="border-top:0;padding-top:0"><button class="btn ghost small" data-sheet-errors style="color:#d9534f">${icon("alert")} Dernière erreur : ${esc(errorLog()[0].msg.slice(0, 60))}</button></div>` : ""}`);
   document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
+  const se = document.querySelector("[data-sheet-errors]"); if (se) se.onclick = () => { closeModal(); showErrorPanel(); };
   document.querySelectorAll("[data-sheet-go]").forEach((b) => b.onclick = () => { closeModal(); go(b.dataset.sheetGo); });
   const nb = document.querySelector("[data-sheet-notifs]"); if (nb) nb.onclick = () => { closeModal(); showNotifPanel(); };
   const bk = document.querySelector("[data-sheet-backups]"); if (bk) bk.onclick = () => { closeModal(); openBackups(); };
@@ -544,6 +618,7 @@ function readerDefaults() { return { kind: "md", font: "newyork", bg: "blanc", c
 let reader = loadReader();
 let readerLib = loadCache();      // [{id, name, size}] connus
 let readerBusy = false;           // chargement Drive en cours
+let readerFetched = false;        // liste déjà demandée au Drive (évite de la redemander en boucle quand elle est vide)
 function loadReader() {
   try {
     const r = JSON.parse(localStorage.getItem(READER_KEY) || "null");
@@ -580,7 +655,7 @@ function fmtSize(n) { return n >= 1048576 ? (n / 1048576).toFixed(1).replace("."
 async function refreshDocs(force) {
   if (!(window.DriveSync && DriveSync.isConnected())) return;
   if (readerBusy) return;
-  readerBusy = true; if (view.section === "reader") render();
+  readerBusy = true; readerFetched = true; if (view.section === "reader") render();
   try {
     const docs = await DriveSync.listDocs();
     const texts = {};
@@ -2303,6 +2378,11 @@ function todoElements() {
   return { els, lateTotal: late.length };
 }
 function renderTodo() {
+  // La to-do ne doit jamais empêcher l'écran de s'afficher : en cas d'erreur, un mot et on continue.
+  try { return renderTodoCard(); }
+  catch (e) { reportError(e, "to-do du jour"); return `<div class="card muted" style="font-size:13px">To-do du jour indisponible (${esc(e && e.message ? e.message : e)}).</div>`; }
+}
+function renderTodoCard() {
   const { els, lateTotal } = todoElements();
   const today = todayISO();
   const open = (() => { try { return localStorage.getItem(TODO_OPEN_KEY) !== "0"; } catch (e) { return true; } })();
@@ -4959,7 +5039,7 @@ function wire() {
   if (pdfrDl) pdfrDl.onclick = () => { const d = currentPdf(); if (pdfOpen && d) downloadBytes(d.name, pdfOpen.bytes); };
 
   // lecteur Markdown — les documents sont des fichiers sur le Drive
-  if (view.section === "reader" && !readerBusy && !readerLib.docs.length && window.DriveSync && DriveSync.isConnected()) refreshDocs();
+  if (view.section === "reader" && !readerBusy && !readerFetched && !readerLib.docs.length && window.DriveSync && DriveSync.isConnected()) refreshDocs();
   const mdRef = c.querySelector("[data-md-refresh]"); if (mdRef) mdRef.onclick = () => refreshDocs(true);
   const mdPrint = c.querySelector("[data-md-print]"); if (mdPrint) mdPrint.onclick = printCurrentDoc;
   const mdImp = c.querySelector("[data-md-import]");
