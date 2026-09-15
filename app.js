@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v86";
+const APP_VERSION = "v87";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -256,6 +256,7 @@ const ICONS = {
   refresh: '<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
   lightbulb: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6M10 22h4"/>',
+  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   edit: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
   archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
@@ -386,6 +387,7 @@ function render() {
     content.innerHTML = sec.fn();
     wire();
     renderNotifBell();
+    applyFocus(content);
   } catch (e) {
     reportError(e, "affichage de « " + sec.label + " »");
     try { renderNav(); } catch (e2) {}
@@ -2033,13 +2035,59 @@ function eventLink(ev) {
   }
   return "";
 }
+// Accents cassés venant du Mac mini (« relev茅s 脿 fournir ») : le texte UTF-8 a été
+// relu comme du GBK en amont. On refait le chemin inverse à l'affichage, seulement
+// si le résultat est de l'UTF-8 valide ; sinon le texte reste tel quel.
+let gbkMap = null;
+function gbkTable() {
+  if (gbkMap) return gbkMap;
+  gbkMap = new Map();
+  try {
+    const dec = new TextDecoder("gbk");
+    for (let a = 0x81; a <= 0xfe; a++) {
+      const buf = new Uint8Array(3 * 191); let n = 0;
+      for (let b = 0x40; b <= 0xfe; b++) { if (b === 0x7f) continue; buf[n++] = a; buf[n++] = b; buf[n++] = 0x0a; }
+      const parts = dec.decode(buf.subarray(0, n)).split("\n");
+      let i = 0;
+      for (let b = 0x40; b <= 0xfe; b++) { if (b === 0x7f) continue; const ch = parts[i++]; if (ch && ch.length === 1 && ch !== "�") gbkMap.set(ch, [a, b]); }
+    }
+  } catch (e) { gbkMap = new Map(); }
+  return gbkMap;
+}
+const MOJIBAKE_RE = /[一-鿿㐀-䶿　-〿＀-￯]/;
+function fixMojibake(s) {
+  s = String(s == null ? "" : s);
+  if (!MOJIBAKE_RE.test(s) || typeof TextDecoder === "undefined") return s;
+  const map = gbkTable(); if (!map.size) return s;
+  const bytes = [];
+  for (const ch of s) {
+    const cp = ch.codePointAt(0);
+    if (cp < 0x80) bytes.push(cp);
+    else { const p = map.get(ch); if (!p) return s; bytes.push(p[0], p[1]); }
+  }
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes)); } catch (e) { return s; }
+}
+function repairEvents(store) {
+  (store && store.evenements || []).forEach((e) => {
+    if (!e) return;
+    e.sujet = fixMojibake(e.sujet); e.resume = fixMojibake(e.resume);
+    if (e.expediteur) e.expediteur.nom = fixMojibake(e.expediteur.nom);
+    const p = e.proposition;
+    if (p) {
+      if (p.reponse) p.reponse = fixMojibake(p.reponse);
+      if (p.tache && p.tache.titre) p.tache.titre = fixMojibake(p.tache.titre);
+      if (Array.isArray(p.processus)) p.processus.forEach((s) => { if (s && s.etape) s.etape = fixMojibake(s.etape); });
+    }
+  });
+  return store;
+}
 async function loadEvenements() {
   if (!eventsReady() || eventLoading) return;
   eventLoadedAt = Date.now(); eventLoading = true;
   if (eventVisible()) render();
   try {
     const d = await DriveSync.readEvenements();
-    if (d) { applyEventDecisions(d); eventStore = d; eventError = ""; } else eventError = "absent";
+    if (d) { repairEvents(d); applyEventDecisions(d); eventStore = d; eventError = ""; } else eventError = "absent";
   } catch (e) { eventError = e.message || "erreur"; }
   eventLoading = false;
   if (eventVisible()) render(); else renderNav();
@@ -2107,7 +2155,7 @@ async function flushEventDecisions() {
       await DriveSync.writeEvenements(fresh._fileId, out);
       // Décisions écrites : on ne garde que celles arrivées pendant l'écriture.
       Object.keys(applied).forEach((k) => { if (eventDecisions[k] === applied[k]) delete eventDecisions[k]; });
-      eventStore = fresh; eventLoadedAt = Date.now();
+      repairEvents(fresh); eventStore = fresh; eventLoadedAt = Date.now();
       if (eventVisible()) render(); else renderNav();
       return true;
     }
@@ -2188,7 +2236,7 @@ function eventToStepTasks(ev) {
   save();
   return out;
 }
-function eventProposal(ev) {
+function eventProposal(ev, open) {
   const p = ev.proposition;
   if (!p || (!p.reponse && !p.tache)) return "";
   const compose = eventComposeLink(ev);
@@ -2199,7 +2247,7 @@ function eventProposal(ev) {
       <input type="checkbox" data-ev-step="${ev.id}" data-i="${i}" ${done.indexOf(i) > -1 ? "checked" : ""}/>
       <span class="grow">${i + 1}. ${esc(s.etape)}</span>${s.estimationMin ? `<span class="muted">${esc(fmtEstim(s.estimationMin))}</span>` : ""}</label>`).join("")}
     <div class="muted" style="font-size:12px;margin-top:4px">${done.length}/${steps.length} étapes faites${stepsTotal ? ` · ${esc(fmtEstim(stepsTotal))} au total` : ""}</div></div>` : "";
-  return `<details class="ev-prop"><summary>${icon("lightbulb")} Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}</summary>
+  return `<details class="ev-prop" ${open ? "open" : ""}><summary>${icon("lightbulb")} Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}</summary>
     ${p.reponse ? `<div class="ev-draft">${esc(p.reponse)}</div>
       <div class="ev-actions"><button class="btn ghost small" data-ev-copy="${ev.id}">Copier</button>
         ${compose ? `<a class="btn secondary small" href="${esc(compose)}" target="_blank" rel="noopener">${icon("mail")} Répondre dans Gmail</a>` : ""}
@@ -2215,8 +2263,24 @@ function eventRow(ev) {
   const who = from.nom || from.adresse || "?";
   const sub = [esc(who), from.nom && from.adresse ? esc(from.adresse) : "", icon(EVENT_SOURCE_ICONS[ev.source] || "message") + " " + esc(EVENT_SOURCES[ev.source] || ev.source || ""),
     esc(EVENT_COMPTES[ev.compte] || ev.compte || ""), esc(fmtDateTimeISO(ev.recu_le))].filter(Boolean).join(" · ");
+  return `<div class="row ev-row ev-u${u}${st !== "nouveau" ? " ev-done" : ""}" data-ev="${ev.id}">
+    <div class="grow">
+      <div class="r-head"><span class="r-title ev-title" data-ev-open="${ev.id}" title="Ouvrir la page de ce message">${esc(eventTitle(ev))}</span><span class="badge ev-urg u${u}" title="Urgence ${u}">${EVENT_URGENCES[u]}</span></div>
+      <div class="r-sub">${sub}</div>
+      ${ev.resume && ev.resume !== ev.sujet ? `<div class="ev-resume">${esc(ev.resume)}</div>` : ""}
+      ${eventProposal(ev)}
+      <div class="ev-actions">
+        <span class="pm-tag ev-act" title="Action proposée${ev.classifieur ? " (" + esc(ev.classifieur) + ")" : ""}">→ ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")}</span>
+        <button class="btn ghost small" data-ev-open="${ev.id}">Détails</button>
+        ${link ? `<a class="btn ghost small" href="${esc(link)}" target="_blank" rel="noopener">Ouvrir</a>` : ""}
+        <span class="grow"></span>${eventButtons(ev)}
+      </div></div></div>`;
+}
+// Boutons de décision, communs à la ligne et à la page de détail.
+function eventButtons(ev) {
+  const st = eventStatut(ev);
   const sameSender = st === "nouveau" ? eventsFromSameSender(ev).length : 0;
-  const buttons = st === "nouveau"
+  return st === "nouveau"
     ? `<button class="btn secondary small" data-ev-action="${ev.id}" title="Créer une action à suivre">🎫 Action</button>
        <button class="btn secondary small" data-ev-task="${ev.id}" title="Créer une tâche">✅ Tâche</button>
        ${sameSender > 1 ? `<button class="btn ghost small" data-ev-ignore-sender="${ev.id}" title="Ignorer les ${sameSender} événements nouveaux de cet expéditeur">Ignorer l'expéditeur (${sameSender})</button>` : ""}
@@ -2224,19 +2288,55 @@ function eventRow(ev) {
        <button class="btn small" data-ev-statut="traite" data-id="${ev.id}">Traité</button>`
     : `<span class="muted" style="font-size:13px">${st === "traite" ? "Traité" : "Ignoré"}${ev.traiteLe ? " le " + esc(fmtDateTimeISO(ev.traiteLe)) : ""}</span>
        <button class="btn ghost small" data-ev-statut="nouveau" data-id="${ev.id}">Rouvrir</button>`;
-  return `<div class="row ev-row ev-u${u}${st !== "nouveau" ? " ev-done" : ""}" data-ev="${ev.id}">
-    <div class="grow">
-      <div class="r-head"><span class="r-title">${esc(eventTitle(ev))}</span><span class="badge ev-urg u${u}" title="Urgence ${u}">${EVENT_URGENCES[u]}</span></div>
-      <div class="r-sub">${sub}</div>
-      ${ev.resume && ev.resume !== ev.sujet ? `<div class="ev-resume">${esc(ev.resume)}</div>` : ""}
-      ${eventProposal(ev)}
-      <div class="ev-actions">
-        <span class="pm-tag ev-act" title="Action proposée${ev.classifieur ? " (" + esc(ev.classifieur) + ")" : ""}">→ ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")}</span>
-        ${link ? `<a class="btn ghost small" href="${esc(link)}" target="_blank" rel="noopener">Ouvrir</a>` : ""}
-        <span class="grow"></span>${buttons}
-      </div></div></div>`;
+}
+// Liste courante : filtres de l'onglet, tri par urgence puis date.
+function filteredEvents() {
+  return sortEvents(eventsAll().filter((e) => (!eventFilter.statut || eventStatut(e) === eventFilter.statut)
+    && (!eventFilter.source || e.source === eventFilter.source) && (!eventFilter.compte || e.compte === eventFilter.compte)));
+}
+// Page d'un message (absente du menu) : tout ce qu'on sait et ce que l'assistant
+// recommande, avec les mêmes décisions que dans la liste. Précédent / Suivant
+// suivent l'ordre de la liste.
+function renderEventDetail(id) {
+  const back = `<button class="back" data-back-ev>‹ À traiter</button>`;
+  const ev = eventsAll().find((e) => e.id === id);
+  if (!ev) return back + `<div class="center-empty">${eventLoading ? "Lecture des événements…" : "Ce message n'est plus dans la liste (fichier mis à jour par le relais)."}</div>`;
+  const u = eventUrgence(ev), st = eventStatut(ev), from = eventFrom(ev), link = eventLink(ev), p = ev.proposition || {};
+  const list = filteredEvents(), idx = list.findIndex((e) => e.id === id);
+  const prev = idx > 0 ? list[idx - 1] : null, next = idx > -1 && idx < list.length - 1 ? list[idx + 1] : null;
+  const nav = idx > -1 && list.length > 1
+    ? `<div class="inline muted ev-nav" style="font-size:13px;gap:8px"><button class="btn ghost small" data-ev-nav="${prev ? prev.id : ""}" ${prev ? "" : "disabled"}>‹ Précédent</button><span>${idx + 1} / ${list.length}</span><button class="btn ghost small" data-ev-nav="${next ? next.id : ""}" ${next ? "" : "disabled"}>Suivant ›</button></div>`
+    : "";
+  const conf = ev.confiance != null && ev.confiance !== "" ? Math.round(Number(ev.confiance) * 100) + " %" : "";
+  const meta = [
+    ["Expéditeur", (from.nom || from.adresse) ? `${esc(from.nom || "")}${from.adresse ? ` <span class="muted">${esc(from.adresse)}</span>` : ""}` : ""],
+    ["Canal", `${icon(EVENT_SOURCE_ICONS[ev.source] || "message")} ${esc(EVENT_SOURCES[ev.source] || ev.source || "")}${ev.compte ? ` · ${esc(EVENT_COMPTES[ev.compte] || ev.compte)}` : ""}`],
+    ["Reçu", esc(fmtDateTimeISO(ev.recu_le))],
+    ["Statut", st === "nouveau" ? "Nouveau" : (st === "traite" ? "Traité" : "Ignoré") + (ev.traiteLe ? " le " + esc(fmtDateTimeISO(ev.traiteLe)) : "")],
+    ["Classé par", ev.classifieur ? `${esc(ev.classifieur)}${conf ? ` <span class="muted">(confiance ${conf})</span>` : ""}` : ""]
+  ].filter((x) => x[1]).map(([k, v]) => `<span class="muted">${k}</span><span>${v}</span>`).join("");
+  const tasks = state.tasks.filter((t) => t.eventId === ev.id);
+  const same = eventsFromSameSender(ev).filter((e) => e.id !== ev.id);
+  const reco = (p.reponse || (p.tache && p.tache.titre) || eventSteps(ev).length)
+    ? eventProposal(ev, true)
+    : `<div class="muted" style="font-size:14px">Pas de proposition détaillée de l'assistant pour ce message : action suggérée « ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")} ».</div>`;
+  return `${back}
+    <div class="ev-detail">
+      <div class="ev-head"><div class="page-title">${esc(eventTitle(ev))}</div>${nav}</div>
+      <div class="inline" style="gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <span class="badge ev-urg u${u}">${EVENT_URGENCES[u]}</span>
+        <span class="pm-tag ev-act">→ ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")}</span>
+        ${link ? `<a class="btn ghost small" href="${esc(link)}" target="_blank" rel="noopener">${icon("external")} Ouvrir le message</a>` : ""}</div>
+      <div class="card"><div class="ev-meta">${meta}</div></div>
+      ${ev.resume ? `<div class="card"><div class="section-h" style="margin-top:0">Résumé</div><div class="ev-resume" style="margin-top:0">${esc(ev.resume)}</div></div>` : ""}
+      <div class="card"><div class="section-h" style="margin-top:0">Recommandation</div>${reco}</div>
+      ${tasks.length ? `<div class="card"><div class="section-h" style="margin-top:0">Tâches créées depuis ce message</div>${tasks.map((t) => `<div class="brief-row" data-open-task="${t.id}"><span class="brief-main">${taskDone(t) ? "✓ " : ""}${esc(t.title)}</span>${t.dueDate ? `<span class="muted" style="font-size:13px">${esc(fmtDate(t.dueDate))}</span>` : ""}</div>`).join("")}</div>` : ""}
+      ${same.length ? `<div class="card"><div class="section-h" style="margin-top:0">Du même expéditeur, à traiter (${same.length})</div>${same.map((e) => `<div class="brief-row" data-ev-open="${e.id}"><span class="badge ev-urg u${eventUrgence(e)}">${EVENT_URGENCES[eventUrgence(e)]}</span><span class="brief-main">${esc(eventTitle(e))}</span><span class="muted" style="font-size:13px">${esc(fmtDateTimeISO(e.recu_le))}</span></div>`).join("")}</div>` : ""}
+      <div class="card"><div class="section-h" style="margin-top:0">Décision</div><div class="ev-actions" style="margin-top:0">${eventButtons(ev)}</div></div>
+    </div>`;
 }
 function renderATraiter() {
+  if (view.detailId) return renderEventDetail(view.detailId);
   const head = `<div class="toolbar nowrap"><div class="page-title grow" style="margin:0">À traiter</div>
       <button class="btn secondary small" data-ev-refresh ${eventLoading ? "disabled" : ""}>${eventLoading ? "…" : icon("refresh") + " Rafraîchir"}</button></div>`;
   if (!(window.DriveSync && DriveSync.isConnected()))
@@ -2248,8 +2348,7 @@ function renderATraiter() {
       <select data-evfilter="statut">${opts(EVENT_STATUTS, eventFilter.statut, "Tous les statuts")}</select>
       <select data-evfilter="source">${opts(present("source", EVENT_SOURCES), eventFilter.source, "Toutes les sources")}</select>
       <select data-evfilter="compte">${opts(present("compte", EVENT_COMPTES), eventFilter.compte, "Tous les comptes")}</select></div>`;
-  const items = sortEvents(all.filter((e) => (!eventFilter.statut || eventStatut(e) === eventFilter.statut)
-    && (!eventFilter.source || e.source === eventFilter.source) && (!eventFilter.compte || e.compte === eventFilter.compte)));
+  const items = filteredEvents();
   let info;
   if (eventStore) info = `${nb} nouveau${nb > 1 ? "x" : ""} · dernière réception ${eventStore.generatedAt ? esc(fmtDateTimeISO(eventStore.generatedAt)) : "—"}`;
   else if (eventLoading) info = "Lecture du fichier d'événements…";
@@ -2488,11 +2587,38 @@ function markBriefDone(type, id) {
   if (t) { setTaskProgress(t, 100); save(); render(); }
 }
 function openBriefElement(type, id) {
-  if (type === "evenement") { eventFilter.statut = ""; go("atraiter"); return; }
+  if (type === "evenement") { openEvent(id); return; }
   if (type === "rdv") { go("rendezvous"); return; }
+  openTask(id);
+}
+// Page du message : si les filtres de l'onglet le cachent (déjà traité), on les élargit
+// pour que Précédent / Suivant et le retour à la liste restent cohérents.
+function openEvent(id) {
+  const ev = eventsAll().find((e) => e.id === id);
+  if (ev && eventFilter.statut && eventStatut(ev) !== eventFilter.statut) eventFilter.statut = "";
+  openDetail("atraiter", id);
+}
+// Ouvre l'écran où vit la tâche (gestion du projet, sinon Tâches) et la met en évidence.
+// La mise en évidence survit aux redessins qui suivent l'ouverture (chargements
+// de fond) : elle est réappliquée pendant quelques secondes, le défilement une seule fois.
+let focusTask = null;   // { id, until, scrolled }
+function openTask(id) {
   const t = state.tasks.find((x) => x.id === id);
+  focusTask = t ? { id, until: Date.now() + 4000, scrolled: false } : null;
   if (t && t.missionId && findMission(t.missionId)) { projectTab = "gestion"; projectTabFor = t.missionId; openDetail("missions", t.missionId); }
   else go("tasks");
+}
+function applyFocus(content) {
+  if (!focusTask) return;
+  if (Date.now() > focusTask.until) { focusTask = null; return; }
+  const el = content.querySelector(`[data-task-card="${focusTask.id}"], [data-t="${focusTask.id}"]`);
+  if (!el) return;
+  const box = (el.closest && el.closest("tr, .kb-card, .row")) || el;
+  if (box.classList) box.classList.add("flash");
+  if (!focusTask.scrolled && box.scrollIntoView) {
+    focusTask.scrolled = true;
+    setTimeout(() => { try { box.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {} }, 60);
+  }
 }
 
 // ---- Import de tâches dans un projet (JSON ou CSV) ----
@@ -5118,6 +5244,10 @@ function wire() {
 
   // à traiter (événements du Mac mini)
   c.querySelectorAll("[data-ev-refresh]").forEach((b) => b.onclick = loadEvenements);
+  c.querySelectorAll("[data-ev-open]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); openEvent(b.dataset.evOpen); });
+  c.querySelectorAll("[data-ev-nav]").forEach((b) => b.onclick = () => { if (b.dataset.evNav) openDetail("atraiter", b.dataset.evNav); });
+  const backEv = c.querySelector("[data-back-ev]"); if (backEv) backEv.onclick = () => { view.detailId = null; render(); };
+  c.querySelectorAll("[data-open-task]").forEach((b) => b.onclick = () => openTask(b.dataset.openTask));
   c.querySelectorAll("[data-evfilter]").forEach((s) => s.onchange = () => { eventFilter[s.dataset.evfilter] = s.value; render(); });
   c.querySelectorAll("[data-ev-statut]").forEach((b) => b.onclick = () => setEventStatut(b.dataset.id, b.dataset.evStatut));
   c.querySelectorAll("[data-ev-ignore-sender]").forEach((b) => b.onclick = () => {

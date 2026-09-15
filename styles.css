@@ -580,3 +580,21 @@ label.field.inline-check > span { margin-bottom: 0; }
 .brief.todo > summary { list-style: none; cursor: pointer; }
 .brief.todo > summary::-webkit-details-marker { display: none; }
 .brief.todo:not([open]) > summary { margin-bottom: 0; }
+
+/* Page d'un message « à traiter » */
+.ev-title { cursor: pointer; }
+.ev-title:hover { color: var(--primary); text-decoration: underline; }
+.ev-detail .card { margin-bottom: 12px; }
+.ev-detail .ev-prop { border: 0; padding: 0; margin-top: 0; }
+.ev-detail .ev-prop > summary { display: none; }
+.ev-detail .ev-draft { font-size: 15px; }
+.ev-meta { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 14px; align-items: baseline; }
+.ev-meta .i { vertical-align: -2px; }
+.ev-head { display: flex; align-items: flex-start; gap: 10px 16px; flex-wrap: wrap; margin-bottom: 10px; }
+.ev-head .page-title { flex: 1 1 320px; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.ev-nav { margin-left: auto; }
+.ev-nav span { white-space: nowrap; }
+@media (max-width: 720px) { .ev-meta { grid-template-columns: 1fr; gap: 2px; } .ev-meta .muted:not(:first-child) { margin-top: 6px; } }
+/* Mise en évidence de la ligne visée (ouverture depuis la to-do ou un message) */
+@keyframes flashRow { 0%, 45% { background-color: rgba(24,193,216,.22); } 100% { background-color: transparent; } }
+.flash, tr.flash > td { animation: flashRow 2.6s ease-out; }
