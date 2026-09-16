@@ -614,3 +614,13 @@ label.field.inline-check > span { margin-bottom: 0; }
 .mail-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .mail-frame { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #fff; min-height: 120px; display: block; }
 .mail-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.mail-box { font-weight: 400; font-size: 13px; margin-left: 6px; }
+
+/* Expéditeurs prioritaires */
+.vip-box { margin: 4px 0 12px; }
+.vip-chip { display: inline-flex; align-items: center; gap: 4px; }
+.vip-chip .i { width: 13px; height: 13px; }
+.chip-x { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 12px; }
+.chip-x:hover { color: #d23c3c; }
+.badge.vip-star { padding: 3px 6px; } .badge.vip-star .i { width: 12px; height: 12px; vertical-align: -2px; }
+.btn.vip-on { color: #a35a12; background: rgba(240,140,46,.18); }

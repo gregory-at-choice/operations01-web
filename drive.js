@@ -90,6 +90,8 @@
   // tant que la session Google de l'appareil est ouverte : c'est le renouvellement
   // « invisible » sur Safari, où le renouvellement en arrière-plan est bloqué.
   const STATE_KEY = "op01_oauth_state";
+  const MAIL_FAIL_KEY = "op01_mailSilentFail";      // dernier refus silencieux pour une boîte supplémentaire
+  let mailBack = null;                              // retour de Google pour une boîte supplémentaire
   const SILENT_AT_KEY = "op01_silentAuthAt";      // dernière tentative silencieuse (anti-boucle)
   const SILENT_FAIL_KEY = "op01_silentAuthFail";  // dernier refus de Google en silencieux
   const SILENT_RETRY = 10 * 60000;                // pas deux tentatives silencieuses en moins de 10 min
@@ -131,8 +133,18 @@
     let saved = null;
     try { saved = localStorage.getItem(STATE_KEY); localStorage.removeItem(STATE_KEY); } catch (e) {}
     if (saved && p.get("state") !== saved) return false;
-    const silent = /\.s$/.test(p.get("state") || "");
+    const st = p.get("state") || "";
+    const silent = /\.s$/.test(st);
     const clean = () => { try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { location.hash = ""; } };
+    // Retour d'une autorisation pour une boîte Gmail supplémentaire (« .m » / « .ms ») :
+    // le jeton n'est PAS celui de la session principale. L'adresse de la boîte est
+    // demandée à Gmail juste après (voir mailLinkPending).
+    if (/\.ms?$/.test(st)) {
+      mailBack = { tok, expiresIn: p.get("expires_in"), silent: /\.ms$/.test(st), error: tok ? null : (p.get("error") || "refus") };
+      if (!tok && mailBack.silent) { try { localStorage.setItem(MAIL_FAIL_KEY, String(Date.now())); } catch (e) {} }
+      clean();
+      return false;
+    }
     if (!tok) {
       // Google a refusé (session fermée, plusieurs comptes…) : en silencieux on
       // n'insiste pas pendant une heure, l'utilisateur reprend la main.
@@ -293,16 +305,18 @@
   // Tout appel réseau est borné dans le temps : une requête qui reste en suspens
   // (réseau mobile capricieux) ne doit pas figer la synchronisation.
   const FETCH_TIMEOUT = 15000;
-  async function api(url, opts, retried) {
+  // `tokenOverride` : jeton d'une boîte Gmail supplémentaire (voir plus bas) ; dans
+  // ce cas un refus d'authentification n'est pas rejoué, il est signalé (« reauth »).
+  async function api(url, opts, retried, tokenOverride) {
     const o = opts || {};
-    await ensureToken(false);
+    const tok = tokenOverride || await ensureToken(false);
     const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
     const timer = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, FETCH_TIMEOUT) : null;
     let r;
     try {
       r = await fetch(url, Object.assign({}, o, {
         signal: ctrl ? ctrl.signal : undefined,
-        headers: Object.assign({ Authorization: "Bearer " + accessToken }, o.headers || {})
+        headers: Object.assign({ Authorization: "Bearer " + tok }, o.headers || {})
       }));
     } finally { if (timer) clearTimeout(timer); }
     // Un 403 n'est pas forcément un problème de jeton : « API non activée »,
@@ -316,6 +330,9 @@
         const m = (j.error && (j.error.message || "")) || "";
         authProblem = /insufficient authentication scopes|invalid credentials|invalid_token|access token/i.test(m);
       } catch (e) {}
+    }
+    if (authProblem && tokenOverride) {
+      const err = new Error("Autorisation de cette boîte à renouveler."); err.code = "reauth"; err.status = r.status; throw err;
     }
     if (authProblem && !retried) {
       // jeton révoqué ou expiré côté Google : on en redemande un et on rejoue une fois
@@ -565,27 +582,115 @@
     if (mime === "text/html") { if (!out.html) out.html = text; }
     else if (mime === "text/plain" || !mime) { if (!out.text) out.text = text; }
   }
+  // ---- Boîtes Gmail supplémentaires ----
+  // La session principale (Drive, agenda, Gmail) est celle du compte de l'app.
+  // Pour lire les mails des autres comptes (Icarus, Majandco, Gmail perso), un jeton
+  // Gmail lecture seule est demandé par boîte, avec choix de compte explicite, et
+  // mémorisé sur l'appareil comme le jeton principal. { adresse: { t, exp } }
+  const GMAIL_ACCOUNTS_KEY = "op01_gmailAccounts";
+  let gmailAccounts = (() => { try { return JSON.parse(localStorage.getItem(GMAIL_ACCOUNTS_KEY) || "{}") || {}; } catch (e) { return {}; } })();
+  const saveGmailAccounts = () => { try { localStorage.setItem(GMAIL_ACCOUNTS_KEY, JSON.stringify(gmailAccounts)); } catch (e) {} };
+  const gmailAccountList = () => Object.keys(gmailAccounts);
+  const gmailAccountValid = (email) => { const a = gmailAccounts[email]; return !!(a && a.t && a.exp > Date.now()); };
+  function removeGmailAccount(email) { delete gmailAccounts[email]; saveGmailAccounts(); }
+  function setGmailAccountToken(email, tok, expiresIn) {
+    gmailAccounts[email] = { t: tok, exp: Date.now() + Math.max(60, (Number(expiresIn) || 3600) - 120) * 1000 };
+    saveGmailAccounts();
+  }
+  async function gmailProfile(tok) {
+    const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", { headers: { Authorization: "Bearer " + tok } });
+    if (!r.ok) throw new Error("Profil Gmail illisible (HTTP " + r.status + ")");
+    const j = await r.json();
+    return String(j.emailAddress || "").toLowerCase();
+  }
+  // Jeton d'une boîte via le script Google (ordinateur). interactive = ajout ou
+  // reconnexion (fenêtre Google, doit partir d'un clic) ; sinon renouvellement discret.
+  function requestMailToken(hint, interactive) {
+    return new Promise((resolve, reject) => {
+      if (!ready()) { reject(new Error("Script Google indisponible.")); return; }
+      let settled = false;
+      const done = (err, resp) => { if (settled) return; settled = true; if (err) reject(err); else resolve(resp); };
+      const client = google.accounts.oauth2.initTokenClient({ client_id: cfg.googleClientId, scope: GMAIL_SCOPE, callback: () => {} });
+      client.callback = (resp) => { if (resp && resp.access_token) done(null, resp); else done(new Error("Autorisation Google refusée.")); };
+      client.error_callback = () => done(new Error(interactive ? "Fenêtre Google fermée ou bloquée." : "Renouvellement silencieux impossible."));
+      setTimeout(() => done(new Error(interactive ? "La fenêtre Google n'a pas répondu." : "Renouvellement silencieux sans réponse.")), interactive ? POPUP_TIMEOUT : SILENT_TIMEOUT);
+      const req = { prompt: interactive ? (hint ? "consent" : "select_account consent") : "" };
+      if (hint) req.hint = hint;
+      try { client.requestAccessToken(req); } catch (e) { done(e); }
+    });
+  }
+  // Redirection pleine page (iOS) : état marqué « .m » (ajout / reconnexion) ou « .ms » (renouvellement invisible).
+  function startMailRedirect(hint, silent) {
+    const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36) + (silent ? ".ms" : ".m");
+    try { localStorage.setItem(STATE_KEY, nonce); if (silent) localStorage.setItem(SILENT_AT_KEY, String(Date.now())); } catch (e) {}
+    const p = new URLSearchParams({ client_id: cfg.googleClientId, redirect_uri: redirectURI(), response_type: "token", scope: GMAIL_SCOPE, state: nonce,
+      prompt: silent ? "none" : (hint ? "consent" : "select_account consent") });
+    if (hint) p.set("login_hint", hint);
+    redirecting = true;
+    setTimeout(() => { redirecting = false; }, 20000);
+    beforeRedirect.forEach((fn) => { try { fn(); } catch (e) {} });
+    location.assign("https://accounts.google.com/o/oauth2/v2/auth?" + p.toString());
+  }
+  // Ajoute (ou reconnecte) une boîte : clic de l'utilisateur. Renvoie l'adresse
+  // reliée, ou null quand une redirection est en cours (iOS).
+  async function addGmailAccount(hint) {
+    if (isIOS()) { setStatus("redirection vers Google…"); startMailRedirect(hint || null, false); return null; }
+    const resp = await requestMailToken(hint || null, true);
+    const email = await gmailProfile(resp.access_token);
+    setGmailAccountToken(email, resp.access_token, resp.expires_in);
+    return email;
+  }
+  // Retour de redirection pour une boîte : l'adresse est lue dans Gmail, le jeton rangé.
+  const mailLinkPending = (mailBack && mailBack.tok)
+    ? gmailProfile(mailBack.tok).then((email) => { setGmailAccountToken(email, mailBack.tok, mailBack.expiresIn); return email; }).catch(() => null)
+    : Promise.resolve(null);
+  function canMailSilentRedirect() {
+    let at = 0, fail = 0;
+    try { at = Number(localStorage.getItem(SILENT_AT_KEY)) || 0; fail = Number(localStorage.getItem(MAIL_FAIL_KEY)) || 0; } catch (e) {}
+    const now = Date.now();
+    return !redirecting && now - at > SILENT_RETRY && now - fail > SILENT_FAIL_COOLDOWN;
+  }
+  // Jeton valable pour une boîte, renouvelé discrètement si possible ; sinon erreur
+  // « reauth » (bouton « Reconnecter la boîte ») ou « renewing » (redirection partie).
+  async function gmailTokenFor(email) {
+    if (gmailAccountValid(email)) return gmailAccounts[email].t;
+    if (!gmailAccounts[email]) { const e = new Error("Boîte non reliée."); e.code = "off"; throw e; }
+    if (!isIOS() && ready()) {
+      try { const resp = await requestMailToken(email, false); setGmailAccountToken(email, resp.access_token, resp.expires_in); return resp.access_token; }
+      catch (e) { /* on passe au bouton */ }
+    } else if (isIOS() && canMailSilentRedirect() && silentGate()) {
+      startMailRedirect(email, true);
+      const e = new Error("Renouvellement en cours."); e.code = "renewing"; throw e;
+    }
+    const e = new Error("Autorisation de la boîte " + email + " à renouveler."); e.code = "reauth"; throw e;
+  }
   // Lit un message par son Message-ID (celui que le Mac mini transmet dans external_id).
-  async function readMail(externalId) {
+  // `email` : boîte supplémentaire ; sans lui, la boîte du compte principal.
+  async function readMail(externalId, email) {
     if (!hasSession()) throw new Error("Non connecté.");
-    if (!gmailGranted()) { const e = new Error("Gmail non relié."); e.code = "off"; throw e; }
+    let tok = null;
+    if (email) { tok = await gmailTokenFor(email); }
+    else if (!gmailGranted()) { const e = new Error("Gmail non relié."); e.code = "off"; throw e; }
     const id = String(externalId || "").trim().replace(/^<|>$/g, "");
     if (!id) { const e = new Error("Message sans identifiant."); e.code = "notfound"; throw e; }
     const q = encodeURIComponent("rfc822msgid:" + id);
-    const r = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${q}&maxResults=1`);
+    let r;
+    try { r = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${q}&maxResults=1`, null, false, tok); }
+    catch (e) { if (e.code === "reauth" && email) { gmailAccounts[email].exp = 0; saveGmailAccounts(); } throw e; }
     const j = await r.json();
     const m = j && j.messages && j.messages[0];
     if (!m) { const e = new Error("Message introuvable dans cette boîte."); e.code = "notfound"; throw e; }
-    const r2 = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(m.id)}?format=full`);
+    const r2 = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(m.id)}?format=full`, null, false, tok);
     const msg = await r2.json();
-    const out = { id: msg.id, threadId: msg.threadId, html: "", text: "", attachments: [], headers: {}, labels: msg.labelIds || [], account: loginHint || "" };
+    const out = { id: msg.id, threadId: msg.threadId, html: "", text: "", attachments: [], headers: {}, labels: msg.labelIds || [], account: email || loginHint || "" };
     ["From", "To", "Cc", "Date", "Subject"].forEach((h) => { out.headers[h.toLowerCase()] = headerOf(msg.payload && msg.payload.headers, h); });
     walkParts(msg.payload, out);
     return out;
   }
   // Pièce jointe : octets + base64 standard (pour les images intégrées en data:).
-  async function readAttachment(msgId, attId) {
-    const r = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(msgId)}/attachments/${encodeURIComponent(attId)}`);
+  async function readAttachment(msgId, attId, email) {
+    const tok = email ? await gmailTokenFor(email) : null;
+    const r = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(msgId)}/attachments/${encodeURIComponent(attId)}`, null, false, tok);
     const j = await r.json();
     return { bytes: b64urlBytes(j.data || ""), b64: b64std(j.data || "") };
   }
@@ -947,7 +1052,7 @@
     // est momentanément expiré (il sera renouvelé silencieusement).
     isConnected: () => !!accessToken || hasSession(),
     needsAuth: () => needsAuth,
-    cameBack: () => cameBackFromGoogle,
+    cameBack: () => cameBackFromGoogle || !!mailBack,
     redirecting: () => redirecting,
     lastRedirectError: () => redirectError,
     onBeforeRedirect: (fn) => beforeRedirect.push(fn),
@@ -991,6 +1096,12 @@
     readMail,
     readAttachment,
     account: () => loginHint || "",
+    gmailAccounts: gmailAccountList,
+    gmailAccountValid,
+    addGmailAccount,
+    removeGmailAccount,
+    mailLinkPending: () => mailLinkPending,
+    cameBackMail: () => !!mailBack,
     listDocs,
     uploadDoc,
     readDoc,

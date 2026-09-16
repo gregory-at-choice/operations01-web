@@ -112,7 +112,9 @@ rien n'est envoyé, déplacé ni supprimé, et le contenu n'est pas conservé su
 3. Dans l'app : ouvrez un message → **Relier ma boîte Gmail** → sur l'écran Google, laissez la
    case de lecture des e-mails cochée → Autoriser.
 
-Seule la boîte du compte Google relié à l'app est lue. Les messages venant d'un autre compte
-(Icarus, Majandco, Gmail perso…) gardent le bouton « Ouvrir dans Gmail ». Les images distantes
-sont bloquées tant que vous ne cliquez pas « Afficher les images » (pas de pixel de suivi).
-« Délier » retire l'accès à tout moment.
+La boîte du compte Google relié à l'app est lue avec la session principale. Pour les messages
+venant d'un autre compte (Icarus, Majandco, Gmail perso…), la carte propose **« Relier la boîte
+<adresse> »** : Google demande de choisir ce compte, et un jeton de lecture seule propre à cette
+boîte est mémorisé sur l'appareil (à refaire une fois par appareil). Les images distantes sont
+bloquées tant que vous ne cliquez pas « Afficher les images » (pas de pixel de suivi).
+« Délier » retire l'accès à tout moment, boîte par boîte.
