@@ -28,7 +28,7 @@
  *     erreurs:[{ fileId, nom, erreur }] }
  *   montant : négatif = débit, positif = crédit. Dates en AAAA-MM-JJ.
  */
-var VERSION = 4;
+var VERSION = 5;
 var FICHIER_BANQUE = "operations01-banque.json";
 var PREFIXE_RELEVES = "releve_";
 // Dossiers de relevés (identifiants Drive : la partie après /folders/ dans l'adresse du dossier).
@@ -60,10 +60,12 @@ var PROFONDEUR_MAX = 6;
 // Passage principal (déclencheur horaire ou exécution manuelle)
 // ----------------------------------------------------------------------------
 function parcourir() {
-  var fichier = trouver(FICHIER_BANQUE);
-  if (!fichier) throw new Error("Fichier " + FICHIER_BANQUE + " absent : ouvrir une fois Finances → Banque dans Operations01.");
-  var verrou = LockService.getScriptLock(); verrou.waitLock(30000);
+  // Un seul passage à la fois : si un autre tourne (déclencheur horaire), on s'arrête sans bruit.
+  var verrou = LockService.getScriptLock();
+  if (!verrou.tryLock(30000)) { Logger.log("Un autre passage est en cours : celui-ci s'arrête, le suivant reprendra."); return; }
   try {
+    var fichier = trouver(FICHIER_BANQUE);
+    if (!fichier) throw new Error("Fichier " + FICHIER_BANQUE + " absent : ouvrir une fois Finances → Banque dans Operations01.");
     var data; try { data = JSON.parse(fichier.getBlob().getDataAsString() || "{}"); } catch (e) { data = {}; }
     data.version = VERSION;
     data.releves = Array.isArray(data.releves) ? data.releves : [];
@@ -198,7 +200,8 @@ function collecterPdf(dossier, chemin, prof, out, vus) {
 // ----------------------------------------------------------------------------
 // Texte d'un PDF : conversion temporaire en Google Doc (service avancé Drive), puis suppression.
 // ----------------------------------------------------------------------------
-function texteDuPdf(fichier) {
+function texteDuPdf(fichier) { return avecReprise(function () { return texteDuPdfUneFois(fichier); }, "lecture de " + fichier.getName()); }
+function texteDuPdfUneFois(fichier) {
   var id = null;
   try {
     var nom = "tmp-operations01-" + fichier.getId();
@@ -480,4 +483,13 @@ function parserFacture(texte, nomFichier, dossier) {
 }
 
 // ----------------------------------------------------------------------------
-function trouver(nom) { var it = DriveApp.getFilesByName(nom); return it.hasNext() ? it.next() : null; }
+// Le service Drive renvoie parfois « Service error: Drive » de façon passagère : on réessaie.
+function avecReprise(fn, quoi) {
+  var derniere = null;
+  for (var i = 0; i < 4; i++) {
+    try { return fn(); }
+    catch (e) { derniere = e; Utilities.sleep(2000 * (i + 1)); }
+  }
+  throw new Error((quoi || "Drive") + " : " + String(derniere && derniere.message || derniere));
+}
+function trouver(nom) { return avecReprise(function () { var it = DriveApp.getFilesByName(nom); return it.hasNext() ? it.next() : null; }, "recherche de " + nom); }
