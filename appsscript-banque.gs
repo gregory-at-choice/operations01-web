@@ -28,7 +28,7 @@
  *     erreurs:[{ fileId, nom, erreur }] }
  *   montant : négatif = débit, positif = crédit. Dates en AAAA-MM-JJ.
  */
-var VERSION = 5;
+var VERSION = 6;
 var FICHIER_BANQUE = "operations01-banque.json";
 var PREFIXE_RELEVES = "releve_";
 // Dossiers de relevés (identifiants Drive : la partie après /folders/ dans l'adresse du dossier).
@@ -80,13 +80,17 @@ function parcourir() {
 
     var vus = {}, aFaire = [];
     listerReleves().forEach(function (f) { vus[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION) aFaire.push(f); });
-    listerFactures().forEach(function (f) { vus[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION) aFaire.push(f); });
+    // Les factures sont secondaires : si Drive refuse l'inventaire (erreur passagère), on garde
+    // celles déjà connues et on passe quand même les relevés.
+    var facturesOk = true, vusF = {};
+    try { listerFactures().forEach(function (f) { vusF[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION) aFaire.push(f); }); }
+    catch (e) { facturesOk = false; Logger.log("Inventaire des factures impossible ce passage (" + String(e && e.message || e) + ") : relevés seuls."); }
     // Les relevés d'abord : ce sont eux qui comptent, les factures suivent.
     aFaire.sort(function (a, b) { return (a.type === "releve" ? 0 : 1) - (b.type === "releve" ? 0 : 1); });
     // Fichiers disparus (corbeille, déplacés hors des dossiers) : retirés.
     data.releves = data.releves.filter(function (r) { return vus[r.fileId]; });
-    data.factures = data.factures.filter(function (f) { return vus[f.fileId]; });
-    data.erreurs = data.erreurs.filter(function (e) { return vus[e.fileId]; });
+    if (facturesOk) data.factures = data.factures.filter(function (f) { return vusF[f.fileId]; });
+    data.erreurs = data.erreurs.filter(function (e) { return e.type === "releve" ? vus[e.fileId] : (!facturesOk || vusF[e.fileId]); });
 
     var lot = aFaire.slice(0, MAX_PAR_PASSAGE);
     lot.forEach(function (f) {
@@ -161,17 +165,16 @@ function listerReleves() {
 }
 function collecterReleves(dossier, prof, out, vus) {
   if (prof > PROFONDEUR_MAX || dossier.isTrashed()) return;
-  var fs = dossier.getFilesByType("application/pdf");
-  while (fs.hasNext()) {
-    var f = fs.next();
-    if (vus[f.getId()] || f.isTrashed() || !estReleve(f.getName())) continue;   // IBAN, conditions générales… : ignorés
+  var fichiers = avecReprise(function () { var l = [], fs = dossier.getFilesByType("application/pdf"); while (fs.hasNext()) l.push(fs.next()); return l; }, "dossier " + dossier.getName());
+  fichiers.forEach(function (f) {
+    if (vus[f.getId()] || f.isTrashed() || !estReleve(f.getName())) return;   // IBAN, conditions générales… : ignorés
     vus[f.getId()] = true;
     var d = descripteur(f, "releve", dossier.getName());
-    if (!releveDansPeriode(d)) continue;
+    if (!releveDansPeriode(d)) return;
     out.push(d);
-  }
-  var sub = dossier.getFolders();
-  while (sub.hasNext()) collecterReleves(sub.next(), prof + 1, out, vus);
+  });
+  var sousDossiers = avecReprise(function () { var l = [], it = dossier.getFolders(); while (it.hasNext()) l.push(it.next()); return l; }, "sous-dossiers de " + dossier.getName());
+  sousDossiers.forEach(function (sd) { collecterReleves(sd, prof + 1, out, vus); });
 }
 function listerFactures() {
   var out = [], vus = {};
@@ -183,18 +186,22 @@ function listerFactures() {
 }
 function collecterPdf(dossier, chemin, prof, out, vus) {
   if (prof > PROFONDEUR_MAX || dossier.isTrashed()) return;
-  var fs = dossier.getFilesByType("application/pdf");
-  while (fs.hasNext()) {
-    var f = fs.next();
-    if (vus[f.getId()] || f.isTrashed()) continue;
-    if (estReleve(f.getName())) continue;   // un relevé rangé là : déjà couvert
+  // Le filtre de date est fait par Drive : les dossiers volumineux ne sont plus parcourus fichier par fichier.
+  var fichiers = avecReprise(function () {
+    var liste = [], fs = dossier.searchFiles("mimeType = 'application/pdf' and trashed = false and createdDate > '" + DEPUIS + "T00:00:00'");
+    while (fs.hasNext()) liste.push(fs.next());
+    return liste;
+  }, "dossier " + chemin);
+  fichiers.forEach(function (f) {
+    if (vus[f.getId()]) return;
+    if (estReleve(f.getName())) return;   // un relevé rangé là : déjà couvert
     vus[f.getId()] = true;
     var d = descripteur(f, "facture", chemin);
-    if (d.creeLe < DEPUIS) continue;
+    if (d.creeLe < DEPUIS) return;
     out.push(d);
-  }
-  var sub = dossier.getFolders();
-  while (sub.hasNext()) { var s = sub.next(); collecterPdf(s, chemin + "/" + s.getName(), prof + 1, out, vus); }
+  });
+  var sousDossiers = avecReprise(function () { var l = [], it = dossier.getFolders(); while (it.hasNext()) l.push(it.next()); return l; }, "sous-dossiers de " + chemin);
+  sousDossiers.forEach(function (sd) { collecterPdf(sd, chemin + "/" + sd.getName(), prof + 1, out, vus); });
 }
 
 // ----------------------------------------------------------------------------
