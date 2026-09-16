@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v91";
+const APP_VERSION = "v92";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3723,6 +3723,81 @@ function learnBankRule(op, categoryName) {
   banqueOps().forEach((o) => { const v = invoiceOfOp(o.id); if (v && !v.categoryName && bankHaystack(o).indexOf(motif) > -1) v.categoryName = categoryName; });
   return r;
 }
+// ---- Justificatifs à retrouver dans les mails ----
+// Pour une écriture importée du relevé et sans justificatif, l'app cherche dans la boîte
+// Gmail les messages avec pièce jointe qui mentionnent le montant (puis, à défaut, le nom du
+// tiers) autour de la date de l'opération. Un clic dépose la pièce jointe dans le dossier
+// « Justificatifs choice » du Drive et la rattache à l'écriture.
+const JUSTIF_FOLDER = "Justificatifs choice";
+const justifSearch = {};   // id d'écriture → { loading, results, error, done }
+const gmailDay = (x) => `${x.getFullYear()}/${String(x.getMonth() + 1).padStart(2, "0")}/${String(x.getDate()).padStart(2, "0")}`;
+function amountVariants(amount) {
+  const s = Math.abs(Number(amount) || 0).toFixed(2), parts = s.split("."), ent = parts[0], dec = parts[1];
+  const grp = (sep) => ent.replace(/\B(?=(\d{3})+(?!\d))/g, sep);
+  return [...new Set([grp(" ") + "," + dec, ent + "," + dec, grp(".") + "," + dec, grp(",") + "." + dec, s])];
+}
+const JUSTIF_STOP = /^(CARTE|PAIEMENT|PAIEMENTS|VIREMENT|PRELEVEMENT|PRLV|FRAIS|VIR|EMIS|SEPA|POUR|DATE|MOTIF|CPTE|EUROPEEN|FACT|ECHEANCE|PRET|COTISATION|REMISE|CHEQUE|HELP|COM|PSC|\d+)$/;
+function justifQueries(inv) {
+  const amounts = amountVariants(inv.amount).map((x) => `"${x}"`).join(" OR ");
+  const d = inv.paymentDate || inv.startDate || todayISO();
+  const from = new Date(d + "T12:00:00"); from.setDate(from.getDate() - 60);
+  const to = new Date(d + "T12:00:00"); to.setDate(to.getDate() + 15);
+  const win = `after:${gmailDay(from)} before:${gmailDay(to)}`;
+  const words = normName((inv.title || "") + " " + (inv.bankDetail || "")).split(" ").filter((w) => w.length >= 4 && !JUSTIF_STOP.test(w)).slice(0, 3);
+  return [`has:attachment (${amounts}) ${win}`].concat(words.length ? [`has:attachment (${words.map((w) => `"${w}"`).join(" OR ")}) ${win}`] : []);
+}
+const isReceiptFile = (a) => !!(a.id && !a.cid && (/\.(pdf|png|jpe?g)$/i.test(a.name || "") || /pdf|image\//i.test(a.mime || "")));
+async function searchJustif(inv) {
+  const s = justifSearch[inv.id] || (justifSearch[inv.id] = {});
+  if (s.loading) return;
+  s.loading = true; s.error = null; s.results = null;
+  try {
+    const found = [];
+    for (const q of justifQueries(inv)) {
+      const r = await DriveSync.searchMails(q, 8);
+      r.forEach((m) => { if (!found.some((x) => x.id === m.id)) found.push(m); });
+      if (found.some((m) => (m.attachments || []).some(isReceiptFile))) break;
+    }
+    s.results = found.filter((m) => (m.attachments || []).some(isReceiptFile)).sort((a, b) => (b.internalDate || 0) - (a.internalDate || 0)).slice(0, 6);
+  } catch (e) { s.error = { code: e.code || calError(e).code, msg: e.message || String(e) }; }
+  s.loading = false; s.done = true;
+  if (view.section === "finances") render();
+}
+async function attachFromMail(inv, msgId, att) {
+  const r = await DriveSync.readAttachment(msgId, att.id);
+  const d = inv.paymentDate || inv.startDate || todayISO();
+  const name = `${d} ${String(inv.title || "justificatif").replace(/[\/\\:*?"<>|]+/g, " ").trim().slice(0, 60)} - ${att.name || "piece-jointe"}`;
+  const up = await DriveSync.uploadToFolder(name, r.bytes, att.mime || "application/pdf", JUSTIF_FOLDER);
+  inv.receiptUrl = up.url; inv.receiptFileId = up.id; inv.receiptFrom = "mail:" + msgId; inv.noReceipt = false;
+  save();
+  return up;
+}
+const gmailMsgLink = (id) => { const a = (window.DriveSync && DriveSync.account && DriveSync.account()) || ""; return `https://mail.google.com/mail/${a ? "?authuser=" + encodeURIComponent(a) : ""}#all/${encodeURIComponent(id)}`; };
+function justifBlock(sansJustif) {
+  if (!sansJustif.length) return "";
+  const items = sansJustif.slice(0, 40);
+  const linked = gmailLinked();
+  const pending = items.filter((v) => !(justifSearch[v.id] || {}).done).length;
+  const rows = items.map((v) => {
+    const s = justifSearch[v.id] || {};
+    let right;
+    if (!linked) right = "";
+    else if (s.loading) right = `<span class="muted" style="font-size:12px">Recherche dans les mails…</span>`;
+    else if (s.error) right = `<span class="muted" style="font-size:12px">${esc(s.error.msg)}</span> <button class="btn ghost small" data-justif-search="${v.id}">Réessayer</button>`;
+    else if (s.results) right = s.results.length
+      ? s.results.map((m) => (m.attachments || []).filter(isReceiptFile).map((a) => `<button class="chip" data-justif-add="${v.id}|${esc(m.id)}|${esc(a.id)}" title="${esc(m.headers.subject || "")} · ${esc(m.headers.from || "")}">${icon("paperclip")} ${esc((a.name || "pièce jointe").slice(0, 34))} <span class="muted">· ${esc((m.headers.from || "").replace(/<.*/, "").trim().slice(0, 22))} · ${esc(fmtDateTimeISO(new Date(m.internalDate || 0).toISOString()).slice(0, 8))}</span></button> <a class="btn ghost small" href="${esc(gmailMsgLink(m.id))}" target="_blank" rel="noopener" title="Ouvrir le mail">↗</a>`).join(" ")).join(" ")
+      : `<span class="muted" style="font-size:12px">Rien trouvé dans les mails</span> <button class="btn ghost small" data-bank-noreceipt="${v.id}">Sans justificatif</button>`;
+    else right = `<button class="btn ghost small" data-justif-search="${v.id}">Chercher</button>`;
+    return `<div class="inline justif-row" style="padding:6px 0;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:12px;white-space:nowrap">${fmtDate(v.paymentDate || v.startDate)}</span><span class="grow" style="min-width:160px">${esc(v.title || "")}</span><strong style="white-space:nowrap">${euros(v.amount)}</strong><span class="justif-right">${right}</span></div>`;
+  }).join("");
+  const headBtn = !linked
+    ? `<button class="btn small" data-gmail-enable>Relier ma boîte Gmail</button>`
+    : (pending ? `<button class="btn small" data-justif-all>Chercher pour tout (${Math.min(pending, 15)})</button>` : "");
+  return `<div class="section-h">${icon("mail")} Justificatifs à retrouver dans les mails <span class="muted">(${sansJustif.length})</span></div>
+    <div class="card" style="padding:8px 12px">
+      <div class="inline" style="gap:8px;flex-wrap:wrap;margin-bottom:4px"><span class="grow muted" style="font-size:13px">${linked ? "Pour chaque opération, l'app cherche dans ta boîte Gmail un mail avec pièce jointe mentionnant le montant (sinon le nom du tiers) autour de la date. Un clic sur une pièce jointe la dépose dans le dossier « Justificatifs choice » du Drive et la rattache." : "Relie ta boîte Gmail (lecture seule) pour que l'app cherche les justificatifs dans tes mails."}</span>${headBtn}</div>
+      ${rows}${sansJustif.length > items.length ? `<div class="muted" style="font-size:12px;padding:6px 0">… et ${sansJustif.length - items.length} autre(s)</div>` : ""}</div>`;
+}
 function financeBanque() {
   if (!banqueStore && !banqueLoading && !banqueError) setTimeout(loadBanque, 0);
   const connected = window.DriveSync && DriveSync.isConnected();
@@ -3803,7 +3878,7 @@ function financeBanque() {
   // Règles
   const rulesHtml = `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer;font-size:13px">Règles de catégorisation (${state.bankRules.length})</summary><div class="card" style="margin-top:8px;padding:6px 12px">${state.bankRules.length ? state.bankRules.map((ru) => `<div class="inline" style="padding:4px 0;gap:8px"><span class="grow"><code>${esc(ru.motif)}</code> → ${esc(ru.categoryName || "—")}${ru.noReceipt ? ' <span class="muted" style="font-size:12px">(sans justificatif)</span>' : ""}</span><button class="btn ghost small" data-bank-rule-del="${ru.id}">✕</button></div>`).join("") : '<div class="muted" style="font-size:13px">Aucune règle personnelle. Choisis une catégorie sur une opération importée : la règle se crée toute seule.</div>'}<div class="muted" style="font-size:12px;margin-top:6px">Règles automatiques : emprunts, frais bancaires, URSSAF, TVA, impôts, retraite, assurances, télécom, énergie, déplacements, virements entre tes sociétés.</div></div></details>`;
   const manual = `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer;font-size:13px">Import manuel d'un fichier CSV ou OFX</summary><div style="margin-top:8px">${financeImport()}</div></details>`;
-  return head + comptesHtml + alertsHtml + relevesBlock + spHtml + rulesHtml + manual;
+  return head + comptesHtml + alertsHtml + justifBlock(sansJustif) + relevesBlock + spHtml + rulesHtml + manual;
 }
 function wireBanque(c) {
   const rf = c.querySelector("[data-banque-refresh]"); if (rf) rf.onclick = () => loadBanque(true);
@@ -3841,6 +3916,23 @@ function wireBanque(c) {
   c.querySelectorAll("[data-bank-noreceipt]").forEach((b) => b.onclick = () => { const inv = state.invoices.find((v) => v.id === b.dataset.bankNoreceipt); if (inv) { inv.noReceipt = true; save(); render(); } });
   c.querySelectorAll("[data-bank-needreceipt]").forEach((b) => b.onclick = () => { const inv = state.invoices.find((v) => v.id === b.dataset.bankNeedreceipt); if (inv) { inv.noReceipt = false; save(); render(); } });
   c.querySelectorAll("[data-bank-rule-del]").forEach((b) => b.onclick = () => { state.bankRules = state.bankRules.filter((r) => r.id !== b.dataset.bankRuleDel); save(); render(); });
+  // justificatifs dans les mails
+  c.querySelectorAll("[data-justif-search]").forEach((b) => b.onclick = () => { const inv = state.invoices.find((v) => v.id === b.dataset.justifSearch); if (inv) { searchJustif(inv); render(); } });
+  const jall = c.querySelector("[data-justif-all]"); if (jall) jall.onclick = async () => {
+    const list = state.invoices.filter((v) => v.bankOpId && receiptMissing(v) && !(justifSearch[v.id] || {}).done).slice(0, 15);
+    jall.disabled = true;
+    for (const inv of list) { await searchJustif(inv); }
+    render();
+  };
+  c.querySelectorAll("[data-justif-add]").forEach((b) => b.onclick = async () => {
+    const [invId, msgId, attId] = b.dataset.justifAdd.split("|");
+    const inv = state.invoices.find((v) => v.id === invId); const s = justifSearch[invId];
+    const m = s && s.results && s.results.find((x) => x.id === msgId); const att = m && (m.attachments || []).find((a) => a.id === attId);
+    if (!inv || !att) return;
+    b.disabled = true; b.textContent = "Dépôt sur le Drive…";
+    try { await attachFromMail(inv, msgId, att); toast("Justificatif déposé et rattaché ✓"); render(); }
+    catch (e) { alert("Impossible de rattacher ce justificatif : " + e.message); render(); }
+  });
   const al = c.querySelector("[data-banque-alert]"); if (al) al.onclick = () => { factureFilter.noReceipt = true; financeTab = "factures"; render(); };
   c.querySelectorAll("[data-bank-facture-inv]").forEach((b) => b.onclick = () => {
     const f = banqueFactures().find((x) => x.fileId === b.dataset.bankFactureInv); if (!f) return;

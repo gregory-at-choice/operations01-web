@@ -687,6 +687,59 @@
     walkParts(msg.payload, out);
     return out;
   }
+  // Recherche Gmail (même syntaxe que la barre de recherche Gmail), avec les pièces
+  // jointes de chaque message. Sert à retrouver les justificatifs des opérations bancaires.
+  async function searchMails(q, max, email) {
+    if (!hasSession()) throw new Error("Non connecté.");
+    let tok = null;
+    if (email) tok = await gmailTokenFor(email);
+    else if (!gmailGranted()) { const e = new Error("Gmail non relié."); e.code = "off"; throw e; }
+    const n = Math.max(1, Math.min(20, Number(max) || 8));
+    const r = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=${n}`, null, false, tok);
+    const j = await r.json();
+    const out = [];
+    for (const m of (j.messages || [])) {
+      const r2 = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(m.id)}?format=full`, null, false, tok);
+      const msg = await r2.json();
+      const item = { id: msg.id, threadId: msg.threadId, snippet: msg.snippet || "", headers: {}, attachments: [], html: "", text: "", internalDate: Number(msg.internalDate) || 0, account: email || loginHint || "" };
+      ["From", "Subject", "Date"].forEach((h) => { item.headers[h.toLowerCase()] = headerOf(msg.payload && msg.payload.headers, h); });
+      walkParts(msg.payload, item);
+      delete item.html; delete item.text;   // seuls les en-têtes et les pièces jointes servent ici
+      out.push(item);
+    }
+    return out;
+  }
+  // Dossier de l'app sur le Drive (portée drive.file : l'app ne voit que ce qu'elle a créé).
+  const folderIds = {};
+  async function ensureFolder(name) {
+    if (folderIds[name]) return folderIds[name];
+    const q = encodeURIComponent(`name='${String(name).replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    const r = await api(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id)`);
+    const j = await r.json();
+    let id = j.files && j.files[0] && j.files[0].id;
+    if (!id) {
+      const r2 = await api("https://www.googleapis.com/drive/v3/files?fields=id", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name, mimeType: "application/vnd.google-apps.folder" }) });
+      id = (await r2.json()).id;
+    }
+    folderIds[name] = id;
+    return id;
+  }
+  // Dépose un fichier binaire (PDF, image) dans un dossier de l'app. Renvoie { id, url }.
+  async function uploadToFolder(name, bytes, mime, folderName) {
+    const parent = folderName ? await ensureFolder(folderName) : null;
+    const type = mime || "application/pdf";
+    const boundary = "op01" + Math.random().toString(36).slice(2);
+    const metaObj = { name: name, mimeType: type }; if (parent) metaObj.parents = [parent];
+    const body =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metaObj)}` +
+      `\r\n--${boundary}\r\nContent-Type: ${type}\r\nContent-Transfer-Encoding: base64\r\n\r\n${bytesToBase64(bytes)}` +
+      `\r\n--${boundary}--`;
+    const r = await api("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink", {
+      method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + boundary }, body
+    });
+    const j = await r.json();
+    return { id: j.id, url: j.webViewLink || `https://drive.google.com/file/d/${j.id}/view` };
+  }
   // Pièce jointe : octets + base64 standard (pour les images intégrées en data:).
   async function readAttachment(msgId, attId, email) {
     const tok = email ? await gmailTokenFor(email) : null;
@@ -1095,6 +1148,8 @@
     disableGmail,
     readMail,
     readAttachment,
+    searchMails,
+    uploadToFolder,
     account: () => loginHint || "",
     gmailAccounts: gmailAccountList,
     gmailAccountValid,

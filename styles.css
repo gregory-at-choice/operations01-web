@@ -624,3 +624,6 @@ label.field.inline-check > span { margin-bottom: 0; }
 .chip-x:hover { color: #d23c3c; }
 .badge.vip-star { padding: 3px 6px; } .badge.vip-star .i { width: 12px; height: 12px; vertical-align: -2px; }
 .btn.vip-on { color: #a35a12; background: rgba(240,140,46,.18); }
+.justif-row { border-top: 1px solid var(--line); } .justif-row:first-of-type { border-top: 0; }
+.justif-right { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.justif-right .chip { max-width: 100%; white-space: normal; text-align: left; }
