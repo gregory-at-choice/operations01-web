@@ -28,7 +28,7 @@
  *     erreurs:[{ fileId, nom, erreur }] }
  *   montant : négatif = débit, positif = crédit. Dates en AAAA-MM-JJ.
  */
-var VERSION = 7;
+var VERSION = 8;
 var FICHIER_BANQUE = "operations01-banque.json";
 var PREFIXE_RELEVES = "releve_";
 // Dossiers de relevés (identifiants Drive : la partie après /folders/ dans l'adresse du dossier).
@@ -46,6 +46,23 @@ function releveDansPeriode(d) {
   return date >= RELEVES_DU && date <= RELEVES_AU;
 }
 var DOSSIERS_FACTURES = ["FACTURES", "factures", "Facture MAJ", "FACTURATION_CLIENTS", "FACTURATION_CHOICE", "Comptable", "Factures-CXS-TBP"];
+// Justificatifs rapprochés depuis l'app : l'app (portée drive.file) les dépose dans son propre
+// dossier « Justificatifs choice » ; à chaque passage, le script les range dans le dossier
+// ci-dessous (identifiant Drive). Déplacer un fichier ne change pas son lien.
+var DOSSIER_JUSTIFICATIFS_ID = "1QeYC-urT3UNnalK1up-namQfJxcnqOYx";
+var DOSSIER_APP_JUSTIFICATIFS = "Justificatifs choice";
+function rangerJustificatifs() {
+  if (!DOSSIER_JUSTIFICATIFS_ID) return 0;
+  var cible; try { cible = DriveApp.getFolderById(DOSSIER_JUSTIFICATIFS_ID); } catch (e) { Logger.log("Dossier des justificatifs introuvable : " + e); return 0; }
+  var n = 0, it = DriveApp.getFoldersByName(DOSSIER_APP_JUSTIFICATIFS);
+  while (it.hasNext()) {
+    var src = it.next(); if (src.getId() === cible.getId()) continue;
+    var fs = src.getFiles();
+    while (fs.hasNext()) { var f = fs.next(); try { f.moveTo(cible); n++; } catch (e) { Logger.log("Déplacement impossible (" + f.getName() + ") : " + e); } }
+  }
+  if (n) Logger.log(n + " justificatif(s) rangé(s) dans le dossier Justificatifs.");
+  return n;
+}
 // Relevés : seule la période ci-dessous est lue (date du relevé, lue dans le nom du fichier ;
 // à défaut, date de création du fichier).
 var RELEVES_DU = "2026-01-01";
@@ -64,6 +81,7 @@ function parcourir() {
   var verrou = LockService.getScriptLock();
   if (!verrou.tryLock(30000)) { Logger.log("Un autre passage est en cours : celui-ci s'arrête, le suivant reprendra."); return; }
   try {
+    try { rangerJustificatifs(); } catch (e) { Logger.log("Rangement des justificatifs : " + e); }
     var fichier = trouver(FICHIER_BANQUE);
     if (!fichier) throw new Error("Fichier " + FICHIER_BANQUE + " absent : ouvrir une fois Finances → Banque dans Operations01.");
     var data; try { data = JSON.parse(fichier.getBlob().getDataAsString() || "{}"); } catch (e) { data = {}; }
@@ -182,6 +200,8 @@ function listerFactures() {
     var it = DriveApp.getFoldersByName(nom);
     while (it.hasNext()) collecterPdf(it.next(), nom, 0, out, vus);
   });
+  // Le dossier des justificatifs rapprochés est aussi une source de factures.
+  if (DOSSIER_JUSTIFICATIFS_ID) { try { var dj = DriveApp.getFolderById(DOSSIER_JUSTIFICATIFS_ID); collecterPdf(dj, dj.getName(), 0, out, vus); } catch (e) {} }
   return out;
 }
 function collecterPdf(dossier, chemin, prof, out, vus) {

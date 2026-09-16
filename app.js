@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v92";
+const APP_VERSION = "v93";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3753,9 +3753,10 @@ async function searchJustif(inv) {
   s.loading = true; s.error = null; s.results = null;
   try {
     const found = [];
-    for (const q of justifQueries(inv)) {
-      const r = await DriveSync.searchMails(q, 8);
-      r.forEach((m) => { if (!found.some((x) => x.id === m.id)) found.push(m); });
+    const qs = justifQueries(inv);
+    for (let qi = 0; qi < qs.length; qi++) {
+      const r = await DriveSync.searchMails(qs[qi], 8);
+      r.forEach((m) => { if (!found.some((x) => x.id === m.id)) { m.via = qi === 0 ? "montant" : "nom"; found.push(m); } });
       if (found.some((m) => (m.attachments || []).some(isReceiptFile))) break;
     }
     s.results = found.filter((m) => (m.attachments || []).some(isReceiptFile)).sort((a, b) => (b.internalDate || 0) - (a.internalDate || 0)).slice(0, 6);
@@ -3763,14 +3764,81 @@ async function searchJustif(inv) {
   s.loading = false; s.done = true;
   if (view.section === "finances") render();
 }
-async function attachFromMail(inv, msgId, att) {
-  const r = await DriveSync.readAttachment(msgId, att.id);
+async function attachFromMail(inv, msgId, att, bytes) {
+  const data = bytes || (await DriveSync.readAttachment(msgId, att.id)).bytes;
   const d = inv.paymentDate || inv.startDate || todayISO();
   const name = `${d} ${String(inv.title || "justificatif").replace(/[\/\\:*?"<>|]+/g, " ").trim().slice(0, 60)} - ${att.name || "piece-jointe"}`;
-  const up = await DriveSync.uploadToFolder(name, r.bytes, att.mime || "application/pdf", JUSTIF_FOLDER);
-  inv.receiptUrl = up.url; inv.receiptFileId = up.id; inv.receiptFrom = "mail:" + msgId; inv.noReceipt = false;
+  const up = await DriveSync.uploadToFolder(name, data, att.mime || "application/pdf", JUSTIF_FOLDER);
+  inv.receiptUrl = up.url; inv.receiptFileId = up.id; inv.bankFactureId = up.id; inv.receiptFrom = "mail:" + msgId; inv.noReceipt = false;
   save();
   return up;
+}
+// Aperçu d'une pièce jointe avant de la rapprocher : on la lit, on l'affiche (PDF ou image),
+// et « Rapprocher » la dépose sur le Drive puis la rattache à l'écriture.
+const justifBytes = {};   // "msgId|attId" → { bytes, url }
+async function openJustifPreview(inv, m, att) {
+  const key = m.id + "|" + att.id;
+  const isImg = /^image\//i.test(att.mime || "") || /\.(png|jpe?g|gif|webp)$/i.test(att.name || "");
+  const head = `<div class="modal-head"><strong class="grow">${esc(att.name || "Pièce jointe")}</strong><button class="btn ghost small" data-modal-close>${icon("x")}</button></div>
+    <div class="muted" style="font-size:13px;margin-bottom:8px">${esc((m.headers || {}).from || "")} · ${esc((m.headers || {}).subject || "")} · ${esc(fmtDateTimeISO(new Date(m.internalDate || 0).toISOString()))}
+      · trouvé par ${m.via === "nom" ? "le nom du tiers" : "le montant"} · pour <strong>${esc(inv.title || "")}</strong> ${euros(inv.amount)} du ${esc(fmtDate(inv.paymentDate || inv.startDate))}</div>`;
+  showModal(head + `<div class="justif-preview muted" style="padding:40px;text-align:center">Lecture de la pièce jointe…</div>`);
+  document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
+  let entry = justifBytes[key];
+  try {
+    if (!entry) {
+      const r = await DriveSync.readAttachment(m.id, att.id);
+      entry = justifBytes[key] = { bytes: r.bytes, url: URL.createObjectURL(new Blob([r.bytes], { type: att.mime || (isImg ? "image/*" : "application/pdf") })) };
+    }
+  } catch (e) {
+    const box = document.querySelector(".justif-preview"); if (box) box.innerHTML = "Lecture impossible : " + esc(e.message);
+    return;
+  }
+  const box = document.querySelector(".justif-preview"); if (!box) return;
+  box.className = "justif-preview"; box.style.padding = "0"; box.style.textAlign = "left";
+  box.innerHTML = (isImg ? `<img src="${entry.url}" alt="" style="max-width:100%;max-height:60vh;display:block;margin:0 auto"/>` : `<iframe class="justif-frame" src="${entry.url}" title="Aperçu"></iframe>`)
+    + `<div class="inline" style="gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button class="btn small" data-justif-confirm>${icon("check")} Rapprocher</button>
+        <a class="btn ghost small" href="${entry.url}" target="_blank" rel="noopener">${icon("external")} Ouvrir dans un onglet</a>
+        <a class="btn ghost small" href="${esc(gmailMsgLink(m.id))}" target="_blank" rel="noopener">${icon("mail")} Ouvrir le mail</a>
+        <span class="muted" style="font-size:12px">Rapprocher : le fichier est déposé sur ton Drive (dossier Justificatifs) et rattaché à l'écriture.</span></div>`;
+  const ok = document.querySelector("[data-justif-confirm]");
+  if (ok) ok.onclick = async () => {
+    ok.disabled = true; ok.textContent = "Dépôt sur le Drive…";
+    try { await attachFromMail(inv, m.id, att, entry.bytes); closeModal(); toast("Justificatif rapproché ✓"); render(); }
+    catch (e) { ok.disabled = false; ok.textContent = "Rapprocher"; alert("Impossible de rapprocher ce justificatif : " + e.message); }
+  };
+}
+// Écritures importées d'une lecture antérieure des relevés : leurs opérations n'existent plus
+// sous le même identifiant. On les rattache à l'opération de même compte, date et montant ;
+// celles qui restent orphelines (et sans justificatif) peuvent être supprimées d'un clic.
+function reconcileBankOrphans() {
+  const byCompte = {};
+  banqueReleves().forEach((r) => { (byCompte[r.compte] = byCompte[r.compte] || []).push(r); });
+  const known = new Set(banqueOps().map((o) => o.id));
+  const linked = new Set(state.invoices.map((v) => v.bankOpId).filter((id) => id && known.has(id)));
+  const orphans = [];
+  let relinked = 0;
+  state.invoices.forEach((v) => {
+    if (!v.bankOpId || known.has(v.bankOpId) || !v.bankCompte || !byCompte[v.bankCompte]) return;
+    const d = v.paymentDate || v.startDate;
+    const rel = byCompte[v.bankCompte].find((r) => r.du && r.au && d >= r.du && d <= r.au);
+    if (!rel) return;   // relevé de cette période pas (encore) lu : on ne touche à rien
+    const op = (rel.ops || []).find((o) => !linked.has(o.id) && o.date === d && Math.abs(Math.abs(o.montant) - v.amount) < 0.011);
+    if (op) {
+      const full = Object.assign({ _compte: rel.compte, _titulaire: rel.titulaire }, op);
+      v.bankOpId = op.id; v.title = bankOpLabel(full); v.bankDetail = (op.detail || "").slice(0, 200); linked.add(op.id); relinked++;
+    } else orphans.push(v);
+  });
+  if (relinked) save({ silent: true });
+  return { relinked, orphans };
+}
+function purgeBankOrphans() {
+  const { orphans } = reconcileBankOrphans();
+  const ids = new Set(orphans.filter((v) => !v.receiptUrl).map((v) => v.id));
+  state.invoices = state.invoices.filter((v) => !ids.has(v.id));
+  save();
+  return ids.size;
 }
 const gmailMsgLink = (id) => { const a = (window.DriveSync && DriveSync.account && DriveSync.account()) || ""; return `https://mail.google.com/mail/${a ? "?authuser=" + encodeURIComponent(a) : ""}#all/${encodeURIComponent(id)}`; };
 function justifBlock(sansJustif) {
@@ -3785,7 +3853,7 @@ function justifBlock(sansJustif) {
     else if (s.loading) right = `<span class="muted" style="font-size:12px">Recherche dans les mails…</span>`;
     else if (s.error) right = `<span class="muted" style="font-size:12px">${esc(s.error.msg)}</span> <button class="btn ghost small" data-justif-search="${v.id}">Réessayer</button>`;
     else if (s.results) right = s.results.length
-      ? s.results.map((m) => (m.attachments || []).filter(isReceiptFile).map((a) => `<button class="chip" data-justif-add="${v.id}|${esc(m.id)}|${esc(a.id)}" title="${esc(m.headers.subject || "")} · ${esc(m.headers.from || "")}">${icon("paperclip")} ${esc((a.name || "pièce jointe").slice(0, 34))} <span class="muted">· ${esc((m.headers.from || "").replace(/<.*/, "").trim().slice(0, 22))} · ${esc(fmtDateTimeISO(new Date(m.internalDate || 0).toISOString()).slice(0, 8))}</span></button> <a class="btn ghost small" href="${esc(gmailMsgLink(m.id))}" target="_blank" rel="noopener" title="Ouvrir le mail">↗</a>`).join(" ")).join(" ")
+      ? s.results.map((m) => (m.attachments || []).filter(isReceiptFile).map((a) => `<button class="chip" data-justif-add="${v.id}|${esc(m.id)}|${esc(a.id)}" title="${esc(m.headers.subject || "")} · ${esc(m.headers.from || "")}">${icon("paperclip")} ${esc((a.name || "pièce jointe").slice(0, 34))} <span class="muted">· ${esc((m.headers.from || "").replace(/<.*/, "").trim().slice(0, 22))} · ${esc(fmtDateTimeISO(new Date(m.internalDate || 0).toISOString()).slice(0, 8))}${m.via === "nom" ? " · par le nom" : ""}</span></button> <a class="btn ghost small" href="${esc(gmailMsgLink(m.id))}" target="_blank" rel="noopener" title="Ouvrir le mail">↗</a>`).join(" ")).join(" ")
       : `<span class="muted" style="font-size:12px">Rien trouvé dans les mails</span> <button class="btn ghost small" data-bank-noreceipt="${v.id}">Sans justificatif</button>`;
     else right = `<button class="btn ghost small" data-justif-search="${v.id}">Chercher</button>`;
     return `<div class="inline justif-row" style="padding:6px 0;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:12px;white-space:nowrap">${fmtDate(v.paymentDate || v.startDate)}</span><span class="grow" style="min-width:160px">${esc(v.title || "")}</span><strong style="white-space:nowrap">${euros(v.amount)}</strong><span class="justif-right">${right}</span></div>`;
@@ -3827,6 +3895,9 @@ function financeBanque() {
   const comptesHtml = comptes.length ? `<div class="section-h">${icon("building")} Comptes</div><div class="card" style="padding:8px 12px">${comptes.map((c) => `<div class="inline" style="padding:6px 0;gap:10px"><span class="grow"><strong>${esc(c.titulaire || "?")}</strong> <span class="muted">· n° ${esc(c.compte)}</span></span><select data-bank-map="${esc(c.compte)}" style="width:auto">${compOpts(bankCompanyFor(c.compte, c.titulaire) || "")}</select></div>`).join("")}</div>` : "";
   // Alertes
   const alerts = [];
+  const orph = releves.length ? reconcileBankOrphans() : { relinked: 0, orphans: [] };
+  const orphDel = orph.orphans.filter((v) => !v.receiptUrl).length;
+  if (orphDel) alerts.push(`<button class="chip" data-bank-purge-orphans="${orphDel}" title="Écritures importées d'une ancienne lecture des relevés, dont l'opération n'existe plus">🧹 ${orphDel} écriture(s) d'une ancienne lecture à supprimer</button>`);
   if (sansJustif.length) alerts.push(`<button class="chip" data-banque-alert="justif">⚠️ ${sansJustif.length} opération(s) sans justificatif</button>`);
   if (sansPaiement.length) alerts.push(`<span class="chip">📄 ${sansPaiement.length} facture(s) sans paiement repéré</span>`);
   if (ecarts.length) alerts.push(`<span class="chip">⚠️ ${ecarts.length} relevé(s) dont le solde ne tombe pas juste</span>`);
@@ -3924,15 +3995,17 @@ function wireBanque(c) {
     for (const inv of list) { await searchJustif(inv); }
     render();
   };
-  c.querySelectorAll("[data-justif-add]").forEach((b) => b.onclick = async () => {
+  c.querySelectorAll("[data-justif-add]").forEach((b) => b.onclick = () => {
     const [invId, msgId, attId] = b.dataset.justifAdd.split("|");
     const inv = state.invoices.find((v) => v.id === invId); const s = justifSearch[invId];
     const m = s && s.results && s.results.find((x) => x.id === msgId); const att = m && (m.attachments || []).find((a) => a.id === attId);
-    if (!inv || !att) return;
-    b.disabled = true; b.textContent = "Dépôt sur le Drive…";
-    try { await attachFromMail(inv, msgId, att); toast("Justificatif déposé et rattaché ✓"); render(); }
-    catch (e) { alert("Impossible de rattacher ce justificatif : " + e.message); render(); }
+    if (inv && m && att) openJustifPreview(inv, m, att);
   });
+  const purge = c.querySelector("[data-bank-purge-orphans]"); if (purge) purge.onclick = () => {
+    const n = Number(purge.dataset.bankPurgeOrphans) || 0;
+    if (!confirm(`Supprimer ${n} écriture(s) importée(s) d'une ancienne lecture des relevés ? Les opérations correspondantes seront réimportées proprement.`)) return;
+    const k = purgeBankOrphans(); toast(`${k} écriture(s) supprimée(s)`); render();
+  };
   const al = c.querySelector("[data-banque-alert]"); if (al) al.onclick = () => { factureFilter.noReceipt = true; financeTab = "factures"; render(); };
   c.querySelectorAll("[data-bank-facture-inv]").forEach((b) => b.onclick = () => {
     const f = banqueFactures().find((x) => x.fileId === b.dataset.bankFactureInv); if (!f) return;
