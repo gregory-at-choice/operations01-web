@@ -28,7 +28,7 @@
  *     erreurs:[{ fileId, nom, erreur }] }
  *   montant : négatif = débit, positif = crédit. Dates en AAAA-MM-JJ.
  */
-var VERSION = 8;
+var VERSION = 9;
 var FICHIER_BANQUE = "operations01-banque.json";
 var PREFIXE_RELEVES = "releve_";
 // Dossiers de relevés (identifiants Drive : la partie après /folders/ dans l'adresse du dossier).
@@ -51,6 +51,58 @@ var DOSSIERS_FACTURES = ["FACTURES", "factures", "Facture MAJ", "FACTURATION_CLI
 // ci-dessous (identifiant Drive). Déplacer un fichier ne change pas son lien.
 var DOSSIER_JUSTIFICATIFS_ID = "1QeYC-urT3UNnalK1up-namQfJxcnqOYx";
 var DOSSIER_APP_JUSTIFICATIFS = "Justificatifs choice";
+// Reçus reçus par mail : les PDF joints aux mails (hors envoyés) depuis MAILS_DEPUIS sont déposés
+// dans le sous-dossier « Reçus mails » du dossier Justificatifs, puis analysés comme des factures
+// (montant, date, fournisseur). L'app propose alors, pour chaque opération, les documents dont
+// le montant est exact au centime, en tenant compte de la date et du nom.
+var LIRE_MAILS = true;
+var MAILS_DEPUIS = "2025/12/01";           // format Gmail (aaaa/mm/jj)
+var MAILS_MAX_PAR_PASSAGE = 25;            // pièces jointes déposées par passage
+var MAILS_TAILLE_MAX = 6 * 1024 * 1024;
+var DOSSIER_RECUS_MAILS = "Reçus mails";
+function expediteurCourt(de) {
+  var m = /^\s*"?([^"<]+?)"?\s*<[^>]+>\s*$/.exec(String(de || ""));
+  var nom = m ? m[1] : String(de || "").replace(/<[^>]+>/g, "").trim();
+  if (!nom || nom.indexOf("@") > -1) { var ma = /@([\w.-]+)/.exec(String(de || "")); nom = ma ? ma[1].replace(/\.(com|fr|net|org|io|co)$/, "").split(".").pop() : nom; }
+  return nom.replace(/[\/\\:*?"<>|]+/g, " ").trim().slice(0, 40);
+}
+function importerRecusMails(data) {
+  if (!LIRE_MAILS || !DOSSIER_JUSTIFICATIFS_ID || typeof GmailApp === "undefined") return 0;
+  var parent; try { parent = DriveApp.getFolderById(DOSSIER_JUSTIFICATIFS_ID); } catch (e) { return 0; }
+  var it = parent.getFoldersByName(DOSSIER_RECUS_MAILS);
+  var dossier = it.hasNext() ? it.next() : parent.createFolder(DOSSIER_RECUS_MAILS);
+  data.mailsVus = data.mailsVus || {};   // "idMessage|nomPièce" → identifiant du fichier déposé
+  var n = 0, start = 0, q = "has:attachment filename:pdf -in:sent -in:trash after:" + MAILS_DEPUIS;
+  while (n < MAILS_MAX_PAR_PASSAGE) {
+    var threads = GmailApp.search(q, start, 50);
+    if (!threads.length) break;
+    start += threads.length;
+    for (var i = 0; i < threads.length && n < MAILS_MAX_PAR_PASSAGE; i++) {
+      var msgs = threads[i].getMessages();
+      for (var j = 0; j < msgs.length && n < MAILS_MAX_PAR_PASSAGE; j++) {
+        var msg = msgs[j];
+        if (msg.isInTrash()) continue;
+        var atts = msg.getAttachments({ includeInlineImages: false, includeAttachments: true });
+        for (var k = 0; k < atts.length && n < MAILS_MAX_PAR_PASSAGE; k++) {
+          var a = atts[k];
+          if (!/pdf/i.test(a.getContentType() || "") && !/\.pdf$/i.test(a.getName() || "")) continue;
+          if (a.getSize() > MAILS_TAILLE_MAX) continue;
+          var cle = msg.getId() + "|" + a.getName();
+          if (data.mailsVus[cle]) continue;
+          var jour = Utilities.formatDate(msg.getDate(), "Europe/Paris", "yyyy-MM-dd");
+          var nom = jour + " " + expediteurCourt(msg.getFrom()) + " - " + a.getName();
+          try {
+            var f = dossier.createFile(a.copyBlob().setName(nom));
+            f.setDescription(JSON.stringify({ mail: msg.getId(), de: msg.getFrom(), sujet: msg.getSubject(), date: jour }));
+            data.mailsVus[cle] = f.getId(); n++;
+          } catch (e) { Logger.log("Dépôt impossible (" + nom + ") : " + e); data.mailsVus[cle] = "erreur"; }
+        }
+      }
+    }
+  }
+  if (n) Logger.log(n + " reçu(s) de mail déposé(s) dans « " + DOSSIER_RECUS_MAILS + " ».");
+  return n;
+}
 function rangerJustificatifs() {
   if (!DOSSIER_JUSTIFICATIFS_ID) return 0;
   var cible; try { cible = DriveApp.getFolderById(DOSSIER_JUSTIFICATIFS_ID); } catch (e) { Logger.log("Dossier des justificatifs introuvable : " + e); return 0; }
@@ -89,6 +141,7 @@ function parcourir() {
     data.releves = Array.isArray(data.releves) ? data.releves : [];
     data.factures = Array.isArray(data.factures) ? data.factures : [];
     data.erreurs = Array.isArray(data.erreurs) ? data.erreurs : [];
+    try { importerRecusMails(data); } catch (e) { Logger.log("Reçus des mails : " + String(e && e.message || e)); }
     // Un fichier est (re)lu s'il est nouveau, modifié, ou analysé par une version antérieure du script.
     var connus = {};
     var cle = function (x) { return x.mt + "|" + (x.v || 0); };
@@ -124,6 +177,7 @@ function parcourir() {
         } else {
           var x = parserFacture(texte, f.nom, f.dossier);
           x.fileId = f.id; x.nom = f.nom; x.url = f.url; x.dossier = f.dossier; x.mt = f.mt; x.creeLe = f.creeLe; x.v = VERSION;
+          if (f.mail) { x.mail = f.mail; if (!x.date) x.date = f.mail.date; if (!x.fournisseur || x.fournisseur === f.nom.replace(/\.pdf$/i, "").replace(/[_\-]+/g, " ").slice(0, 60)) x.fournisseur = expediteurCourt(f.mail.de) || x.fournisseur; }
           data.factures.push(x);
         }
       } catch (e) {
@@ -160,7 +214,9 @@ function comptesDe(releves) {
 // Inventaire des fichiers
 // ----------------------------------------------------------------------------
 function descripteur(f, type, dossier) {
-  return { id: f.getId(), nom: f.getName(), url: f.getUrl(), mt: f.getLastUpdated().toISOString(), creeLe: f.getDateCreated().toISOString().slice(0, 10), type: type, dossier: dossier || "", fichier: f };
+  var d = { id: f.getId(), nom: f.getName(), url: f.getUrl(), mt: f.getLastUpdated().toISOString(), creeLe: f.getDateCreated().toISOString().slice(0, 10), type: type, dossier: dossier || "", fichier: f };
+  try { var desc = f.getDescription(); if (desc && desc.charAt(0) === "{") { var m = JSON.parse(desc); if (m && m.mail) d.mail = m; } } catch (e) {}
+  return d;
 }
 function listerReleves() {
   var out = [], vus = {};

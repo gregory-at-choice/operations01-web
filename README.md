@@ -100,6 +100,17 @@ Installation (une fois, dans le compte Google qui porte le Drive) :
 Vingt fichiers au plus sont analysés par passage : le rattrapage initial prend quelques heures.
 Les dossiers de factures parcourus sont listés dans `DOSSIERS_FACTURES` en tête du script.
 
+**Justificatifs.** Le script dépose aussi, dans « Justificatifs / Reçus mails » (dossier
+`DOSSIER_JUSTIFICATIFS_ID`), les PDF joints aux mails reçus depuis `MAILS_DEPUIS` (25 par passage),
+avec en description l'expéditeur, le sujet et la date du mail ; ils sont lus comme des factures.
+Cette lecture Gmail demande une autorisation supplémentaire, une fois, au premier `parcourir`
+lancé à la main après la mise à jour du script. Dans l'app, « Justificatifs à retrouver » propose
+pour chaque opération sans justificatif les documents (factures rangées, reçus des mails) dont le
+**montant est exact au centime**, classés par proximité de date et par nom du tiers ; un clic
+ouvre l'aperçu, « Rapprocher » rattache le document à l'écriture. « Mails » lance en plus une
+recherche Gmail par le nom du tiers (Gmail ne retrouve pas un montant), chaque PDF étant relu
+dans le navigateur pour y vérifier le montant.
+
 ## Lire les mails dans l'app (Gmail, lecture seule)
 
 Sur la page d'un message « À traiter », la carte **Message complet** affiche le mail lui-même
