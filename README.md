@@ -78,8 +78,10 @@ Par défaut, les données sont dans le navigateur. Pour les stocker **sur votre 
 
 ## Banque : relevés et factures déjà sur le Drive (Finances → Banque)
 
-Un script Apps Script (`appsscript-banque.gs`) lit les relevés de compte PDF (Société Générale,
-fichiers `releve_…pdf`) et les factures PDF rangées dans les dossiers du Drive, en extrait le
+Un script Apps Script (`appsscript-banque.gs`) lit les relevés de compte PDF — Société Générale
+(`releve_…pdf`) et Crédit Mutuel (« Extrait de comptes … ») — rangés dans les dossiers de relevés
+(`DOSSIERS_RELEVES`, identifiants Drive, sous-dossiers par année inclus), la banque étant reconnue
+au contenu, et les factures PDF rangées dans les dossiers du Drive, en extrait le
 texte et dépose le résultat dans `operations01-banque.json` (fichier créé par l'app). L'app
 importe ensuite les opérations en écritures payées, les classe par règles (les tiennes, apprises
 au fil de l'eau, plus des règles par défaut : emprunts, frais bancaires, URSSAF, TVA, impôts,

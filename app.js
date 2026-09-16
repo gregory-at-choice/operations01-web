@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v90";
+const APP_VERSION = "v91";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3608,7 +3608,8 @@ function bankCounterparty(op) {
   return m ? m[1].trim() : "";
 }
 function bankOpLabel(op) {
-  const n = (op.nature || "").toUpperCase(), who = bankCounterparty(op);
+  const n = (op.nature || "").toUpperCase(), who = bankCounterparty(op) || op.tiers || "";
+  if (/^FACT/.test(n)) return "Frais bancaires (facturation)";
   if (/ECHEANCEPRET|ECHEANCE PRET/.test(n)) return "Échéance de prêt " + (n.match(/N°\s*(\d+)/) ? "n°" + n.match(/N°\s*(\d+)/)[1] : "").trim() + (/PGE/.test(bankHaystack(op)) ? " (garantie PGE)" : "");
   if (/COTISATION/.test(n)) return "Cotisation bancaire Jazz Pro";
   if (/FRAIS/.test(n)) return "Frais bancaires" + (/ETUDE/.test(n) ? " (frais d'étude)" : "");
@@ -3616,7 +3617,7 @@ function bankOpLabel(op) {
   if (/PRELEVEMENT|PRLV/.test(n)) return "Prélèvement " + (who || n);
   if (/VIR/.test(n) && /EMIS/.test(n)) return "Virement à " + (who || "?");
   if (/VIR/.test(n)) return "Virement de " + (who || "?");
-  if (/CARTE|CB /.test(n)) return "Carte " + (who || (op.detail || "").slice(0, 40));
+  if (/CARTE|CB |PAIEMENT/.test(n)) return "Carte " + (who || (op.detail || "").slice(0, 40));
   if (/REMISE|CHEQUE|CHQ/.test(n)) return "Remise " + (who || (op.detail || "").slice(0, 40));
   return who ? who : (op.nature || "Opération");
 }
@@ -3624,7 +3625,7 @@ function bankOpLabel(op) {
 // ou l'avis d'échéance suffit, aucune facture n'est attendue.
 const DEFAULT_BANK_RULES = [
   { re: /ECHEANCEPRET|ECHEANCE PRET|PGE - PRIME/, cat: "Emprunts", nature: "charge", noReceipt: true },
-  { re: /COTISATION.*JAZZ|FRAIS|CIONS?TENUE|COMMISSION/, cat: "Frais bancaires", nature: "charge", noReceipt: true },
+  { re: /COTISATION.*JAZZ|FRAIS|CIONS?TENUE|COMMISSION|^FACT SGT/, cat: "Frais bancaires", nature: "charge", noReceipt: true },
   { re: /URSSAF/, cat: "Charges sociales", nature: "charge", noReceipt: true },
   { re: /DGFIP.*TVA|TVA\d|MOTIF: TVA/, cat: "TVA", nature: "charge", noReceipt: true },
   { re: /DGFIP|IMPOT|TRESOR PUBLIC/, cat: "Impôts et taxes", nature: "charge", noReceipt: true },

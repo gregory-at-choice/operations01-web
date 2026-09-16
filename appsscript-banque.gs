@@ -12,7 +12,10 @@
  *   Le fichier operations01-banque.json est créé par l'app : ouvrir une fois Finances → Banque.
  *
  * CE QUI EST LU :
- *   - Relevés : tous les PDF dont le nom commence par « releve_ » (releve_SAS_CHOICE_<compte>_<jjmmaaaa>.pdf).
+ *   - Relevés : les PDF des dossiers DOSSIERS_RELEVES (identifiants Drive, sous-dossiers inclus)
+ *     dont le nom commence par « releve_ » (Société Générale) ou contient « Extrait de comptes »
+ *     (Crédit Mutuel), plus tous les « releve_… » ailleurs sur le Drive. La banque est reconnue
+ *     au contenu du PDF.
  *   - Factures : les PDF des dossiers listés dans DOSSIERS_FACTURES (et leurs sous-dossiers).
  *   Chaque PDF n'est analysé qu'une fois (puis de nouveau s'il change). Au plus MAX_PAR_PASSAGE
  *   nouveaux fichiers par passage : le rattrapage initial se fait en plusieurs heures.
@@ -25,9 +28,12 @@
  *     erreurs:[{ fileId, nom, erreur }] }
  *   montant : négatif = débit, positif = crédit. Dates en AAAA-MM-JJ.
  */
-var VERSION = 1;
+var VERSION = 2;
 var FICHIER_BANQUE = "operations01-banque.json";
 var PREFIXE_RELEVES = "releve_";
+// Dossiers de relevés (identifiants Drive : la partie après /folders/ dans l'adresse du dossier).
+var DOSSIERS_RELEVES = ["1A1A3CEj11AppDRtLXEId_zcNLuSmzmjP", "1IKRnxvvM2OKHDimxMAxOMpoSIbDuOa87"];
+function estReleve(nom) { return nom.indexOf(PREFIXE_RELEVES) === 0 || /extrait de comptes/i.test(nom); }
 var DOSSIERS_FACTURES = ["FACTURES", "factures", "Facture MAJ", "FACTURATION_CLIENTS", "FACTURATION_CHOICE", "Comptable", "Factures-CXS-TBP"];
 var DEPUIS = "2025-01-01";          // fichiers créés avant cette date : ignorés
 var MAX_PAR_PASSAGE = 20;
@@ -65,7 +71,7 @@ function parcourir() {
       try {
         var texte = texteDuPdf(f.fichier);
         if (f.type === "releve") {
-          var r = parserReleveSG(texte, f.nom);
+          var r = parserReleve(texte, f.nom);
           r.fileId = f.id; r.nom = f.nom; r.url = f.url; r.mt = f.mt;
           data.releves.push(r);
         } else {
@@ -110,15 +116,37 @@ function descripteur(f, type, dossier) {
   return { id: f.getId(), nom: f.getName(), url: f.getUrl(), mt: f.getLastUpdated().toISOString(), creeLe: f.getDateCreated().toISOString().slice(0, 10), type: type, dossier: dossier || "", fichier: f };
 }
 function listerReleves() {
-  var out = [], it = DriveApp.searchFiles("title contains '" + PREFIXE_RELEVES + "' and mimeType = 'application/pdf' and trashed = false");
+  var out = [], vus = {};
+  // 1. Les dossiers de relevés, sous-dossiers (années) inclus.
+  DOSSIERS_RELEVES.forEach(function (id) {
+    var dossier; try { dossier = DriveApp.getFolderById(id); } catch (e) { return; }
+    collecterReleves(dossier, 0, out, vus);
+  });
+  // 2. Les « releve_… » rangés ailleurs sur le Drive.
+  var it = DriveApp.searchFiles("title contains '" + PREFIXE_RELEVES + "' and mimeType = 'application/pdf' and trashed = false");
   while (it.hasNext()) {
     var f = it.next();
-    if (f.getName().indexOf(PREFIXE_RELEVES) !== 0) continue;
+    if (vus[f.getId()] || f.getName().indexOf(PREFIXE_RELEVES) !== 0) continue;
+    vus[f.getId()] = true;
     var d = descripteur(f, "releve", "");
     if (d.creeLe < DEPUIS) continue;
     out.push(d);
   }
   return out;
+}
+function collecterReleves(dossier, prof, out, vus) {
+  if (prof > PROFONDEUR_MAX || dossier.isTrashed()) return;
+  var fs = dossier.getFilesByType("application/pdf");
+  while (fs.hasNext()) {
+    var f = fs.next();
+    if (vus[f.getId()] || f.isTrashed() || !estReleve(f.getName())) continue;   // IBAN, conditions générales… : ignorés
+    vus[f.getId()] = true;
+    var d = descripteur(f, "releve", dossier.getName());
+    if (d.creeLe < DEPUIS) continue;
+    out.push(d);
+  }
+  var sub = dossier.getFolders();
+  while (sub.hasNext()) collecterReleves(sub.next(), prof + 1, out, vus);
 }
 function listerFactures() {
   var out = [], vus = {};
@@ -134,7 +162,7 @@ function collecterPdf(dossier, chemin, prof, out, vus) {
   while (fs.hasNext()) {
     var f = fs.next();
     if (vus[f.getId()] || f.isTrashed()) continue;
-    if (f.getName().indexOf(PREFIXE_RELEVES) === 0) continue;   // un relevé rangé là : déjà couvert
+    if (estReleve(f.getName())) continue;   // un relevé rangé là : déjà couvert
     vus[f.getId()] = true;
     var d = descripteur(f, "facture", chemin);
     if (d.creeLe < DEPUIS) continue;
@@ -259,6 +287,111 @@ function parserReleveSG(texte, nomFichier) {
   r.totalDebit = Math.round(deb * 100) / 100; r.totalCredit = Math.round(cre * 100) / 100;
   if (totaux) { r.totauxReleve = totaux; }
   return r;
+}
+
+// ----------------------------------------------------------------------------
+// Relevé Crédit Mutuel (Eurocompte Pro). Une opération = « date  date valeur  libellé  montant »
+// puis, sur la ligne suivante du PDF, le commerçant (« ANTHROPIC* CLAUD CARTE 8519 »). Dans le
+// texte extrait, cette seconde ligne se retrouve APRÈS le montant et AVANT la paire de dates de
+// l'opération suivante. Les colonnes Débit/Crédit sont perdues : le sens est déduit du libellé,
+// puis vérifié avec la ligne « Total des mouvements » et les soldes.
+// ----------------------------------------------------------------------------
+var MOIS_LONG = { janvier: "01", "février": "02", fevrier: "02", mars: "03", avril: "04", mai: "05", juin: "06", juillet: "07", "août": "08", aout: "08", septembre: "09", octobre: "10", novembre: "11", "décembre": "12", decembre: "12" };
+function nettoyerReleveCM(t) {
+  return t
+    .replace(/RELEVE ET INFORMATIONS BANCAIRES[\s\S]*?Cr[ée]dit EUROS/g, " ")
+    .replace(/Information sur la protection des comptes[\s\S]*?Page \d+/g, " ")
+    .replace(/<<\s*Suite au verso\s*>>/g, " ")
+    .replace(/Sous r[ée]serve des extournes ou annulations [ée]ventuelles/g, " ")
+    .replace(/Page \d+/g, " ");
+}
+var CM_CREDIT_RE = /^(VIR|VRST|VERSEMENT|REM\b|REMISE|REMBOURSEMENT|ANNUL|REGUL|CREDIT|DEPOT|AVOIR)/;
+function parserReleveCM(texte, nomFichier) {
+  var t = normaliser(texte);
+  var r = { banque: "CM", compte: null, titulaire: "", du: null, au: null, soldeDebut: null, soldeFin: null, totalDebit: null, totalCredit: null, ops: [], equilibre: null, ecart: null };
+  var mc = /N° ?(\d{8,14})/.exec(t); if (mc) r.compte = mc[1];
+  var mt = /PRO (.+?) au \d{4}-\d{2}-\d{2}/.exec(nomFichier || "") || /Extrait de comptes(?: Compte)? (.+?)(?:\.pdf| pdf)?$/i.exec(nomFichier || "");
+  if (mt) r.titulaire = mt[1].replace(/_/g, " ").trim();
+  var ma = /BANCAIRES Caisse \d+ (\d{1,2})(?:er)? ([a-zéû]+) (\d{4})/i.exec(t);
+  if (ma && MOIS_LONG[ma[2].toLowerCase()]) r.au = ma[3] + "-" + MOIS_LONG[ma[2].toLowerCase()] + "-" + (ma[1].length < 2 ? "0" : "") + ma[1];
+  var corps = nettoyerReleveCM(t);
+  var SOLDE = /SOLDE (CREDITEUR|DEBITEUR) AU (\d\d\/\d\d\/\d{4})\s*(\d[\d .]*,\d{2})/;
+  var ms = SOLDE.exec(corps);
+  if (!ms) throw new Error("Relevé Crédit Mutuel non reconnu (pas de « SOLDE … AU »).");
+  r.soldeDebut = (ms[1] === "DEBITEUR" ? -1 : 1) * nombre(ms[3]);
+  var dprev = isoDe(ms[2]);
+  if (dprev) { var d0 = new Date(dprev + "T12:00:00Z"); d0.setUTCDate(d0.getUTCDate() + 1); r.du = d0.toISOString().slice(0, 10); }
+  var debut = ms.index + ms[0].length;
+  var mtot = /Total des mouvements\s*(\d[\d .]*,\d{2})\s+(\d[\d .]*,\d{2})/.exec(corps);
+  var totaux = mtot ? [nombre(mtot[1]), nombre(mtot[2])] : null;
+  var fin = mtot ? mtot.index : corps.length;
+  var mf = SOLDE.exec(corps.slice(fin));
+  if (mf) { r.soldeFin = (mf[1] === "DEBITEUR" ? -1 : 1) * nombre(mf[3]); if (!r.au) r.au = isoDe(mf[2]); }
+  var zone = corps.slice(debut, fin).replace(/\s+/g, " ");
+  var PAIRE = /(\d\d\/\d\d\/\d{4}) (\d\d\/\d\d\/\d{4}) /g, starts = [], m;
+  while ((m = PAIRE.exec(zone)) !== null) starts.push({ i: m.index, len: m[0].length, date: isoDe(m[1]), valeur: isoDe(m[2]) });
+  var n = 0;
+  starts.forEach(function (s, k) {
+    var seg = zone.slice(s.i + s.len, k + 1 < starts.length ? starts[k + 1].i : zone.length).trim();
+    // Mentions chiffrées qui ne sont pas le montant : « DONT TVA 1,68EUR ».
+    var propre = seg.replace(/DONT TVA \d[\d.,]*\s?EUR/g, " ").replace(/\s+/g, " ").trim();
+    var montants = [], mm; MONTANT_RE.lastIndex = 0;
+    while ((mm = MONTANT_RE.exec(propre)) !== null) montants.push({ v: nombre(mm[1]), end: mm.index + mm[0].length - (mm[2] ? 1 : 0) });
+    if (!montants.length) return;
+    var last = montants[montants.length - 1];
+    var libelle = propre.slice(0, last.end).replace(/\d[\d .]*,\d{2}$/, "").trim();
+    var tiers = propre.slice(last.end).replace(/\bCARTE \d{4}\b/g, " ").replace(/\s+/g, " ").trim();
+    var mots = libelle.split(" "), nature = [], i = 0;
+    if (/^\d+$/.test(mots[0] || "") && /^PAIEMENTS?$/.test(mots[1] || "")) { nature = [mots[0], mots[1]]; i = 2; }
+    else for (; i < mots.length && i < 4; i++) { if (!/^[A-Z][A-Z.'\-]*$/.test(mots[i])) break; nature.push(mots[i]); }
+    var detail = mots.slice(i).join(" ");
+    var nat = nature.join(" ");
+    var credit = CM_CREDIT_RE.test(nat.toUpperCase()) && !/EMIS/.test(nat.toUpperCase());
+    n++;
+    r.ops.push({
+      id: (r.compte || "?") + "-" + s.date + "-" + String(last.v.toFixed(2)) + "-" + n,
+      date: s.date, valeur: s.valeur, nature: nat, tiers: tiers,
+      detail: (tiers ? tiers + (detail ? " · " + detail : "") : detail).slice(0, 400),
+      montant: credit ? last.v : -last.v,
+      doute: montants.length > 1 && montants.filter(function (x) { return x.v !== last.v; }).length > 0 && !/FRAIS PAIE|OP \d/.test(libelle)
+    });
+  });
+  // Sens des opérations : la ligne « Total des mouvements » donne le total des crédits.
+  // Si le libellé n'a pas suffi, on cherche les opérations (au plus trois) dont la somme le donne.
+  if (totaux) {
+    var cre = function () { return Math.round(r.ops.filter(function (o) { return o.montant > 0; }).reduce(function (a, o) { return a + o.montant; }, 0) * 100) / 100; };
+    if (Math.abs(cre() - totaux[1]) > 0.011) {
+      var abs = r.ops.map(function (o) { return Math.abs(o.montant); }), found = null, L = abs.length;
+      if (totaux[1] < 0.011) found = [];
+      for (var a = 0; a < L && !found; a++) { if (Math.abs(abs[a] - totaux[1]) < 0.011) found = [a]; }
+      for (var b = 0; b < L && !found; b++) for (var c = b + 1; c < L && !found; c++) { if (Math.abs(abs[b] + abs[c] - totaux[1]) < 0.011) found = [b, c]; }
+      for (var x = 0; x < L && !found && L <= 60; x++) for (var y = x + 1; y < L && !found; y++) for (var z = y + 1; z < L && !found; z++) { if (Math.abs(abs[x] + abs[y] + abs[z] - totaux[1]) < 0.011) found = [x, y, z]; }
+      if (found) r.ops.forEach(function (o, idx) { o.montant = found.indexOf(idx) > -1 ? Math.abs(o.montant) : -Math.abs(o.montant); });
+    }
+    r.totauxReleve = totaux;
+  }
+  var somme = function () { return r.ops.reduce(function (t2, o) { return t2 + o.montant; }, 0); };
+  if (r.soldeDebut != null && r.soldeFin != null) {
+    var ecart = Math.round((r.soldeDebut + somme() - r.soldeFin) * 100) / 100;
+    if (Math.abs(ecart) > 0.011) {
+      for (var q = 0; q < r.ops.length; q++) {
+        if (Math.abs(Math.round(2 * r.ops[q].montant * 100) / 100 - ecart) < 0.011) { r.ops[q].montant = -r.ops[q].montant; r.ops[q].doute = true; break; }
+      }
+      ecart = Math.round((r.soldeDebut + somme() - r.soldeFin) * 100) / 100;
+    }
+    r.equilibre = Math.abs(ecart) <= 0.011;
+    r.ecart = r.equilibre ? 0 : ecart;
+  }
+  var deb = r.ops.filter(function (o) { return o.montant < 0; }).reduce(function (t2, o) { return t2 - o.montant; }, 0);
+  var cr = r.ops.filter(function (o) { return o.montant > 0; }).reduce(function (t2, o) { return t2 + o.montant; }, 0);
+  r.totalDebit = Math.round(deb * 100) / 100; r.totalCredit = Math.round(cr * 100) / 100;
+  return r;
+}
+// La banque est reconnue au contenu : Crédit Mutuel (« RELEVE ET INFORMATIONS BANCAIRES »,
+// « EUROCOMPTE »), sinon Société Générale.
+function parserReleve(texte, nomFichier) {
+  if (/CREDIT MUTUEL|EUROCOMPTE|RELEVE ET INFORMATIONS BANCAIRES/i.test(texte || "")) return parserReleveCM(texte, nomFichier);
+  return parserReleveSG(texte, nomFichier);
 }
 
 // ----------------------------------------------------------------------------
