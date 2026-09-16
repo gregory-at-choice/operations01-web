@@ -15,7 +15,7 @@
  *   - Relevés : les PDF des dossiers DOSSIERS_RELEVES (identifiants Drive, sous-dossiers inclus)
  *     dont le nom commence par « releve_ » (Société Générale) ou contient « Extrait de comptes »
  *     (Crédit Mutuel), plus tous les « releve_… » ailleurs sur le Drive. La banque est reconnue
- *     au contenu du PDF.
+ *     au contenu du PDF. Seuls les relevés de la période RELEVES_DU → RELEVES_AU sont lus.
  *   - Factures : les PDF des dossiers listés dans DOSSIERS_FACTURES (et leurs sous-dossiers).
  *   Chaque PDF n'est analysé qu'une fois (puis de nouveau s'il change). Au plus MAX_PAR_PASSAGE
  *   nouveaux fichiers par passage : le rattrapage initial se fait en plusieurs heures.
@@ -28,14 +28,31 @@
  *     erreurs:[{ fileId, nom, erreur }] }
  *   montant : négatif = débit, positif = crédit. Dates en AAAA-MM-JJ.
  */
-var VERSION = 2;
+var VERSION = 3;
 var FICHIER_BANQUE = "operations01-banque.json";
 var PREFIXE_RELEVES = "releve_";
 // Dossiers de relevés (identifiants Drive : la partie après /folders/ dans l'adresse du dossier).
 var DOSSIERS_RELEVES = ["1A1A3CEj11AppDRtLXEId_zcNLuSmzmjP", "1IKRnxvvM2OKHDimxMAxOMpoSIbDuOa87"];
 function estReleve(nom) { return nom.indexOf(PREFIXE_RELEVES) === 0 || /extrait de comptes/i.test(nom); }
+// Date du relevé d'après le nom : « …_28022026.pdf » (SG), « … au 2026-07-31.pdf » ou « 2505_… » (CM).
+function dateReleveDuNom(nom) {
+  var m = /_(\d{2})(\d{2})(\d{4})\.pdf$/i.exec(nom); if (m) return m[3] + "-" + m[2] + "-" + m[1];
+  m = / au (\d{4}-\d{2}-\d{2})/.exec(nom); if (m) return m[1];
+  m = /^(\d{2})(\d{2})_/.exec(nom); if (m) return "20" + m[1] + "-" + m[2] + "-28";
+  return null;
+}
+function releveDansPeriode(d) {
+  var date = dateReleveDuNom(d.nom) || d.creeLe;
+  return date >= RELEVES_DU && date <= RELEVES_AU;
+}
 var DOSSIERS_FACTURES = ["FACTURES", "factures", "Facture MAJ", "FACTURATION_CLIENTS", "FACTURATION_CHOICE", "Comptable", "Factures-CXS-TBP"];
-var DEPUIS = "2025-01-01";          // fichiers créés avant cette date : ignorés
+// Relevés : seule la période ci-dessous est lue (date du relevé, lue dans le nom du fichier ;
+// à défaut, date de création du fichier).
+var RELEVES_DU = "2026-01-01";
+var RELEVES_AU = "2026-12-31";
+// Factures : fichiers créés avant cette date ignorés (les factures de fin 2025 peuvent être
+// payées en 2026, d'où une marge de deux mois).
+var DEPUIS = "2025-11-01";
 var MAX_PAR_PASSAGE = 20;
 var PROFONDEUR_MAX = 6;
 
@@ -129,7 +146,7 @@ function listerReleves() {
     if (vus[f.getId()] || f.getName().indexOf(PREFIXE_RELEVES) !== 0) continue;
     vus[f.getId()] = true;
     var d = descripteur(f, "releve", "");
-    if (d.creeLe < DEPUIS) continue;
+    if (!releveDansPeriode(d)) continue;
     out.push(d);
   }
   return out;
@@ -142,7 +159,7 @@ function collecterReleves(dossier, prof, out, vus) {
     if (vus[f.getId()] || f.isTrashed() || !estReleve(f.getName())) continue;   // IBAN, conditions générales… : ignorés
     vus[f.getId()] = true;
     var d = descripteur(f, "releve", dossier.getName());
-    if (d.creeLe < DEPUIS) continue;
+    if (!releveDansPeriode(d)) continue;
     out.push(d);
   }
   var sub = dossier.getFolders();
