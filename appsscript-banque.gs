@@ -28,7 +28,7 @@
  *     erreurs:[{ fileId, nom, erreur }] }
  *   montant : négatif = débit, positif = crédit. Dates en AAAA-MM-JJ.
  */
-var VERSION = 3;
+var VERSION = 4;
 var FICHIER_BANQUE = "operations01-banque.json";
 var PREFIXE_RELEVES = "releve_";
 // Dossiers de relevés (identifiants Drive : la partie après /folders/ dans l'adresse du dossier).
@@ -69,14 +69,18 @@ function parcourir() {
     data.releves = Array.isArray(data.releves) ? data.releves : [];
     data.factures = Array.isArray(data.factures) ? data.factures : [];
     data.erreurs = Array.isArray(data.erreurs) ? data.erreurs : [];
+    // Un fichier est (re)lu s'il est nouveau, modifié, ou analysé par une version antérieure du script.
     var connus = {};
-    data.releves.forEach(function (r) { connus[r.fileId] = r.mt; });
-    data.factures.forEach(function (f) { connus[f.fileId] = f.mt; });
-    data.erreurs.forEach(function (e) { connus[e.fileId] = e.mt; });
+    var cle = function (x) { return x.mt + "|" + (x.v || 0); };
+    data.releves.forEach(function (r) { connus[r.fileId] = cle(r); });
+    data.factures.forEach(function (f) { connus[f.fileId] = cle(f); });
+    data.erreurs.forEach(function (e) { connus[e.fileId] = cle(e); });
 
     var vus = {}, aFaire = [];
-    listerReleves().forEach(function (f) { vus[f.id] = true; if (connus[f.id] !== f.mt) aFaire.push(f); });
-    listerFactures().forEach(function (f) { vus[f.id] = true; if (connus[f.id] !== f.mt) aFaire.push(f); });
+    listerReleves().forEach(function (f) { vus[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION) aFaire.push(f); });
+    listerFactures().forEach(function (f) { vus[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION) aFaire.push(f); });
+    // Les relevés d'abord : ce sont eux qui comptent, les factures suivent.
+    aFaire.sort(function (a, b) { return (a.type === "releve" ? 0 : 1) - (b.type === "releve" ? 0 : 1); });
     // Fichiers disparus (corbeille, déplacés hors des dossiers) : retirés.
     data.releves = data.releves.filter(function (r) { return vus[r.fileId]; });
     data.factures = data.factures.filter(function (f) { return vus[f.fileId]; });
@@ -85,19 +89,21 @@ function parcourir() {
     var lot = aFaire.slice(0, MAX_PAR_PASSAGE);
     lot.forEach(function (f) {
       retirer(data, f.id);
+      var texte = "";
       try {
-        var texte = texteDuPdf(f.fichier);
+        texte = texteDuPdf(f.fichier);
         if (f.type === "releve") {
           var r = parserReleve(texte, f.nom);
-          r.fileId = f.id; r.nom = f.nom; r.url = f.url; r.mt = f.mt;
+          r.fileId = f.id; r.nom = f.nom; r.url = f.url; r.mt = f.mt; r.v = VERSION;
+          r.texte = String(texte || "").slice(0, 30000);   // texte extrait, conservé pour vérifier la lecture
           data.releves.push(r);
         } else {
           var x = parserFacture(texte, f.nom, f.dossier);
-          x.fileId = f.id; x.nom = f.nom; x.url = f.url; x.dossier = f.dossier; x.mt = f.mt; x.creeLe = f.creeLe;
+          x.fileId = f.id; x.nom = f.nom; x.url = f.url; x.dossier = f.dossier; x.mt = f.mt; x.creeLe = f.creeLe; x.v = VERSION;
           data.factures.push(x);
         }
       } catch (e) {
-        data.erreurs.push({ fileId: f.id, nom: f.nom, url: f.url, mt: f.mt, type: f.type, erreur: String(e && e.message || e) });
+        data.erreurs.push({ fileId: f.id, nom: f.nom, url: f.url, mt: f.mt, type: f.type, v: VERSION, erreur: String(e && e.message || e), texte: String(texte || "").slice(0, 30000) });
       }
     });
     data.releves.sort(function (a, b) { return (b.au || "").localeCompare(a.au || ""); });
