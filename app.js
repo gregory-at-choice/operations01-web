@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v88";
+const APP_VERSION = "v89";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -257,6 +257,7 @@ const ICONS = {
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
   lightbulb: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6M10 22h4"/>',
   external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  paperclip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
   edit: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
   archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
@@ -2332,6 +2333,93 @@ function eventClusterHtml(c) {
     </div></summary>
     <div class="list ev-cluster-body">${c.items.map(eventRow).join("")}</div></details>`;
 }
+// ---- Le mail lui-même, lu dans l'app (Gmail, lecture seule) ----
+// Le Mac mini ne transmet que sujet et résumé. Pour lire le message complet sans
+// quitter choice, l'app lit Gmail directement depuis le navigateur, avec une
+// autorisation de lecture seule accordée explicitement par l'utilisateur. Rien
+// n'est mis en mémoire durable : le contenu ne vit que le temps de la session.
+const gmailLinked = () => !!(window.DriveSync && DriveSync.gmailGranted && DriveSync.gmailGranted());
+const mailCache = {};   // Message-ID → { loading, data, error, images, cidMap }
+const mailKey = (ev) => String(ev.external_id || "").trim().replace(/^<|>$/g, "");
+const mailReadable = (ev) => ev.source === "mail" && !!mailKey(ev);
+async function loadMail(ev, force) {
+  const k = mailKey(ev); if (!k) return;
+  const c = mailCache[k] || (mailCache[k] = {});
+  if (c.loading || (c.data && !force)) return;
+  c.loading = true; c.error = null; if (force) c.data = null;
+  try { c.data = await DriveSync.readMail(k); }
+  catch (e) { c.error = { code: e.code || calError(e).code, msg: e.message || String(e) }; }
+  c.loading = false;
+  if (view.section === "atraiter" && view.detailId === ev.id) render();
+}
+// Document affiché dans un cadre isolé : aucun script, images distantes bloquées
+// tant que l'utilisateur ne les demande pas (pas de pixel de suivi), liens ouverts
+// dans un nouvel onglet.
+function mailSrcdoc(m, images, cidMap) {
+  const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src ${images ? "https: http: data:" : "data:"}; font-src https: data:`;
+  let body = m.html ? String(m.html) : `<pre style="white-space:pre-wrap;font:15px/1.5 -apple-system,Ubuntu,sans-serif;margin:0">${esc(m.text || "")}</pre>`;
+  body = body.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<meta[^>]+http-equiv[^>]*>/gi, "");
+  if (cidMap) body = body.replace(/cid:([^"')\s>]+)/gi, (all, id) => cidMap[id] || all);
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_blank">
+    <style>body{margin:8px;font-family:-apple-system,Ubuntu,"Segoe UI",sans-serif;font-size:15px;line-height:1.45;color:#14201f;word-break:break-word} img{max-width:100%;height:auto} table{max-width:100%}</style></head><body>${body}</body></html>`;
+}
+function renderMailCard(ev) {
+  if (!mailReadable(ev)) return "";
+  const link = eventLink(ev);
+  const gmailBtn = link ? `<a class="btn ghost small" href="${esc(link)}" target="_blank" rel="noopener">${icon("external")} Ouvrir dans Gmail</a>` : "";
+  const head = (extra) => `<div class="card mail-card"><div class="section-h mail-head" style="margin-top:0"><span class="grow">Message complet</span>${extra || ""}</div>`;
+  if (!gmailLinked()) return head() + `<div class="muted" style="font-size:14px">choice peut afficher ici le contenu du mail, <strong>en lecture seule</strong> : rien n'est envoyé, déplacé ni supprimé, et le contenu n'est pas conservé. L'accès se retire à tout moment.</div>
+    <div class="inline" style="gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn small" data-gmail-enable>Relier ma boîte Gmail</button>${gmailBtn}</div></div>`;
+  const c = mailCache[mailKey(ev)] || {};
+  if (c.loading || (!c.data && !c.error)) return head() + `<div class="muted" style="font-size:14px">Lecture du message…</div></div>`;
+  if (c.error) {
+    const account = (window.DriveSync && DriveSync.account && DriveSync.account()) || "";
+    let msg;
+    if (c.error.code === "notfound") msg = `Ce message n'est pas dans la boîte reliée${account ? ` (${esc(account)})` : ""} : il vient du compte « ${esc(EVENT_COMPTES[ev.compte] || ev.compte || "?")} ». Tu peux l'ouvrir dans Gmail.`;
+    else if (c.error.code === "api") msg = "L'API Gmail n'est pas encore activée pour le projet Google de l'application : console Google Cloud → « API et services » → Gmail API → Activer, puis « Réessayer ».";
+    else if (c.error.code === "scope") msg = "Google n'a pas accordé la lecture des mails. Appuie sur « Relier ma boîte Gmail » et laisse la case de lecture des e-mails cochée.";
+    else msg = "Lecture impossible : " + esc(c.error.msg);
+    return head() + `<div class="muted" style="font-size:14px">${msg}</div>
+      <div class="inline" style="gap:8px;margin-top:10px;flex-wrap:wrap">${c.error.code === "scope" ? '<button class="btn small" data-gmail-enable>Relier ma boîte Gmail</button>' : '<button class="btn small" data-mail-retry>Réessayer</button>'}${gmailBtn}</div></div>`;
+  }
+  const m = c.data, h = m.headers || {};
+  const meta = [["De", h.from], ["À", h.to], ["Cc", h.cc], ["Date", h.date]].filter((x) => x[1]).map(([k, v]) => `<span class="muted">${k}</span><span>${esc(v)}</span>`).join("");
+  const atts = (m.attachments || []).filter((a) => a.id && !a.cid);
+  const hasImg = /<img/i.test(m.html || "") || (m.attachments || []).some((a) => a.cid);
+  const imagesBtn = hasImg && !c.images ? `<button class="btn ghost small" data-mail-images>Afficher les images</button>` : "";
+  return head(`${imagesBtn}${gmailBtn}<button class="btn ghost small" data-gmail-unlink title="Retirer l'accès de choice à Gmail">Délier</button>`)
+    + `${meta ? `<div class="ev-meta" style="margin-bottom:10px">${meta}</div>` : ""}
+    <iframe class="mail-frame" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" data-mail-frame srcdoc="${esc(mailSrcdoc(m, c.images, c.cidMap))}" title="Message"></iframe>
+    ${atts.length ? `<div class="mail-atts">${atts.map((a) => `<button class="btn ghost small" data-mail-att="${esc(a.id)}" data-name="${esc(a.name)}" data-mime="${esc(a.mime || "")}">${icon("paperclip")} ${esc(a.name)} <span class="muted">${esc(fmtSize(a.size || 0))}</span></button>`).join("")}</div>` : ""}</div>`;
+}
+// Images : distantes autorisées, intégrées (cid:) récupérées et incorporées.
+async function showMailImages(ev) {
+  const c = mailCache[mailKey(ev)]; if (!c || !c.data) return;
+  c.images = true; c.cidMap = c.cidMap || {};
+  const inline = (c.data.attachments || []).filter((a) => a.cid && a.id && !c.cidMap[a.cid]);
+  for (const a of inline) {
+    try { const r = await DriveSync.readAttachment(c.data.id, a.id); c.cidMap[a.cid] = `data:${a.mime || "image/png"};base64,${r.b64}`; } catch (e) {}
+  }
+  if (view.section === "atraiter" && view.detailId === ev.id) render();
+}
+function enableGmail() {
+  if (!(window.DriveSync && DriveSync.enableGmail)) return;
+  Promise.resolve(DriveSync.enableGmail()).then((ok) => {
+    if (ok === null) return;          // redirection vers Google en cours (iOS)
+    Object.keys(mailCache).forEach((k) => delete mailCache[k]);
+    render(); toast("Gmail relié ✓ (lecture seule)");
+  }).catch((e) => {
+    render();
+    alert("Impossible de relier Gmail : " + e.message + "\n\nSur iPhone (Safari), autorise les fenêtres surgissantes pour ce site, puis réessaie.");
+  });
+}
+function unlinkGmail() {
+  if (!(window.DriveSync && DriveSync.disableGmail)) return;
+  DriveSync.disableGmail();
+  Object.keys(mailCache).forEach((k) => delete mailCache[k]);
+  render(); toast("Gmail délié.");
+}
+const currentDetailEvent = () => (view.section === "atraiter" && view.detailId) ? eventsAll().find((e) => e.id === view.detailId) : null;
 // Page d'un message (absente du menu) : tout ce qu'on sait et ce que l'assistant
 // recommande, avec les mêmes décisions que dans la liste. Précédent / Suivant
 // suivent l'ordre de la liste.
@@ -2368,6 +2456,7 @@ function renderEventDetail(id) {
       <div class="card"><div class="ev-meta">${meta}</div></div>
       ${ev.resume ? `<div class="card"><div class="section-h" style="margin-top:0">Résumé</div><div class="ev-resume" style="margin-top:0">${esc(ev.resume)}</div></div>` : ""}
       <div class="card"><div class="section-h" style="margin-top:0">Recommandation</div>${reco}</div>
+      ${renderMailCard(ev)}
       ${tasks.length ? `<div class="card"><div class="section-h" style="margin-top:0">Tâches créées depuis ce message</div>${tasks.map((t) => `<div class="brief-row" data-open-task="${t.id}"><span class="brief-main">${taskDone(t) ? "✓ " : ""}${esc(t.title)}</span>${t.dueDate ? `<span class="muted" style="font-size:13px">${esc(fmtDate(t.dueDate))}</span>` : ""}</div>`).join("")}</div>` : ""}
       ${same.length ? `<div class="card"><div class="section-h" style="margin-top:0">Du même expéditeur, à traiter (${same.length})</div>${same.map((e) => `<div class="brief-row" data-ev-open="${e.id}"><span class="badge ev-urg u${eventUrgence(e)}">${EVENT_URGENCES[eventUrgence(e)]}</span><span class="brief-main">${esc(eventTitle(e))}</span><span class="muted" style="font-size:13px">${esc(fmtDateTimeISO(e.recu_le))}</span></div>`).join("")}</div>` : ""}
       <div class="card"><div class="section-h" style="margin-top:0">Décision</div><div class="ev-actions" style="margin-top:0">${eventButtons(ev)}</div></div>
@@ -5295,6 +5384,26 @@ function wire() {
   c.querySelectorAll("[data-ev-nav]").forEach((b) => b.onclick = () => { if (b.dataset.evNav) openDetail("atraiter", b.dataset.evNav); });
   const backEv = c.querySelector("[data-back-ev]"); if (backEv) backEv.onclick = () => { view.detailId = null; render(); };
   c.querySelectorAll("[data-open-task]").forEach((b) => b.onclick = () => openTask(b.dataset.openTask));
+  // le mail lui-même (Gmail, lecture seule)
+  c.querySelectorAll("[data-gmail-enable]").forEach((b) => b.onclick = () => enableGmail());
+  c.querySelectorAll("[data-gmail-unlink]").forEach((b) => b.onclick = () => { if (confirm("Retirer l'accès de choice à ta boîte Gmail ?")) unlinkGmail(); });
+  c.querySelectorAll("[data-mail-retry]").forEach((b) => b.onclick = () => { const ev = currentDetailEvent(); if (ev) { loadMail(ev, true); render(); } });
+  c.querySelectorAll("[data-mail-images]").forEach((b) => b.onclick = () => { const ev = currentDetailEvent(); if (ev) { b.disabled = true; b.textContent = "…"; showMailImages(ev); } });
+  c.querySelectorAll("[data-mail-att]").forEach((b) => b.onclick = async () => {
+    const ev = currentDetailEvent(); const cache = ev && mailCache[mailKey(ev)]; if (!cache || !cache.data) return;
+    b.disabled = true;
+    try { const r = await DriveSync.readAttachment(cache.data.id, b.dataset.mailAtt); downloadBytes(b.dataset.name || "piece-jointe", r.bytes, b.dataset.mime || "application/octet-stream"); }
+    catch (e) { alert("Téléchargement impossible : " + e.message); }
+    b.disabled = false;
+  });
+  c.querySelectorAll("[data-mail-frame]").forEach((f) => {
+    const fit = () => { try { const d = f.contentDocument; if (!d || !d.documentElement) return; const h = Math.max(d.documentElement.scrollHeight, d.body ? d.body.scrollHeight : 0); f.style.height = Math.min(Math.max(h + 24, 120), 6000) + "px"; } catch (e) {} };
+    f.onload = fit; setTimeout(fit, 400);
+  });
+  {
+    const ev = currentDetailEvent();
+    if (ev && mailReadable(ev) && gmailLinked()) { const cache = mailCache[mailKey(ev)] || {}; if (!cache.data && !cache.error && !cache.loading) loadMail(ev); }
+  }
   c.querySelectorAll("[data-evfilter]").forEach((s) => s.onchange = () => { eventFilter[s.dataset.evfilter] = s.value; render(); });
   c.querySelectorAll("[data-ev-group]").forEach((cb) => cb.onchange = () => { eventGroup = cb.checked; try { localStorage.setItem(EV_GROUP_KEY, eventGroup ? "1" : "0"); } catch (e) {} render(); });
   c.querySelectorAll("[data-ev-cluster]").forEach((d) => d.addEventListener("toggle", () => { evClusterOpen[d.dataset.evCluster] = d.open; }));

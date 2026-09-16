@@ -19,7 +19,12 @@
   const CAL_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
   const CAL_KEY = "op01_calendarScope";
   const calGranted = () => { try { return localStorage.getItem(CAL_KEY) === "1"; } catch (e) { return false; } };
-  const askedScope = () => (calGranted() ? SCOPE + " " + CAL_SCOPE : SCOPE);
+  // Portée facultative : lecture des mails (jamais d'envoi, de déplacement ni de
+  // suppression), demandée seulement si l'utilisateur relie sa boîte Gmail.
+  const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+  const GMAIL_KEY = "op01_gmailScope";
+  const gmailGranted = () => { try { return localStorage.getItem(GMAIL_KEY) === "1"; } catch (e) { return false; } };
+  const askedScope = () => [SCOPE, calGranted() ? CAL_SCOPE : "", gmailGranted() ? GMAIL_SCOPE : ""].filter(Boolean).join(" ");
   const FILE_NAME = cfg.driveFileName || "operations01-data.json";
   const BACKUP_PREFIX = "operations01-backup-";
   const CONFLICT_PREFIX = "operations01-conflit-";
@@ -510,6 +515,81 @@
     tokenClient = null; tokenClientScope = null;
   }
 
+  // ---- Gmail (lecture seule) ---------------------------------------------
+  // Relie la boîte : demande explicite de l'utilisateur, jamais au lancement.
+  async function enableGmail() {
+    try { localStorage.setItem(GMAIL_KEY, "1"); } catch (e) {}
+    dropToken(); tokenPromise = null; tokenClient = null; tokenClientScope = null;
+    if (isIOS()) { setStatus("redirection vers Google…"); startRedirectAuth(); return null; }
+    try { await getToken(true); return true; }
+    catch (e) { disableGmail(); throw e; }
+  }
+  function disableGmail() {
+    try { localStorage.removeItem(GMAIL_KEY); } catch (e) {}
+    tokenClient = null; tokenClientScope = null;
+  }
+  // Corps des messages : base64url → octets → texte selon le jeu de caractères de la partie.
+  function b64urlBytes(s) {
+    s = String(s || "").replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
+    const bin = atob(s); const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  const b64std = (s) => { s = String(s || "").replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; return s; };
+  function decodeText(bytes, charset) {
+    try { return new TextDecoder(charset || "utf-8").decode(bytes); }
+    catch (e) { return new TextDecoder("utf-8").decode(bytes); }
+  }
+  function headerOf(headers, name) {
+    const h = (headers || []).find((x) => x && x.name && x.name.toLowerCase() === String(name).toLowerCase());
+    return h ? String(h.value || "") : "";
+  }
+  function partCharset(part) {
+    const m = /charset="?([\w.:-]+)"?/i.exec(headerOf(part.headers, "Content-Type"));
+    return m ? m[1].toLowerCase() : "utf-8";
+  }
+  // Parcourt les parties MIME : premier texte HTML, premier texte brut, pièces jointes
+  // (avec leur Content-ID pour les images intégrées).
+  function walkParts(payload, out) {
+    if (!payload) return;
+    const mime = String(payload.mimeType || "").toLowerCase();
+    if (payload.parts && payload.parts.length) { payload.parts.forEach((p) => walkParts(p, out)); return; }
+    const body = payload.body || {}, fname = payload.filename || "";
+    if (fname || (body.attachmentId && !/^text\//.test(mime))) {
+      out.attachments.push({ id: body.attachmentId || "", name: fname || "pièce jointe", size: Number(body.size) || 0, mime, cid: headerOf(payload.headers, "Content-ID").replace(/^<|>$/g, "") });
+      return;
+    }
+    if (!body.data) return;
+    const text = decodeText(b64urlBytes(body.data), partCharset(payload));
+    if (mime === "text/html") { if (!out.html) out.html = text; }
+    else if (mime === "text/plain" || !mime) { if (!out.text) out.text = text; }
+  }
+  // Lit un message par son Message-ID (celui que le Mac mini transmet dans external_id).
+  async function readMail(externalId) {
+    if (!hasSession()) throw new Error("Non connecté.");
+    if (!gmailGranted()) { const e = new Error("Gmail non relié."); e.code = "off"; throw e; }
+    const id = String(externalId || "").trim().replace(/^<|>$/g, "");
+    if (!id) { const e = new Error("Message sans identifiant."); e.code = "notfound"; throw e; }
+    const q = encodeURIComponent("rfc822msgid:" + id);
+    const r = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${q}&maxResults=1`);
+    const j = await r.json();
+    const m = j && j.messages && j.messages[0];
+    if (!m) { const e = new Error("Message introuvable dans cette boîte."); e.code = "notfound"; throw e; }
+    const r2 = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(m.id)}?format=full`);
+    const msg = await r2.json();
+    const out = { id: msg.id, threadId: msg.threadId, html: "", text: "", attachments: [], headers: {}, labels: msg.labelIds || [], account: loginHint || "" };
+    ["From", "To", "Cc", "Date", "Subject"].forEach((h) => { out.headers[h.toLowerCase()] = headerOf(msg.payload && msg.payload.headers, h); });
+    walkParts(msg.payload, out);
+    return out;
+  }
+  // Pièce jointe : octets + base64 standard (pour les images intégrées en data:).
+  async function readAttachment(msgId, attId) {
+    const r = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(msgId)}/attachments/${encodeURIComponent(attId)}`);
+    const j = await r.json();
+    return { bytes: b64urlBytes(j.data || ""), b64: b64std(j.data || "") };
+  }
+
   // Google renvoie les événements par pages : sur une fenêtre de plusieurs mois,
   // s'arrêter à la première page tronquerait silencieusement l'agenda. On suit
   // les pages jusqu'au bout, avec une limite haute par sécurité.
@@ -905,6 +985,12 @@
     calendarGranted: calGranted,
     enableCalendar,
     disableCalendar,
+    gmailGranted,
+    enableGmail,
+    disableGmail,
+    readMail,
+    readAttachment,
+    account: () => loginHint || "",
     listDocs,
     uploadDoc,
     readDoc,

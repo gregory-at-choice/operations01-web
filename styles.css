@@ -609,3 +609,8 @@ label.field.inline-check > span { margin-bottom: 0; }
 @media (max-width: 720px) { .ev-cluster-body { margin-left: 8px; } }
 .filterbar .inline-check { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .filterbar .inline-check input { flex: 0 0 auto; width: auto; min-width: 0; padding: 0; margin: 0; }
+
+/* Message complet (Gmail, lecture seule) */
+.mail-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mail-frame { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #fff; min-height: 120px; display: block; }
+.mail-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }

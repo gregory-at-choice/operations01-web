@@ -97,3 +97,22 @@ Installation (une fois, dans le compte Google qui porte le Drive) :
 
 Vingt fichiers au plus sont analysés par passage : le rattrapage initial prend quelques heures.
 Les dossiers de factures parcourus sont listés dans `DOSSIERS_FACTURES` en tête du script.
+
+## Lire les mails dans l'app (Gmail, lecture seule)
+
+Sur la page d'un message « À traiter », la carte **Message complet** affiche le mail lui-même
+(texte, mise en forme, pièces jointes) sans quitter l'app. L'accès est **en lecture seule** :
+rien n'est envoyé, déplacé ni supprimé, et le contenu n'est pas conservé sur l'appareil.
+
+1. Console Google Cloud → **API et services → Bibliothèque** → **Gmail API** → **Activer**
+   (même projet que l'ID client OAuth de l'app).
+2. Si l'écran de consentement est en mode « Production » sans validation Google, la lecture
+   des mails (portée « restreinte ») peut être refusée : passez l'application en mode **Test**
+   et ajoutez votre adresse dans les **utilisateurs test**.
+3. Dans l'app : ouvrez un message → **Relier ma boîte Gmail** → sur l'écran Google, laissez la
+   case de lecture des e-mails cochée → Autoriser.
+
+Seule la boîte du compte Google relié à l'app est lue. Les messages venant d'un autre compte
+(Icarus, Majandco, Gmail perso…) gardent le bouton « Ouvrir dans Gmail ». Les images distantes
+sont bloquées tant que vous ne cliquez pas « Afficher les images » (pas de pixel de suivi).
+« Délier » retire l'accès à tout moment.
