@@ -628,3 +628,4 @@ label.field.inline-check > span { margin-bottom: 0; }
 .justif-right { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .justif-right .chip { max-width: 100%; white-space: normal; text-align: left; }
 .justif-frame { width: 100%; height: 60vh; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.chip.chip-ok { border-color: rgba(77,200,187,.6); background: rgba(77,200,187,.12); }

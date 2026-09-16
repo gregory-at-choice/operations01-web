@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v93";
+const APP_VERSION = "v94";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3743,9 +3743,45 @@ function justifQueries(inv) {
   const from = new Date(d + "T12:00:00"); from.setDate(from.getDate() - 60);
   const to = new Date(d + "T12:00:00"); to.setDate(to.getDate() + 15);
   const win = `after:${gmailDay(from)} before:${gmailDay(to)}`;
-  const words = normName((inv.title || "") + " " + (inv.bankDetail || "")).split(" ").filter((w) => w.length >= 4 && !JUSTIF_STOP.test(w)).slice(0, 3);
-  return [`has:attachment (${amounts}) ${win}`].concat(words.length ? [`has:attachment (${words.map((w) => `"${w}"`).join(" OR ")}) ${win}`] : []);
+  const words = justifTiersWords(inv);
+  // Par le nom : tous les mots du tiers doivent y être (« PARIS » seul ramènerait n'importe quoi).
+  return [`has:attachment (${amounts}) ${win}`].concat(words.length ? [`has:attachment ${words.map((w) => `"${w}"`).join(" ")} ${win}`] : []);
 }
+// Mots du tiers (commerçant ou contrepartie) : la partie avant « · » du détail bancaire, sinon le libellé.
+function justifTiersWords(inv) {
+  const tiers = String(inv.bankDetail || "").split(" · ")[0] || String(inv.title || "").replace(/^(Carte|Prélèvement|Virement (de|à)|Remise)\s+/i, "");
+  return normName(tiers).split(" ").filter((w) => w.length >= 3 && !JUSTIF_STOP.test(w)).slice(0, 3);
+}
+// Relecture d'une pièce jointe : le montant de l'opération figure-t-il dans le document ?
+// (texte du PDF, lu dans le navigateur ; à défaut, sujet et extrait du mail). Remplaçable dans les tests.
+let justifReadPdf = async (bytes) => {
+  const pdfjs = await needPdfJs();
+  const src = await pdfjs.getDocument({ data: bytes.slice(0), standardFontDataUrl: "vendor/standard_fonts/" }).promise;
+  let out = "";
+  for (let i = 1; i <= Math.min(src.numPages, 6); i++) { const tc = await (await src.getPage(i)).getTextContent(); out += tc.items.map((it) => it.str).join(" ") + "\n"; }
+  return out;
+};
+function textHasAmount(text, amount) {
+  const t = String(text || "").replace(/[  ]/g, " ");
+  return amountVariants(amount).some((v) => t.indexOf(v) > -1);
+}
+const JUSTIF_MAX_BYTES = 6 * 1024 * 1024;
+async function verifyJustif(inv, m, a) {
+  const words = justifTiersWords(inv);
+  const mailText = `${(m.headers || {}).subject || ""} ${m.snippet || ""} ${(m.headers || {}).from || ""}`;
+  a.check = { amount: textHasAmount(mailText, inv.amount) ? "mail" : "", name: words.some((w) => normName(mailText).indexOf(w) > -1) };
+  const isPdf = /pdf/i.test(a.mime || "") || /\.pdf$/i.test(a.name || "");
+  if (!isPdf || (a.size && a.size > JUSTIF_MAX_BYTES)) return a;
+  try {
+    const key = m.id + "|" + a.id;
+    if (!justifBytes[key]) { const r = await DriveSync.readAttachment(m.id, a.id); justifBytes[key] = { bytes: r.bytes, url: null }; }
+    const txt = await justifReadPdf(justifBytes[key].bytes);
+    if (textHasAmount(txt, inv.amount)) a.check.amount = "document";
+    if (!a.check.name && words.some((w) => normName(txt).indexOf(w) > -1)) a.check.name = true;
+  } catch (e) { a.check.error = e.message || String(e); }
+  return a;
+}
+const justifScore = (a) => (a.check ? (a.check.amount === "document" ? 3 : a.check.amount === "mail" ? 2 : 0) + (a.check.name ? 1 : 0) : 0);
 const isReceiptFile = (a) => !!(a.id && !a.cid && (/\.(pdf|png|jpe?g)$/i.test(a.name || "") || /pdf|image\//i.test(a.mime || "")));
 async function searchJustif(inv) {
   const s = justifSearch[inv.id] || (justifSearch[inv.id] = {});
@@ -3760,6 +3796,9 @@ async function searchJustif(inv) {
       if (found.some((m) => (m.attachments || []).some(isReceiptFile))) break;
     }
     s.results = found.filter((m) => (m.attachments || []).some(isReceiptFile)).sort((a, b) => (b.internalDate || 0) - (a.internalDate || 0)).slice(0, 6);
+    // Relecture : chaque pièce jointe est vérifiée (montant dans le document, nom du tiers).
+    let n = 0;
+    for (const m of s.results) for (const a of (m.attachments || []).filter(isReceiptFile)) { if (n++ >= 8) break; await verifyJustif(inv, m, a); }
   } catch (e) { s.error = { code: e.code || calError(e).code, msg: e.message || String(e) }; }
   s.loading = false; s.done = true;
   if (view.section === "finances") render();
@@ -3786,10 +3825,8 @@ async function openJustifPreview(inv, m, att) {
   document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
   let entry = justifBytes[key];
   try {
-    if (!entry) {
-      const r = await DriveSync.readAttachment(m.id, att.id);
-      entry = justifBytes[key] = { bytes: r.bytes, url: URL.createObjectURL(new Blob([r.bytes], { type: att.mime || (isImg ? "image/*" : "application/pdf") })) };
-    }
+    if (!entry) { const r = await DriveSync.readAttachment(m.id, att.id); entry = justifBytes[key] = { bytes: r.bytes, url: null }; }
+    if (!entry.url) entry.url = URL.createObjectURL(new Blob([entry.bytes], { type: att.mime || (isImg ? "image/*" : "application/pdf") }));
   } catch (e) {
     const box = document.querySelector(".justif-preview"); if (box) box.innerHTML = "Lecture impossible : " + esc(e.message);
     return;
@@ -3852,9 +3889,16 @@ function justifBlock(sansJustif) {
     if (!linked) right = "";
     else if (s.loading) right = `<span class="muted" style="font-size:12px">Recherche dans les mails…</span>`;
     else if (s.error) right = `<span class="muted" style="font-size:12px">${esc(s.error.msg)}</span> <button class="btn ghost small" data-justif-search="${v.id}">Réessayer</button>`;
-    else if (s.results) right = s.results.length
-      ? s.results.map((m) => (m.attachments || []).filter(isReceiptFile).map((a) => `<button class="chip" data-justif-add="${v.id}|${esc(m.id)}|${esc(a.id)}" title="${esc(m.headers.subject || "")} · ${esc(m.headers.from || "")}">${icon("paperclip")} ${esc((a.name || "pièce jointe").slice(0, 34))} <span class="muted">· ${esc((m.headers.from || "").replace(/<.*/, "").trim().slice(0, 22))} · ${esc(fmtDateTimeISO(new Date(m.internalDate || 0).toISOString()).slice(0, 8))}${m.via === "nom" ? " · par le nom" : ""}</span></button> <a class="btn ghost small" href="${esc(gmailMsgLink(m.id))}" target="_blank" rel="noopener" title="Ouvrir le mail">↗</a>`).join(" ")).join(" ")
-      : `<span class="muted" style="font-size:12px">Rien trouvé dans les mails</span> <button class="btn ghost small" data-bank-noreceipt="${v.id}">Sans justificatif</button>`;
+    else if (s.results) {
+      const cands = [];
+      s.results.forEach((m) => (m.attachments || []).filter(isReceiptFile).forEach((a) => cands.push({ m, a, score: justifScore(a) })));
+      cands.sort((x, y) => y.score - x.score || (y.m.internalDate || 0) - (x.m.internalDate || 0));
+      const sure = cands.filter((c) => c.score >= 2), rest = cands.filter((c) => c.score < 2);
+      const chip = (c) => `<button class="chip${c.score >= 3 ? " chip-ok" : ""}" data-justif-add="${v.id}|${esc(c.m.id)}|${esc(c.a.id)}" title="${esc(c.m.headers.subject || "")} · ${esc(c.m.headers.from || "")}">${c.score >= 2 ? icon("check") : icon("paperclip")} ${esc((c.a.name || "pièce jointe").slice(0, 34))} <span class="muted">· ${esc((c.m.headers.from || "").replace(/<.*/, "").trim().slice(0, 22))} · ${esc(fmtDateTimeISO(new Date(c.m.internalDate || 0).toISOString()).slice(0, 8))}${c.score >= 3 ? " · montant dans le document" : c.score === 2 ? " · montant dans le mail" : c.a.check && c.a.check.name ? " · nom seulement" : " · non vérifié"}</span></button> <a class="btn ghost small" href="${esc(gmailMsgLink(c.m.id))}" target="_blank" rel="noopener" title="Ouvrir le mail">↗</a>`;
+      right = (sure.length ? sure.map(chip).join(" ") : `<span class="muted" style="font-size:12px">Aucune pièce jointe ne porte ce montant</span>`)
+        + (rest.length ? (s.showAll ? " " + rest.map(chip).join(" ") : ` <button class="btn ghost small" data-justif-more="${v.id}">Voir ${rest.length} autre(s)</button>`) : "")
+        + (!sure.length ? ` <button class="btn ghost small" data-bank-noreceipt="${v.id}">Sans justificatif</button>` : "");
+    }
     else right = `<button class="btn ghost small" data-justif-search="${v.id}">Chercher</button>`;
     return `<div class="inline justif-row" style="padding:6px 0;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:12px;white-space:nowrap">${fmtDate(v.paymentDate || v.startDate)}</span><span class="grow" style="min-width:160px">${esc(v.title || "")}</span><strong style="white-space:nowrap">${euros(v.amount)}</strong><span class="justif-right">${right}</span></div>`;
   }).join("");
@@ -3992,7 +4036,8 @@ function wireBanque(c) {
   const jall = c.querySelector("[data-justif-all]"); if (jall) jall.onclick = async () => {
     const list = state.invoices.filter((v) => v.bankOpId && receiptMissing(v) && !(justifSearch[v.id] || {}).done).slice(0, 15);
     jall.disabled = true;
-    for (const inv of list) { await searchJustif(inv); }
+    let k = 0;
+    for (const inv of list) { k++; jall.textContent = `Recherche ${k} / ${list.length}…`; await searchJustif(inv); }
     render();
   };
   c.querySelectorAll("[data-justif-add]").forEach((b) => b.onclick = () => {
@@ -4001,6 +4046,7 @@ function wireBanque(c) {
     const m = s && s.results && s.results.find((x) => x.id === msgId); const att = m && (m.attachments || []).find((a) => a.id === attId);
     if (inv && m && att) openJustifPreview(inv, m, att);
   });
+  c.querySelectorAll("[data-justif-more]").forEach((b) => b.onclick = () => { const st = justifSearch[b.dataset.justifMore]; if (st) { st.showAll = true; render(); } });
   const purge = c.querySelector("[data-bank-purge-orphans]"); if (purge) purge.onclick = () => {
     const n = Number(purge.dataset.bankPurgeOrphans) || 0;
     if (!confirm(`Supprimer ${n} écriture(s) importée(s) d'une ancienne lecture des relevés ? Les opérations correspondantes seront réimportées proprement.`)) return;
