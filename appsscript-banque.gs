@@ -16,7 +16,10 @@
  *     dont le nom commence par « releve_ » (Société Générale) ou contient « Extrait de comptes »
  *     (Crédit Mutuel), plus tous les « releve_… » ailleurs sur le Drive. La banque est reconnue
  *     au contenu du PDF. Seuls les relevés de la période RELEVES_DU → RELEVES_AU sont lus.
- *   - Factures : les PDF des dossiers listés dans DOSSIERS_FACTURES (et leurs sous-dossiers).
+ *   - Factures : les PDF (et photos JPEG/PNG, lues par OCR) des dossiers listés dans DOSSIERS_FACTURES
+ *     et du dossier DOSSIER_JUSTIFICATIFS_ID (sous-dossiers inclus). Trois sources y convergent :
+ *     les factures rangées sur le Drive, les reçus joints aux mails (déposés par le script dans
+ *     « Reçus mails ») et les factures papier, numérisées puis déposées dans ce dossier.
  *   Chaque PDF n'est analysé qu'une fois (puis de nouveau s'il change). Au plus MAX_PAR_PASSAGE
  *   nouveaux fichiers par passage : le rattrapage initial se fait en plusieurs heures.
  *
@@ -264,7 +267,7 @@ function collecterPdf(dossier, chemin, prof, out, vus) {
   if (prof > PROFONDEUR_MAX || dossier.isTrashed()) return;
   // Le filtre de date est fait par Drive : les dossiers volumineux ne sont plus parcourus fichier par fichier.
   var fichiers = avecReprise(function () {
-    var liste = [], fs = dossier.searchFiles("mimeType = 'application/pdf' and trashed = false and modifiedDate > '" + DEPUIS + "T00:00:00'");
+    var liste = [], fs = dossier.searchFiles("(mimeType = 'application/pdf' or mimeType = 'image/jpeg' or mimeType = 'image/png') and trashed = false and modifiedDate > '" + DEPUIS + "T00:00:00'");
     while (fs.hasNext()) liste.push(fs.next());
     return liste;
   }, "dossier " + chemin);
