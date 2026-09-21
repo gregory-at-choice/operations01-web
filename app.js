@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v95";
+const APP_VERSION = "v96";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3688,15 +3688,22 @@ function importReleve(r) {
   return { added, error: "" };
 }
 // Factures candidates pour une opération : même montant (exact au centime, obligatoire), date proche, nom du fournisseur dans le libellé.
+// Le montant retenu est le total du document (« Total TTC », « Net à payer »…), pas un montant
+// intermédiaire qui y figurerait (TVA, ligne, autre facture) ; un document daté hors de la fenêtre
+// FACTURE_AVANT_J avant / FACTURE_APRES_J après le paiement n'est pas proposé.
+const FACTURE_AVANT_J = 120, FACTURE_APRES_J = 30;
 function factureCandidates(op) {
   const amt = Math.abs(op.montant), hay = bankHaystack(op);
   const used = new Set(state.invoices.map((v) => v.bankFactureId).filter(Boolean));
   return banqueFactures().map((f) => {
     if (used.has(f.fileId)) return null;
-    const amounts = [f.montant].concat(f.montants || []).filter((x) => x != null);
-    if (!amounts.some((x) => Math.abs(x - amt) < 0.005)) return null;
-    let score = f.montant != null && Math.abs(f.montant - amt) < 0.005 ? 3 : 2;
-    if (f.date && op.date) { const days = Math.abs((new Date(f.date) - new Date(op.date)) / 86400000); if (days <= 45) score += 1; else if (days > 200) score -= 1; }
+    if (f.montant == null || Math.abs(f.montant - amt) >= 0.005) return null;
+    let score = 3;
+    if (f.date && op.date) {
+      const days = (new Date(op.date) - new Date(f.date)) / 86400000;   // > 0 : document antérieur au paiement
+      if (days > FACTURE_AVANT_J || days < -FACTURE_APRES_J) return null;
+      if (Math.abs(days) <= 45) score += 1;
+    }
     const words = normName((f.fournisseur || "") + " " + (f.nom || "")).split(" ").filter((w) => w.length >= 4 && !/^(INVOICE|FACTURE|RECU|PDF|\d+)$/.test(w));
     if (words.some((w) => hay.indexOf(w) > -1)) score += 2;
     return { f, score };
@@ -3941,7 +3948,7 @@ function justifBlock(sansJustif) {
     : (pending ? `<button class="btn small" data-justif-all>Chercher dans les mails pour tout (${Math.min(pending, 15)})</button>` : "");
   return `<div class="section-h">${icon("mail")} Justificatifs à retrouver <span class="muted">(${sansJustif.length})</span></div>
     <div class="card" style="padding:8px 12px">
-      <div class="inline" style="gap:8px;flex-wrap:wrap;margin-bottom:4px"><span class="grow muted" style="font-size:13px">Propositions : les documents du Drive (factures rangées et reçus joints à tes mails, déposés par le script) dont le <strong>montant est exact au centime</strong>, classés par date et par nom du tiers. Clic = aperçu, puis « Rapprocher ». ${linked ? "« Mails » lance en plus une recherche par le nom du tiers dans Gmail, chaque PDF étant relu pour y vérifier le montant." : "Relie ta boîte Gmail (lecture seule) pour chercher aussi dans les mails."}</span>${headBtn}</div>
+      <div class="inline" style="gap:8px;flex-wrap:wrap;margin-bottom:4px"><span class="grow muted" style="font-size:13px">Propositions : les documents du Drive (factures rangées, reçus joints à tes mails déposés par le script, factures papier numérisées) dont le <strong>total est exactement celui de l'opération</strong>, datés au plus ${FACTURE_AVANT_J} jours avant ou ${FACTURE_APRES_J} jours après le paiement, classés par date et par nom du tiers. Clic = aperçu, puis « Rapprocher ». ${linked ? "« Mails » lance en plus une recherche par le nom du tiers dans Gmail, chaque PDF étant relu pour y vérifier le montant." : "Relie ta boîte Gmail (lecture seule) pour chercher aussi dans les mails."}</span>${headBtn}</div>
       ${rows}${sansJustif.length > items.length ? `<div class="muted" style="font-size:12px;padding:6px 0">… et ${sansJustif.length - items.length} autre(s)</div>` : ""}</div>`;
 }
 function financeBanque() {
