@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v97";
+const APP_VERSION = "v98";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1991,6 +1991,18 @@ function seedVip() {
   // Enregistré localement seulement : la prochaine synchronisation l'emporte sur le Drive.
   if (added) storeState();
 }
+// Les virements entre mes sociétés étaient comptés en charges / produits : ils passent hors
+// résultat, et la catégorie « Remboursement de créances » est proposée. Une fois par appareil.
+function seedBilan() {
+  let done = false;
+  try { done = localStorage.getItem("op01_bilanSeeded") === "1"; } catch (e) {}
+  if (done) return;
+  let changed = false;
+  const vi = state.categories.find((c) => c.name === CAT_INTERNE); if (vi && vi.nature !== "bilan") { vi.nature = "bilan"; changed = true; }
+  if (!state.categories.some((c) => c.name === CAT_REMBOURSEMENT)) { state.categories.push({ id: uid(), name: CAT_REMBOURSEMENT, nature: "bilan", sortIndex: state.categories.length }); changed = true; }
+  try { localStorage.setItem("op01_bilanSeeded", "1"); } catch (e) {}
+  if (changed) storeState();
+}
 function addVip(label) {
   label = String(label || "").trim(); if (!label) return null;
   if (vipList().some((v) => vipNorm(v.label) === vipNorm(label))) return null;
@@ -3300,8 +3312,9 @@ function financeCDR() {
     state.invoices.filter((v) => invNature(v) === nature).forEach((v) => { const key = v.categoryName || "À catégoriser"; map[key] = (map[key] || 0) + (v.amount || 0); });
     return Object.entries(map).filter(([, val]) => val !== 0).sort((a, b) => b[1] - a[1]);
   };
-  const produits = lines("produit"), charges = lines("charge");
+  const produits = lines("produit"), charges = lines("charge"), bilan = lines("bilan");
   const totP = produits.reduce((t, l) => t + l[1], 0), totC = charges.reduce((t, l) => t + l[1], 0);
+  const bilanHtml = bilan.length ? `<div class="section-h">Hors résultat <span class="muted">(mouvements de bilan, non comptés)</span></div><div class="card">${bilan.map((l) => `<div class="inline" style="padding:4px 0"><span class="grow">${esc(l[0])}</span><span class="muted">${euros(l[1])}</span></div>`).join("")}</div>` : "";
   const expBar = `<div class="toolbar"><span class="grow"></span><button class="btn secondary small" data-export-cdr>${icon("file-text")} Exporter (PDF)</button></div>`;
   const block = (title, arr, tot, color) => `<div class="section-h">${title}</div><div class="card">
     ${arr.length ? arr.map((l) => `<div class="inline" style="padding:4px 0"><span class="grow">${esc(l[0])}</span><span class="muted">${euros(l[1])}</span></div>`).join("") : '<div class="muted">—</div>'}
@@ -3309,7 +3322,7 @@ function financeCDR() {
   return `${expBar}${block("Produits", produits, totP, "var(--finance)")}${block("Charges", charges, totC, "var(--alert)")}
     <div class="card" style="margin-top:12px"><div class="inline"><strong class="grow">Résultat à date</strong>
       <strong style="color:${totP - totC >= 0 ? "var(--positive)" : "#d23c3c"};font-size:19px">${euros(totP - totC)}</strong></div>
-      <div class="muted" style="font-size:13px;margin-top:4px">Montants HT, toutes factures confondues.</div></div>`;
+      <div class="muted" style="font-size:13px;margin-top:4px">Montants HT, toutes factures confondues. Les mouvements hors résultat (virements entre tes sociétés, remboursements de créances) n'entrent ni dans les produits ni dans les charges.</div></div>${bilanHtml}`;
 }
 function financeTresorerie() {
   const now = new Date();
@@ -3331,7 +3344,7 @@ function renderInvoiceDetail(id) {
   if (!v) { view.detailId = null; return renderFinances(); }
   const dirOpts = DIRECTIONS.map((d) => `<option value="${d.code}" ${d.code === v.direction ? "selected" : ""}>${d.label}</option>`).join("");
   const stOpts = INV_STATUSES.map((d) => `<option value="${d.code}" ${d.code === v.status ? "selected" : ""}>${d.label}</option>`).join("");
-  const catOpts = ['<option value="">À catégoriser</option>'].concat(state.categories.map((c) => `<option value="${esc(c.name)}" ${c.name === v.categoryName ? "selected" : ""}>${esc(c.name)}</option>`)).join("");
+  const catOpts = '<option value="">À catégoriser</option>' + categoryOptions(v.categoryName);
   const ctOpts = ['<option value="">Aucun</option>'].concat(state.contacts.map((c) => `<option value="${c.id}" ${c.id === v.contactId ? "selected" : ""}>${esc(contactName(c))}</option>`)).join("");
   return `<button class="back" data-back-invoice>‹ Finances</button>
     <div class="page-title">${esc(v.title || "Facture")}</div>
@@ -3366,7 +3379,15 @@ function renderInvoiceDetail(id) {
 }
 
 // ----------------------------- Catégories -----------------------------
-const NATURES = [{ code: "produit", label: "Produit (recette)" }, { code: "charge", label: "Charge (dépense)" }];
+// « bilan » : mouvement hors résultat (virement entre mes sociétés, remboursement d'une créance ou
+// d'une avance, apport…) — de l'argent qui bouge sans être un produit ni une charge.
+const NATURES = [{ code: "produit", label: "Produit (recette)" }, { code: "charge", label: "Charge (dépense)" }, { code: "bilan", label: "Hors résultat (bilan)" }];
+const CAT_REMBOURSEMENT = "Remboursement de créances", CAT_INTERNE = "Virements internes";
+// Options d'un sélecteur de catégorie, groupées par nature (produits, charges, hors résultat).
+function categoryOptions(sel) {
+  const byNat = (nat) => [...state.categories].filter((c) => (c.nature || "charge") === nat).sort((a, b) => (a.name || "").localeCompare(b.name || "", "fr"));
+  return NATURES.map((n) => { const arr = byNat(n.code); return arr.length ? `<optgroup label="${esc(n.label)}">${arr.map((c) => `<option value="${esc(c.name)}" ${c.name === sel ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</optgroup>` : ""; }).join("");
+}
 function ensureCatIds() { state.categories.forEach((c) => { if (!c.id) c.id = uid(); }); }
 function catUsage(name) { return state.invoices.filter((v) => v.categoryName === name).length; }
 function financeCategories() {
@@ -3377,7 +3398,7 @@ function financeCategories() {
     const rows = arr.map((c) => {
       const natOpts = NATURES.map((n) => `<option value="${n.code}" ${n.code === (c.nature || "charge") ? "selected" : ""}>${n.label}</option>`).join("");
       const used = catUsage(c.name);
-      return `<div class="row" style="cursor:default;border-left-color:${nature === "produit" ? "var(--finance)" : "var(--alert)"}">
+      return `<div class="row" style="cursor:default;border-left-color:${nature === "produit" ? "var(--finance)" : nature === "bilan" ? "var(--line)" : "var(--alert)"}">
         <input class="grow" data-catfield="name" data-cat="${c.id}" data-old="${esc(c.name)}" value="${esc(c.name)}" placeholder="Nom de la catégorie"/>
         <select data-catfield="nature" data-cat="${c.id}" style="width:auto">${natOpts}</select>
         <span class="muted" style="font-size:12px;white-space:nowrap">${used} fact.</span>
@@ -3386,11 +3407,13 @@ function financeCategories() {
     return `<div class="section-h">${label} <span class="muted">(${arr.length})</span></div>
       <div class="list">${arr.length ? rows : '<div class="muted" style="padding:4px 2px">Aucune catégorie.</div>'}</div>`;
   };
-  return `<div class="toolbar"><span class="grow muted" style="font-size:13px">Les catégories structurent le compte de résultat (produits / charges).</span>
+  return `<div class="toolbar"><span class="grow muted" style="font-size:13px">Les catégories structurent le compte de résultat (produits / charges). Les catégories « hors résultat » (virements entre tes sociétés, remboursements de créances…) bougent la trésorerie sans entrer dans le résultat.</span>
       <button class="btn small" data-add-cat="produit">+ Produit</button>
-      <button class="btn small" data-add-cat="charge">+ Charge</button></div>
+      <button class="btn small" data-add-cat="charge">+ Charge</button>
+      <button class="btn secondary small" data-add-cat="bilan">+ Hors résultat</button></div>
     ${block("produit", "Produits")}
-    ${block("charge", "Charges")}`;
+    ${block("charge", "Charges")}
+    ${block("bilan", "Hors résultat")}`;
 }
 
 // ----------------------------- Récurrences (factures & tâches) -----------------------------
@@ -3635,7 +3658,7 @@ const DEFAULT_BANK_RULES = [
   { re: /ENGIE|EDF|TOTALENERGIES|GRDF|VEOLIA|SUEZ/, cat: "Énergie et fluides", nature: "charge", noReceipt: false },
   { re: /AUTOROUTES|VINCI|SANEF|APRR|SNCF|UBER|AIR FRANCE|EASYJET|HOTEL/, cat: "Déplacements", nature: "charge", noReceipt: false },
 ];
-const normName = (s) => String(s || "").toUpperCase().replace(/\b(SAS|SASU|SARL|EURL|SCI|SA|SNC)\b/g, "").replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+const normName = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\b(SAS|SASU|SARL|EURL|SCI|SA|SNC)\b/g, "").replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 // Virement interne : la contrepartie est l'une de mes sociétés (titulaires des relevés ou sociétés du Groupe).
 function bankInternalFor(op) {
   const who = normName(bankCounterparty(op)); if (!who) return false;
@@ -3645,11 +3668,21 @@ function bankInternalFor(op) {
     .filter((x) => x.length >= 3 && x !== normName(op._titulaire));
   return mine.some((m) => who === m || who.indexOf(m) === 0 || m.indexOf(who) === 0);
 }
+// Virement vers (ou depuis) un associé : par défaut un remboursement de créance (frais avancés,
+// charges d'un exercice précédent), hors résultat. Les associés sont les contacts « Associé ».
+function bankAssociateFor(op) {
+  const who = normName(bankCounterparty(op)); if (!who) return false;
+  return state.contacts.filter((c) => c.category === "associe").some((c) => {
+    const words = normName(`${c.firstName || ""} ${c.lastName || ""}`).split(" ").filter((w) => w.length >= 2);
+    return words.length && words.every((w) => (" " + who + " ").indexOf(" " + w + " ") > -1);
+  });
+}
 function bankRuleFor(op) {
   const hay = bankHaystack(op);
   const own = [...state.bankRules].filter((r) => r.motif).sort((a, b) => b.motif.length - a.motif.length).find((r) => hay.indexOf(String(r.motif).toUpperCase()) > -1);
   if (own) return { categoryName: own.categoryName || "", noReceipt: !!own.noReceipt, source: "règle" };
-  if (bankInternalFor(op)) return { categoryName: "Virements internes", noReceipt: true, source: "interne", nature: op.montant >= 0 ? "produit" : "charge" };
+  if (bankInternalFor(op)) return { categoryName: CAT_INTERNE, noReceipt: true, source: "interne", nature: "bilan" };
+  if (bankAssociateFor(op)) return { categoryName: CAT_REMBOURSEMENT, noReceipt: true, source: "associé", nature: "bilan" };
   const d = DEFAULT_BANK_RULES.find((x) => x.re.test(hay));
   if (d) return { categoryName: d.cat, noReceipt: d.noReceipt, source: "défaut", nature: d.nature };
   return { categoryName: "", noReceipt: false, source: null };
@@ -4081,7 +4114,7 @@ function financeBanque() {
   if (erreurs.length) alerts.push(`<span class="chip" title="${esc(erreurs.map((e) => e.nom + " : " + e.erreur).join("\n"))}">⛔ ${erreurs.length} fichier(s) illisible(s)</span>`);
   const alertsHtml = alerts.length ? `<div class="section-h">${icon("bell")} Alertes</div><div class="chip-row" style="margin-bottom:12px">${alerts.join("")}</div>` : "";
   // Relevés
-  const catOpts = (sel) => ['<option value="">— Catégorie —</option>'].concat([...state.categories].sort((a, b) => (a.name || "").localeCompare(b.name || "", "fr")).map((c) => `<option value="${esc(c.name)}" ${c.name === sel ? "selected" : ""}>${esc(c.name)}</option>`)).join("");
+  const catOpts = (sel) => '<option value="">— Catégorie —</option>' + categoryOptions(sel);
   const relevesHtml = releves.map((r) => {
     const rops = r.ops || [];
     const nImp = rops.filter((o) => invoiceOfOp(o.id)).length, nSkip = rops.filter((o) => state.bankSkip[o.id]).length, nNew = rops.length - nImp - nSkip;
@@ -6337,7 +6370,7 @@ function importJSON(text) {
     const m = { id: uid(), name: c.name || "", legalForm: c.legalForm || "", role: c.role || "filiale", notes: c.notes || "", initialCashBalance: Number(c.initialCashBalance) || 0, cashBalanceDate: (c.cashBalanceDate || "").slice(0, 10) || todayISO(), activities: (c.activities || []).map((a) => ({ id: uid(), name: a.name || "", detail: a.detail || "" })) };
     state.companies.push(m); if (m.name) compByName[m.name] = m.id;
   });
-  (data.categories || []).forEach((c) => { if (c.name && !state.categories.some((x) => x.name === c.name)) state.categories.push({ name: c.name, nature: c.nature === "produit" ? "produit" : "charge", sortIndex: Number(c.sortIndex) || 0 }); });
+  (data.categories || []).forEach((c) => { if (c.name && !state.categories.some((x) => x.name === c.name)) state.categories.push({ name: c.name, nature: NATURES.some((n) => n.code === c.nature) ? c.nature : "charge", sortIndex: Number(c.sortIndex) || 0 }); });
   (data.contacts || []).forEach((c) => state.contacts.push({ id: uid(), firstName: c.firstName || "", lastName: c.lastName || "", organization: c.organization || "", jobTitle: c.jobTitle || "", email: c.email || "", phone: c.phone || "", address: c.address || "", linkedIn: c.linkedIn || "", category: (CONTACT_CATS.some((x) => x.code === c.category) ? c.category : "client"), notes: c.notes || "", companyId: compByName[c.companyName] || null }));
   const contactByName = {}; state.contacts.forEach((c) => { contactByName[contactName(c)] = c.id; });
   (data.invoices || []).forEach((v) => state.invoices.push({ id: uid(), title: v.title || "", reference: v.reference || "", direction: v.direction === "depense" ? "depense" : "recette", status: (INV_STATUSES.some((x) => x.code === v.status) ? v.status : "aEmettre"), amount: Number(v.amount) || 0, vatRate: v.vatRate == null ? 20 : Number(v.vatRate), startDate: (v.startDate || "").slice(0, 10) || todayISO(), hasDueDate: !!v.hasDueDate, dueDate: (v.dueDate || "").slice(0, 10), paymentDate: (v.paymentDate || "").slice(0, 10), companyId: compByName[v.companyName] || null, contactId: contactByName[v.contactName] || null, categoryName: v.categoryName || "", payMode: v.payMode === "associe" ? "associe" : "compte", accountId: null, associateId: contactByName[v.associateName] || null, receiptUrl: v.receiptUrl || "", noReceipt: !!v.noReceipt }));
@@ -6541,15 +6574,16 @@ function cdrLines(nature) {
   return Object.entries(map).filter(([, val]) => val !== 0).sort((a, b) => b[1] - a[1]);
 }
 function reportCDR() {
-  const produits = cdrLines("produit"), charges = cdrLines("charge");
+  const produits = cdrLines("produit"), charges = cdrLines("charge"), bilan = cdrLines("bilan");
   const totP = produits.reduce((t, l) => t + l[1], 0), totC = charges.reduce((t, l) => t + l[1], 0);
   const tbl = (title, arr, tot) => `<div class="rep-section">${title}</div>
     <table class="rep-table"><thead><tr><th>Catégorie</th><th class="num">Montant HT</th></tr></thead><tbody>
     ${arr.length ? arr.map((l) => `<tr><td>${esc(l[0])}</td><td class="num">${repNum(l[1])}</td></tr>`).join("") : '<tr><td colspan="2">—</td></tr>'}
     <tr class="rep-total"><td>Total ${title.toLowerCase()}</td><td class="num">${repNum(tot)}</td></tr></tbody></table>`;
   return tbl("Produits", produits, totP) + tbl("Charges", charges, totC) +
-    `<table class="rep-table"><tbody><tr class="rep-total"><td>Résultat à date (produits − charges)</td><td class="num">${repNum(totP - totC)}</td></tr></tbody></table>
-     <div class="rep-date">Montants HT, toutes factures confondues.</div>`;
+    `<table class="rep-table"><tbody><tr class="rep-total"><td>Résultat à date (produits − charges)</td><td class="num">${repNum(totP - totC)}</td></tr></tbody></table>` +
+    (bilan.length ? `<div class="rep-section">Hors résultat (mouvements de bilan, non comptés)</div><table class="rep-table"><tbody>${bilan.map((l) => `<tr><td>${esc(l[0])}</td><td class="num">${repNum(l[1])}</td></tr>`).join("")}</tbody></table>` : "") +
+    `<div class="rep-date">Montants HT, toutes factures confondues.</div>`;
 }
 function reportTresorerie() {
   const now = new Date();
@@ -6656,6 +6690,7 @@ document.getElementById("installClose").onclick = () => { document.getElementByI
 // ----------------------------- Démarrage -----------------------------
 if (generateRecurrences() > 0) save();
 seedVip();
+seedBilan();
 render();
 renderDriveBar();
 if (window.DriveSync && DriveSync.setMerger) DriveSync.setMerger((remote, local) => mergeStates(syncBase, local, remote));
