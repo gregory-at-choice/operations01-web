@@ -49,6 +49,12 @@ function releveDansPeriode(d) {
   return date >= RELEVES_DU && date <= RELEVES_AU;
 }
 var DOSSIERS_FACTURES = ["FACTURES", "factures", "Facture MAJ", "FACTURATION_CLIENTS", "FACTURATION_CHOICE", "Comptable", "Factures-CXS-TBP"];
+// Factures clients (celles que CHOICE émet) : les dossiers dont le nom contient FACTURATION. Elles
+// reçoivent en plus une lecture dédiée (numéro, client, HT, TVA, TTC, échéance) que l'app importe
+// en produits. VERSION_CLIENTS ne relit que ces fichiers-là quand cette lecture change.
+var DOSSIERS_CLIENTS_RE = /FACTURATION/i;
+var VERSION_CLIENTS = 1;
+function estFactureClient(dossier) { return DOSSIERS_CLIENTS_RE.test(String(dossier || "").split("/")[0]); }
 // Justificatifs rapprochés depuis l'app : l'app (portée drive.file) les dépose dans son propre
 // dossier « Justificatifs choice » ; à chaque passage, le script les range dans le dossier
 // ci-dessous (identifiant Drive). Déplacer un fichier ne change pas son lien.
@@ -146,10 +152,10 @@ function parcourir() {
     data.erreurs = Array.isArray(data.erreurs) ? data.erreurs : [];
     try { importerRecusMails(data); } catch (e) { Logger.log("Reçus des mails : " + String(e && e.message || e)); }
     // Un fichier est (re)lu s'il est nouveau, modifié, ou analysé par une version antérieure du script.
-    var connus = {};
+    var connus = {}, vc = {};
     var cle = function (x) { return x.mt + "|" + (x.v || 0); };
     data.releves.forEach(function (r) { connus[r.fileId] = cle(r); });
-    data.factures.forEach(function (f) { connus[f.fileId] = cle(f); });
+    data.factures.forEach(function (f) { connus[f.fileId] = cle(f); vc[f.fileId] = f.vc || 0; });
     data.erreurs.forEach(function (e) { connus[e.fileId] = cle(e); });
 
     var vus = {}, aFaire = [];
@@ -157,7 +163,7 @@ function parcourir() {
     // Les factures sont secondaires : si Drive refuse l'inventaire (erreur passagère), on garde
     // celles déjà connues et on passe quand même les relevés.
     var facturesOk = true, vusF = {};
-    try { listerFactures().forEach(function (f) { vusF[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION) aFaire.push(f); }); }
+    try { listerFactures().forEach(function (f) { vusF[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION || (estFactureClient(f.dossier) && connus[f.id] && vc[f.id] !== VERSION_CLIENTS)) aFaire.push(f); }); }
     catch (e) { facturesOk = false; Logger.log("Inventaire des factures impossible ce passage (" + String(e && e.message || e) + ") : relevés seuls."); }
     // Les relevés d'abord : ce sont eux qui comptent, les factures suivent.
     aFaire.sort(function (a, b) { return (a.type === "releve" ? 0 : 1) - (b.type === "releve" ? 0 : 1); });
@@ -180,6 +186,13 @@ function parcourir() {
         } else {
           var x = parserFacture(texte, f.nom, f.dossier);
           x.fileId = f.id; x.nom = f.nom; x.url = f.url; x.dossier = f.dossier; x.mt = f.mt; x.creeLe = f.creeLe; x.v = VERSION;
+          if (estFactureClient(f.dossier)) {
+            var c = parserFactureClient(texte, f.nom);
+            x.client = c; x.vc = VERSION_CLIENTS;
+            if (c.ttc != null) x.montant = c.ttc;
+            if (c.date) x.date = c.date;
+            if (c.client) x.fournisseur = c.client;
+          }
           if (f.mail) { x.mail = f.mail; if (!x.date) x.date = f.mail.date; if (!x.fournisseur || x.fournisseur === f.nom.replace(/\.pdf$/i, "").replace(/[_\-]+/g, " ").slice(0, 60)) x.fournisseur = expediteurCourt(f.mail.de) || x.fournisseur; }
           data.factures.push(x);
         }
@@ -614,6 +627,57 @@ function nombreLibre(s) {
   if (lastComma > lastDot) s = s.replace(/\./g, "").replace(",", ".");
   else s = s.replace(/,/g, "");
   var v = parseFloat(s); return isFinite(v) ? Math.round(v * 100) / 100 : null;
+}
+// ----------------------------------------------------------------------------
+// Facture client émise par CHOICE : numéro, client, dates, HT / TVA / TTC.
+// Trois mises en page connues : « Numéro de facture CHOICE-25249 » (Client … Date de facture),
+// « FACTURE N° CHOICE-25243 » (Date commerciale, A 30 jours, Montant à payer, Adresse de facturation)
+// et « N° de facture 25231 » (Date d'échéance, Sous-total HT, Montant total EUR).
+// ----------------------------------------------------------------------------
+var MONTANT_CLIENT_RE = "(\\d{1,3}(?:[ \\u00a0.]?\\d{3})*\\s?,\\s?\\d{2}|\\d+\\.\\d{2})";
+function montantApres(t, label) {
+  var re = new RegExp(label + "[^\\d]{0,30}?" + MONTANT_CLIENT_RE, "i"), m = re.exec(t);
+  return m ? nombreLibre(m[1].replace(/,\s+/, ",")) : null;
+}
+function dateApres(t, label) {
+  var re = new RegExp(label, "i"), m = re.exec(t);
+  if (!m) return null;
+  var ds = datesDans(t.slice(m.index + m[0].length, m.index + m[0].length + 60));
+  return ds.length ? ds[0].iso : null;
+}
+function joursApres(iso, n) {
+  var d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n);
+  return isoDate(d.getFullYear(), d.getMonth() + 1, d.getDate());
+}
+function parserFactureClient(texte, nomFichier) {
+  var t = normaliser(texte), nom = String(nomFichier || "");
+  var c = { numero: null, client: "", date: null, echeance: null, delai: null, ht: null, tva: null, ttc: null };
+  var m = /N(?:°|o|um[ée]ro)\s*(?:de\s+)?facture\s*:?\s*(?:CHOICE-)?(\d{4,6})/i.exec(t) || /FACTURE\s*N°\s*CHOICE-(\d{4,6})/i.exec(t) || /(?:CHOICE-|Choice_)\s*(\d{4,6})/i.exec(nom);
+  if (m) c.numero = m[1];
+  // Client
+  m = /(?:^|\n)\s*Client\s*\n?\s*([^\n]{2,60}?)\s*(?=\n|\s+\d{1,4}\s|Date de facture)/.exec(t);
+  if (m && !/^(Date|N°|Adresse)/i.test(m[1])) c.client = m[1].trim();
+  if (!c.client) { m = /(?:^|\n)\s*Facture\s*\n\s*([A-Za-zÀ-ÿ][^\n\d]{2,50}?)\s*\n/.exec(t); if (m && !/facture|document|N°|client|date|montant/i.test(m[1])) c.client = m[1].trim(); }
+  if (!c.client) { m = /(?:^|\n)\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’ ]{2,40}?)\s+\d{1,4}\s*(?:bis\s+|ter\s+)?(?:rue|avenue|all[ée]e|route|chemin|boulevard|place|bd|av|impasse|quai)\b/i.exec(t); if (m && !/^(CHOICE|Facture|Description|Date)/i.test(m[1])) c.client = m[1].trim(); }
+  if (!c.client) {
+    var ma = /Adresse de facturation(?! électronique)\s*:?\s*\n?\s*([^\n]{2,80})/i.exec(t) || /Adresse de livraison\s*:?\s*\n?\s*([^\n]{2,80})/i.exec(t);
+    if (ma && !/^(Adresse|CHOICE|électronique)/i.test(ma[1].trim())) c.client = ma[1].replace(/\s+\d{1,5}\s.*$/, "").replace(/\s+(Les|Le|La|Rue|Avenue|Route|Chemin|Z\.?I\.?|ZA|Parc)\s.*$/i, "").trim();
+  }
+  if (!c.client) { var mn = /(?:CHOICE-|Choice_)\d{4,6}[_ -]+([A-Za-z]+)/.exec(nom); if (mn) c.client = mn[1].replace(/([a-z])([A-Z])/g, "$1 $2"); }
+  c.client = c.client.replace(/\s+/g, " ").slice(0, 60);
+  // Dates
+  c.date = dateApres(t, "Date de facture") || dateApres(t, "Date commerciale") || dateApres(t, "[ÉE]mis le");
+  if (!c.date) { var ds = datesDans(t); if (ds.length) c.date = ds[0].iso; }
+  c.echeance = dateApres(t, "Date d.{1,2}ch[ée]ance") || dateApres(t, "€\\s*le");
+  m = /\bA\s+(\d{1,3})\s+jours\b/i.exec(t); if (m) c.delai = +m[1];
+  if (!c.echeance && c.date && c.delai != null) c.echeance = joursApres(c.date, c.delai);
+  // Montants
+  c.ht = montantApres(t, "(?:Sous-total|Total)\\s*HT");
+  c.ttc = montantApres(t, "Total\\s*TTC") || montantApres(t, "Montant total(?:\\s*EUR)?") || montantApres(t, "Montant [àa] payer") || montantApres(t, "Solde d[ûu]") || montantApres(t, "Montant\\s*EUR");
+  if (c.ht != null && c.ttc != null) c.tva = Math.round((c.ttc - c.ht) * 100) / 100;
+  else if (c.ht != null) { var tv = montantApres(t, "TVA[^\\n]{0,40}?"); if (tv != null && tv < c.ht) { c.tva = tv; c.ttc = Math.round((c.ht + tv) * 100) / 100; } }
+  if (c.ht == null && c.ttc != null) { c.ht = Math.round(c.ttc / 1.2 * 100) / 100; c.tva = Math.round((c.ttc - c.ht) * 100) / 100; c.htEstime = true; }
+  return c;
 }
 var LIBELLES_TOTAL = [/total ttc/i, /montant ttc/i, /net [àa] payer/i, /total [àa] payer/i, /amount due/i, /total due/i, /balance due/i, /total amount/i, /grand total/i, /montant total/i, /total/i];
 function parserFacture(texte, nomFichier, dossier) {

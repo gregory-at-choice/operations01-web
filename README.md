@@ -100,6 +100,14 @@ Installation (une fois, dans le compte Google qui porte le Drive) :
 Vingt fichiers au plus sont analysés par passage : le rattrapage initial prend quelques heures.
 Les dossiers de factures parcourus sont listés dans `DOSSIERS_FACTURES` en tête du script.
 
+**Factures clients.** Les factures émises par CHOICE (dossiers dont le nom contient `FACTURATION`)
+reçoivent une lecture dédiée : numéro, client, date, échéance, HT, TVA, TTC. Dans Finances → Banque,
+« Factures clients sur le Drive » les liste (2026 par défaut) et « Importer » les ajoute en produits
+(montant HT, TVA, échéance, catégorie = client). Le virement reçu qui cite le numéro de facture, ou
+à défaut du même montant TTC au centime et au nom du client, devient son encaissement : la facture
+passe « payée » et l'écriture que ce virement avait créée est fusionnée. Une facture saisie à la main
+dont l'intitulé porte le numéro (« 25236 - Synthenova… ») est complétée, pas dupliquée.
+
 **Justificatifs.** Le script dépose aussi, dans « Justificatifs / Reçus mails » (dossier
 `DOSSIER_JUSTIFICATIFS_ID`), les PDF joints aux mails reçus depuis `MAILS_DEPUIS` (25 par passage),
 avec en description l'expéditeur, le sujet et la date du mail ; ils sont lus comme des factures.

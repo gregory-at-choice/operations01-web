@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v96";
+const APP_VERSION = "v97";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3666,6 +3666,85 @@ function bankCompanyFor(compte, titulaire) {
   return c ? c.id : null;
 }
 const invoiceOfOp = (opId) => state.invoices.find((v) => v.bankOpId === opId);
+// ---- Factures clients (émises par CHOICE, lues par le script dans les dossiers FACTURATION…) ----
+// Le script les lit à part (numéro, client, HT, TVA, TTC, échéance). L'app les importe en produits
+// (montant HT), rattache le virement reçu qui cite le numéro (« FACTURE FA CHOICE-25242 »,
+// « 25231 CHOICE ICARUS »…) et fusionne l'écriture que ce virement avait créée.
+const banqueFacturesClients = () => banqueFactures().filter((f) => f.client && f.client.numero);
+const invoiceNumberOf = (v) => { const m = /\b(\d{5})\b/.exec(String(v.reference || "")) || /\b(\d{5})\b/.exec(String(v.title || "")); return m ? m[1] : null; };
+// Le numéro figure dans la référence ou l'intitulé (« 25236 - Synthenova… »), jamais dans le libellé d'un virement importé.
+const clientInvoiceByNumber = (num) => state.invoices.find((v) => v.direction === "recette" && invoiceNumberOf(v) === num);
+function knownClientNumbers() {
+  return new Set(banqueFacturesClients().map((f) => f.client.numero).concat(state.invoices.filter((v) => v.direction === "recette" && !v.bankOpId).map(invoiceNumberOf).filter(Boolean)));
+}
+function bankOpClientNumber(op, known) {
+  if (!(op.montant > 0)) return null;
+  known = known || knownClientNumbers();
+  const hay = bankHaystack(op), re = /\b(\d{5})\b/g; let m;
+  while ((m = re.exec(hay))) if (known.has(m[1])) return m[1];
+  return null;
+}
+function clientCompanyId() {
+  const c = state.companies.find((x) => /CHOICE/i.test(x.name || "")) || state.companies.find((x) => Object.values(state.bankMap).indexOf(x.id) > -1) || state.companies[0];
+  return c ? c.id : null;
+}
+let clientsAll = false;
+const CLIENTS_DEPUIS = "2026-01-01";
+function clientFacturesPending() {
+  const linked = new Set(state.invoices.map((v) => v.bankFactureId).filter(Boolean));
+  return banqueFacturesClients().filter((f) => !linked.has(f.fileId) && (clientsAll || (f.client.date || f.date || "") >= CLIENTS_DEPUIS))
+    .sort((a, b) => (b.client.date || b.date || "").localeCompare(a.client.date || a.date || ""));
+}
+// Le virement qui encaisse une facture client : il cite son numéro ; à défaut, même montant TTC au
+// centime et nom du client dans le libellé (« CIAMPACK » pour CIAM), reçu après la date de facture.
+const clientNameMatches = (client, who) => { const a = normName(client).split(" ")[0], b = normName(who).split(" ")[0]; return !!(a && b && a.length >= 3 && b.length >= 3 && (a.indexOf(b) === 0 || b.indexOf(a) === 0)); };
+const opFreeForClient = (o) => { const ex = invoiceOfOp(o.id); return !ex || !invoiceNumberOf(ex); };
+function clientPaymentOp(c) {
+  const num = c.numero, known = new Set([num]);
+  const ops = banqueOps().filter((o) => o.montant > 0 && opFreeForClient(o));
+  return ops.find((o) => bankOpClientNumber(o, known) === num)
+    || (c.ttc != null ? ops.find((o) => Math.abs(o.montant - c.ttc) < 0.005 && (!c.date || o.date >= c.date) && clientNameMatches(c.client, bankCounterparty(o) || o.tiers || "")) : null)
+    || null;
+}
+function clientFactureForOp(op) {
+  if (!(op.montant > 0)) return null;
+  const linked = new Set(state.invoices.map((v) => v.bankFactureId).filter(Boolean));
+  return banqueFacturesClients().find((f) => !linked.has(f.fileId) && f.client.ttc != null && Math.abs(f.client.ttc - op.montant) < 0.005 && (!f.client.date || op.date >= f.client.date) && clientNameMatches(f.client.client, bankCounterparty(op) || op.tiers || "")) || null;
+}
+function markClientInvoicePaid(v, op) {
+  state.invoices = state.invoices.filter((x) => !(x.bankOpId === op.id && x.id !== v.id && !invoiceNumberOf(x)));   // l'écriture créée par le virement : fusionnée
+  v.status = "payee"; v.paymentDate = op.date; v.bankOpId = op.id; v.bankCompte = op._compte || v.bankCompte; v.bankDetail = (op.detail || "").slice(0, 200); v.payMode = "compte";
+  const cid = state.bankMap[op._compte]; if (!v.accountId && cid) { const acc = companyAccounts(cid)[0]; if (acc) v.accountId = acc.id; }
+}
+function importClientFacture(f) {
+  const c = f.client, num = c.numero, cid = clientCompanyId();
+  let v = clientInvoiceByNumber(num), created = false;
+  if (!v) {
+    v = { id: uid(), title: `${num} - ${c.client || "Client"}`, reference: "CHOICE-" + num, direction: "recette", status: "emise",
+      amount: c.ht != null ? c.ht : (f.montant || 0), vatRate: c.ht ? Math.round((c.tva || 0) / c.ht * 100) : 20,
+      startDate: c.date || f.date || todayISO(), hasDueDate: !!c.echeance, dueDate: c.echeance || "", paymentDate: "",
+      companyId: cid, contactId: null, categoryName: "", payMode: "compte", accountId: null, associateId: null, receiptUrl: f.url, noReceipt: false, bankFactureId: f.fileId };
+    state.invoices.push(v); created = true;
+  } else {
+    if (!v.reference) v.reference = "CHOICE-" + num;
+    if (!v.receiptUrl) v.receiptUrl = f.url;
+    v.bankFactureId = f.fileId; v.noReceipt = false;
+    if (!(v.amount > 0) && c.ht != null) v.amount = c.ht;
+    if (!v.dueDate && c.echeance) { v.dueDate = c.echeance; v.hasDueDate = true; }
+    if (!v.companyId) v.companyId = cid;
+    if (v.status === "aEmettre") v.status = "emise";
+  }
+  if (c.client) { const cat = c.client.trim(); ensureCategory(cat, "produit"); if (!v.categoryName) v.categoryName = cat; }
+  if (!v.contactId && c.client) { const n = normName(c.client); const ct = state.contacts.find((x) => { const o = normName(x.organization); return o && (o === n || n.indexOf(o) === 0 || o.indexOf(n) === 0); }); if (ct) v.contactId = ct.id; }
+  if (!v.bankOpId) { const op = clientPaymentOp(c); if (op) markClientInvoicePaid(v, op); }
+  return { v, created };
+}
+function importClientFactures(list) {
+  let created = 0, completed = 0, paid = 0;
+  list.forEach((f) => { const r = importClientFacture(f); if (r.created) created++; else completed++; if (r.v.bankOpId) paid++; });
+  if (list.length) save();
+  return { created, completed, paid };
+}
 // Importe les opérations nouvelles d'un relevé (ni déjà importées, ni ignorées) en écritures payées.
 function importReleve(r) {
   const cid = bankCompanyFor(r.compte, r.titulaire);
@@ -3673,9 +3752,20 @@ function importReleve(r) {
   if (!state.bankMap[r.compte]) state.bankMap[r.compte] = cid;
   const acc = companyAccounts(cid)[0];
   let added = 0;
+  const known = knownClientNumbers();
   (r.ops || []).forEach((op) => {
     if (state.bankSkip[op.id] || invoiceOfOp(op.id)) return;
     const full = Object.assign({ _compte: r.compte, _titulaire: r.titulaire }, op);
+    // Virement reçu qui cite une facture client : c'est son encaissement, pas une nouvelle recette.
+    const num = bankOpClientNumber(full, known);
+    if (num) {
+      let v = clientInvoiceByNumber(num);
+      if (!v) { const f = banqueFacturesClients().find((x) => x.client.numero === num); if (f) v = importClientFacture(f).v; }
+      if (v) { if (!v.bankOpId) markClientInvoicePaid(v, full); added++; return; }
+    } else if (op.montant > 0) {
+      const f = clientFactureForOp(full);
+      if (f) { const v = importClientFacture(f).v; if (!v.bankOpId) markClientInvoicePaid(v, full); added++; return; }
+    }
     const rule = bankRuleFor(full);
     if (rule.categoryName) ensureCategory(rule.categoryName, rule.nature || (op.montant >= 0 ? "produit" : "charge"));
     state.invoices.push({ id: uid(), title: bankOpLabel(full), reference: "", direction: op.montant >= 0 ? "recette" : "depense", status: "payee",
@@ -3696,7 +3786,7 @@ function factureCandidates(op) {
   const amt = Math.abs(op.montant), hay = bankHaystack(op);
   const used = new Set(state.invoices.map((v) => v.bankFactureId).filter(Boolean));
   return banqueFactures().map((f) => {
-    if (used.has(f.fileId)) return null;
+    if (used.has(f.fileId) || f.client) return null;   // une facture client n'est pas le justificatif d'une dépense
     if (f.montant == null || Math.abs(f.montant - amt) >= 0.005) return null;
     let score = 3;
     if (f.date && op.date) {
@@ -3715,7 +3805,7 @@ function facturesSansPaiement() {
   const used = new Set(state.invoices.map((v) => v.bankFactureId).filter(Boolean));
   const urls = new Set(state.invoices.map((v) => v.receiptUrl).filter(Boolean));
   const amounts = banqueOps().map((o) => Math.abs(o.montant));
-  return banqueFactures().filter((f) => f.montant != null && f.montant > 0 && !used.has(f.fileId) && !urls.has(f.url)
+  return banqueFactures().filter((f) => !f.client && f.montant != null && f.montant > 0 && !used.has(f.fileId) && !urls.has(f.url)
     && !amounts.some((a) => Math.abs(a - f.montant) < 0.005));
 }
 // Règle personnelle créée quand Grégory classe une opération : la contrepartie devient le motif.
@@ -3984,6 +4074,8 @@ function financeBanque() {
   const orphDel = orph.orphans.filter((v) => !v.receiptUrl).length;
   if (orphDel) alerts.push(`<button class="chip" data-bank-purge-orphans="${orphDel}" title="Écritures importées d'une ancienne lecture des relevés, dont l'opération n'existe plus">🧹 ${orphDel} écriture(s) d'une ancienne lecture à supprimer</button>`);
   if (sansJustif.length) alerts.push(`<button class="chip" data-banque-alert="justif">⚠️ ${sansJustif.length} opération(s) sans justificatif</button>`);
+  const pendingClients = clientFacturesPending();
+  if (pendingClients.length) alerts.push(`<button class="chip" data-banque-alert="clients">📥 ${pendingClients.length} facture(s) client(s) à importer</button>`);
   if (sansPaiement.length) alerts.push(`<span class="chip">📄 ${sansPaiement.length} facture(s) sans paiement repéré</span>`);
   if (ecarts.length) alerts.push(`<span class="chip">⚠️ ${ecarts.length} relevé(s) dont le solde ne tombe pas juste</span>`);
   if (erreurs.length) alerts.push(`<span class="chip" title="${esc(erreurs.map((e) => e.nom + " : " + e.erreur).join("\n"))}">⛔ ${erreurs.length} fichier(s) illisible(s)</span>`);
@@ -4029,12 +4121,19 @@ function financeBanque() {
         <button class="btn secondary small" data-bank-toggle="${esc(r.fileId)}">${open ? "Replier" : "Voir"}</button></div>${body}</div>`;
   }).join("");
   const relevesBlock = releves.length ? `<div class="section-h">${icon("file-text")} Relevés</div>${relevesHtml}` : "";
+  // Factures clients lues sur le Drive et pas encore dans l'app
+  const nbOld = clientsAll ? 0 : banqueFacturesClients().filter((f) => !state.invoices.some((v) => v.bankFactureId === f.fileId) && (f.client.date || f.date || "") < CLIENTS_DEPUIS).length;
+  const clientsHtml = pendingClients.length || nbOld ? `<div class="section-h" id="bank-clients">${icon("euro")} Factures clients sur le Drive <span class="muted">(${pendingClients.length} à importer)</span></div><div class="card" style="padding:8px 12px">
+      <div class="inline" style="gap:8px;flex-wrap:wrap;margin-bottom:4px"><span class="grow muted" style="font-size:13px">Factures émises par CHOICE, lues dans les dossiers FACTURATION du Drive. L'import les ajoute en produits (montant HT, TVA, échéance, client), rattache le virement reçu qui cite le numéro et fusionne l'écriture que ce virement avait créée.</span>${pendingClients.length ? `<button class="btn small" data-bank-clients-import-all>Importer les ${pendingClients.length} factures clients</button>` : ""}</div>
+      ${pendingClients.map((f) => { const c = f.client, op = clientPaymentOp(c), ex = clientInvoiceByNumber(c.numero);
+        return `<div class="inline" style="padding:6px 0;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:12px;white-space:nowrap">${fmtDate(c.date || f.date)}</span><span class="grow" style="min-width:160px"><a href="${esc(f.url)}" target="_blank" rel="noopener">n° ${esc(c.numero)}</a> · ${esc(c.client || f.fournisseur || f.nom)}${ex ? ` <span class="muted" style="font-size:12px">· complète « ${esc(ex.title)} »</span>` : ""}</span><span style="white-space:nowrap"><strong>${euros(c.ht != null ? c.ht : f.montant)}</strong> <span class="muted" style="font-size:12px">HT${c.ttc != null ? " · " + euros(c.ttc) + " TTC" : ""}</span></span><span class="muted" style="font-size:12px;white-space:nowrap">${op ? "encaissée le " + fmtDate(op.date) : c.echeance ? "échéance " + fmtDate(c.echeance) : "à encaisser"}</span><button class="btn ghost small" data-bank-client-import="${esc(f.fileId)}">Importer</button></div>`; }).join("")}
+      ${nbOld ? `<button class="btn ghost small" data-bank-clients-all style="margin-top:6px">Voir aussi les ${nbOld} facture(s) d'avant 2026</button>` : ""}</div>` : "";
   // Factures sans paiement repéré
   const spHtml = sansPaiement.length ? `<div class="section-h">${icon("euro")} Factures du Drive sans paiement repéré</div><div class="card" style="padding:6px 12px">` + sansPaiement.slice(0, 20).map((f) => `<div class="inline" style="padding:6px 0;gap:10px;flex-wrap:wrap"><span class="grow"><a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.fournisseur || f.nom)}</a> <span class="muted" style="font-size:12px">· ${esc(f.dossier || "")} · ${f.date ? fmtDate(f.date) : "date ?"}</span></span><strong>${f.devise && f.devise !== "EUR" ? f.montant + " " + f.devise : euros(f.montant)}</strong><button class="btn ghost small" data-bank-facture-inv="${esc(f.fileId)}" title="Créer une écriture « à payer » avec ce justificatif">+ Écriture</button></div>`).join("") + (sansPaiement.length > 20 ? `<div class="muted" style="font-size:12px;padding:6px 0">… et ${sansPaiement.length - 20} autre(s)</div>` : "") + `</div>` : "";
   // Règles
   const rulesHtml = `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer;font-size:13px">Règles de catégorisation (${state.bankRules.length})</summary><div class="card" style="margin-top:8px;padding:6px 12px">${state.bankRules.length ? state.bankRules.map((ru) => `<div class="inline" style="padding:4px 0;gap:8px"><span class="grow"><code>${esc(ru.motif)}</code> → ${esc(ru.categoryName || "—")}${ru.noReceipt ? ' <span class="muted" style="font-size:12px">(sans justificatif)</span>' : ""}</span><button class="btn ghost small" data-bank-rule-del="${ru.id}">✕</button></div>`).join("") : '<div class="muted" style="font-size:13px">Aucune règle personnelle. Choisis une catégorie sur une opération importée : la règle se crée toute seule.</div>'}<div class="muted" style="font-size:12px;margin-top:6px">Règles automatiques : emprunts, frais bancaires, URSSAF, TVA, impôts, retraite, assurances, télécom, énergie, déplacements, virements entre tes sociétés.</div></div></details>`;
   const manual = `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer;font-size:13px">Import manuel d'un fichier CSV ou OFX</summary><div style="margin-top:8px">${financeImport()}</div></details>`;
-  return head + comptesHtml + alertsHtml + justifBlock(sansJustif) + relevesBlock + spHtml + rulesHtml + manual;
+  return head + comptesHtml + alertsHtml + clientsHtml + justifBlock(sansJustif) + relevesBlock + spHtml + rulesHtml + manual;
 }
 function wireBanque(c) {
   const rf = c.querySelector("[data-banque-refresh]"); if (rf) rf.onclick = () => loadBanque(true);
@@ -4093,7 +4192,19 @@ function wireBanque(c) {
     if (!confirm(`Supprimer ${n} écriture(s) importée(s) d'une ancienne lecture des relevés ? Les opérations correspondantes seront réimportées proprement.`)) return;
     const k = purgeBankOrphans(); toast(`${k} écriture(s) supprimée(s)`); render();
   };
-  const al = c.querySelector("[data-banque-alert]"); if (al) al.onclick = () => { factureFilter.noReceipt = true; financeTab = "factures"; render(); };
+  c.querySelectorAll("[data-banque-alert]").forEach((al) => al.onclick = () => {
+    if (al.dataset.banqueAlert === "clients") { const el = document.getElementById("bank-clients"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    factureFilter.noReceipt = true; financeTab = "factures"; render();
+  });
+  const cAll = c.querySelector("[data-bank-clients-import-all]"); if (cAll) cAll.onclick = () => {
+    const r = importClientFactures(clientFacturesPending());
+    toast(`${r.created} facture(s) client(s) ajoutée(s)${r.completed ? `, ${r.completed} complétée(s)` : ""}${r.paid ? ` · ${r.paid} encaissée(s)` : ""}`); render();
+  };
+  c.querySelectorAll("[data-bank-client-import]").forEach((b) => b.onclick = () => {
+    const f = banqueFacturesClients().find((x) => x.fileId === b.dataset.bankClientImport); if (!f) return;
+    const r = importClientFactures([f]); toast(r.created ? "Facture client ajoutée" : "Facture client complétée"); render();
+  });
+  const cOld = c.querySelector("[data-bank-clients-all]"); if (cOld) cOld.onclick = () => { clientsAll = true; render(); };
   c.querySelectorAll("[data-bank-facture-inv]").forEach((b) => b.onclick = () => {
     const f = banqueFactures().find((x) => x.fileId === b.dataset.bankFactureInv); if (!f) return;
     const cid = state.companies[0] ? state.companies[0].id : null;
