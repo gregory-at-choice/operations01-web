@@ -53,7 +53,9 @@ var DOSSIERS_FACTURES = ["FACTURES", "factures", "Facture MAJ", "FACTURATION_CLI
 // reçoivent en plus une lecture dédiée (numéro, client, HT, TVA, TTC, échéance) que l'app importe
 // en produits. VERSION_CLIENTS ne relit que ces fichiers-là quand cette lecture change.
 var DOSSIERS_CLIENTS_RE = /FACTURATION/i;
-var VERSION_CLIENTS = 1;
+var VERSION_CLIENTS = 2;
+// Même principe pour les relevés : VERSION_RELEVES ne relit que les relevés quand leur lecture change.
+var VERSION_RELEVES = 2;
 function estFactureClient(dossier) { return DOSSIERS_CLIENTS_RE.test(String(dossier || "").split("/")[0]); }
 // Justificatifs rapprochés depuis l'app : l'app (portée drive.file) les dépose dans son propre
 // dossier « Justificatifs choice » ; à chaque passage, le script les range dans le dossier
@@ -155,12 +157,12 @@ function parcourir() {
     // Un fichier est (re)lu s'il est nouveau, modifié, ou analysé par une version antérieure du script.
     var connus = {}, vc = {};
     var cle = function (x) { return x.mt + "|" + (x.v || 0); };
-    data.releves.forEach(function (r) { connus[r.fileId] = cle(r); });
+    data.releves.forEach(function (r) { connus[r.fileId] = cle(r); vc[r.fileId] = r.vr || 0; });
     data.factures.forEach(function (f) { connus[f.fileId] = cle(f); vc[f.fileId] = f.vc || 0; });
     data.erreurs.forEach(function (e) { connus[e.fileId] = cle(e); });
 
     var vus = {}, aFaire = [];
-    listerReleves().forEach(function (f) { vus[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION) aFaire.push(f); });
+    listerReleves().forEach(function (f) { vus[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION || (connus[f.id] && vc[f.id] !== VERSION_RELEVES)) aFaire.push(f); });
     // Les factures sont secondaires : si Drive refuse l'inventaire (erreur passagère), on garde
     // celles déjà connues et on passe quand même les relevés.
     var facturesOk = true, vusF = {};
@@ -185,7 +187,7 @@ function parcourir() {
         texte = texteDuPdf(f.fichier);
         if (f.type === "releve") {
           var r = parserReleve(texte, f.nom);
-          r.fileId = f.id; r.nom = f.nom; r.url = f.url; r.mt = f.mt; r.v = VERSION;
+          r.fileId = f.id; r.nom = f.nom; r.url = f.url; r.mt = f.mt; r.v = VERSION; r.vr = VERSION_RELEVES;
           r.texte = String(texte || "").slice(0, 30000);   // texte extrait, conservé pour vérifier la lecture
           data.releves.push(r);
         } else {
@@ -382,10 +384,14 @@ function parserReleveSG(texte, nomFichier) {
     }
     var detail = mots.slice(i).join(" ");
     var propre = sansDetailsChiffres(seg);
-    var montants = [], mm; MONTANT_RE.lastIndex = 0;
-    while ((mm = MONTANT_RE.exec(propre)) !== null) montants.push(nombre(mm[1]));
-    if (!montants.length) return;   // ligne sans montant : suite de détail, ignorée
-    var montant = montants[montants.length - 1];
+    var montants = [], etoiles = [], mm; MONTANT_RE.lastIndex = 0;
+    while ((mm = MONTANT_RE.exec(propre)) !== null) {
+      montants.push(nombre(mm[1]));
+      if (mm[2]) etoiles.push(nombre(mm[1]));   // « 1,32* » : l'astérisque marque le montant de l'opération
+      else if (/^\s*(EUR|USD|GBP|CHF|ZAR|CAD)\b/.test(propre.slice(mm.index + mm[0].length))) montants.pop();   // « 11,99 EUR ETATS-UNIS » : montant en devise, pas l'opération
+    }
+    if (!montants.length && !etoiles.length) return;   // ligne sans montant : suite de détail, ignorée
+    var montant = etoiles.length ? etoiles[etoiles.length - 1] : montants[montants.length - 1];
     var distincts = montants.filter(function (x, j) { return montants.indexOf(x) === j; });
     var nat = nature.join(" ");
     var credit = /RECU|REMISE|VERSEMENT|REMBOURSEMENT|ANNUL|REGUL|CREDIT/.test(nat.toUpperCase()) && !/EMIS/.test(nat.toUpperCase());
@@ -665,8 +671,13 @@ function parserFactureClient(texte, nomFichier) {
   if (!c.client) { m = /(?:^|\n)\s*Facture\s*\n\s*([A-Za-zÀ-ÿ][^\n\d]{2,50}?)\s*\n/.exec(t); if (m && !/facture|document|N°|client|date|montant/i.test(m[1])) c.client = m[1].trim(); }
   if (!c.client) { m = /(?:^|\n)\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’ ]{2,40}?)\s+\d{1,4}\s*(?:bis\s+|ter\s+)?(?:rue|avenue|all[ée]e|route|chemin|boulevard|place|bd|av|impasse|quai)\b/i.exec(t); if (m && !/^(CHOICE|Facture|Description|Date)/i.test(m[1])) c.client = m[1].trim(); }
   if (!c.client) {
-    var ma = /Adresse de facturation(?! électronique)\s*:?\s*\n?\s*([^\n]{2,80})/i.exec(t) || /Adresse de livraison\s*:?\s*\n?\s*([^\n]{2,80})/i.exec(t);
-    if (ma && !/^(Adresse|CHOICE|électronique)/i.test(ma[1].trim())) c.client = ma[1].replace(/\s+\d{1,5}\s.*$/, "").replace(/\s+(Les|Le|La|Rue|Avenue|Route|Chemin|Z\.?I\.?|ZA|Parc)\s.*$/i, "").trim();
+    // Facturation d'abord, livraison ensuite ; entre les deux, la raison sociale (en capitales :
+    // « URPS MKL ») l'emporte sur un nom de personne (« Laurie Gillet »).
+    var nettoyer = function (x) { return x.replace(/\s+\d{1,5}\s.*$/, "").replace(/\s+(Les|Le|La|Rue|Avenue|Route|Chemin|Z\.?I\.?|ZA|Parc)\s.*$/i, "").trim(); };
+    var capitales = function (x) { var l = x.replace(/[^A-Za-zÀ-ÿ]/g, ""); return l.length >= 3 && l === l.toUpperCase(); };
+    var cands = [/Adresse de facturation(?! électronique)\s*:?\s*\n?\s*([^\n]{2,80})/i, /Adresse de livraison\s*:?\s*\n?\s*([^\n]{2,80})/i]
+      .map(function (re) { var ma = re.exec(t); return ma && !/^(Adresse|CHOICE|électronique)/i.test(ma[1].trim()) ? nettoyer(ma[1]) : ""; }).filter(Boolean);
+    c.client = cands.filter(capitales)[0] || cands[0] || "";
   }
   if (!c.client) { var mn = /(?:CHOICE-|Choice_)\d{4,6}[_ -]+([A-Za-z]+)/.exec(nom); if (mn) c.client = mn[1].replace(/([a-z])([A-Z])/g, "$1 $2"); }
   c.client = c.client.replace(/\s+/g, " ").slice(0, 60);
