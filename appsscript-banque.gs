@@ -131,7 +131,8 @@ var RELEVES_AU = "2026-12-31";
 // Factures : fichiers créés avant cette date ignorés (les factures de fin 2025 peuvent être
 // payées en 2026, d'où une marge de deux mois).
 var DEPUIS = "2025-11-01";
-var MAX_PAR_PASSAGE = 20;
+var MAX_PAR_PASSAGE = 40;                  // fichiers analysés par passage (≈ 15 s chacun)
+var DUREE_MAX_MS = 20 * 60 * 1000;         // on s'arrête avant la limite d'exécution de Google (30 min)
 var PROFONDEUR_MAX = 6;
 
 // ----------------------------------------------------------------------------
@@ -166,14 +167,18 @@ function parcourir() {
     try { listerFactures().forEach(function (f) { vusF[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION || (estFactureClient(f.dossier) && connus[f.id] && vc[f.id] !== VERSION_CLIENTS)) aFaire.push(f); }); }
     catch (e) { facturesOk = false; Logger.log("Inventaire des factures impossible ce passage (" + String(e && e.message || e) + ") : relevés seuls."); }
     // Les relevés d'abord : ce sont eux qui comptent, les factures suivent.
-    aFaire.sort(function (a, b) { return (a.type === "releve" ? 0 : 1) - (b.type === "releve" ? 0 : 1); });
+    // Ordre : relevés, puis factures clients, puis le reste (les plus récents d'abord).
+    var rang = function (x) { return x.type === "releve" ? 0 : estFactureClient(x.dossier) ? 1 : 2; };
+    aFaire.sort(function (a, b) { return rang(a) - rang(b) || (b.mt || "").localeCompare(a.mt || ""); });
     // Fichiers disparus (corbeille, déplacés hors des dossiers) : retirés.
     data.releves = data.releves.filter(function (r) { return vus[r.fileId]; });
     if (facturesOk) data.factures = data.factures.filter(function (f) { return vusF[f.fileId]; });
     data.erreurs = data.erreurs.filter(function (e) { return e.type === "releve" ? vus[e.fileId] : (!facturesOk || vusF[e.fileId]); });
 
-    var lot = aFaire.slice(0, MAX_PAR_PASSAGE);
+    var lot = aFaire.slice(0, MAX_PAR_PASSAGE), debut = Date.now(), faits = 0;
     lot.forEach(function (f) {
+      if (Date.now() - debut > DUREE_MAX_MS) return;   // le reste attend le passage suivant
+      faits++;
       retirer(data, f.id);
       var texte = "";
       try {
@@ -203,11 +208,11 @@ function parcourir() {
     data.releves.sort(function (a, b) { return (b.au || "").localeCompare(a.au || ""); });
     data.factures.sort(function (a, b) { return (b.date || b.creeLe || "").localeCompare(a.date || a.creeLe || ""); });
     data.comptes = comptesDe(data.releves);
-    data.restant = aFaire.length - lot.length;
+    data.restant = aFaire.length - faits;
     data.parcouruLe = new Date().toISOString();
     data.updatedAt = Date.now();
     fichier.setContent(JSON.stringify(data));
-    Logger.log("Banque : " + lot.length + " fichier(s) analysé(s), " + data.restant + " restant(s), " + data.releves.length + " relevés, " + data.factures.length + " factures.");
+    Logger.log("Banque : " + faits + " fichier(s) analysé(s), " + data.restant + " restant(s), " + data.releves.length + " relevés, " + data.factures.length + " factures.");
   } finally { verrou.releaseLock(); }
 }
 
