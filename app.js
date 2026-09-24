@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v98";
+const APP_VERSION = "v99";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1590,7 +1590,7 @@ function renderMissions() {
          <button class="btn fab" data-add-mission>+</button>`;
   }
 
-  const rows = all.map((m) => {
+  const row = (m) => {
     const run = missionRunning(m);
     return `<div class="row" data-open-mission="${m.id}" style="border-left-color:${run ? "#d23c3c" : "var(--primary)"}">
       <div class="grow"><div class="r-head"><span class="r-title">${esc(m.title || "Nouveau projet")}</span>
@@ -1598,11 +1598,22 @@ function renderMissions() {
           <span class="badge ${m.statusCode}">${statusLabel(m.statusCode)}</span></div>
         <div class="r-sub">${meta(m)}</div>
         <div class="r-sub">${dates(m)}</div></div></div>`;
-  }).join("");
+  };
+  // Les projets terminés sont mis à part, dans un volet replié en bas de la liste ; chaque
+  // groupe garde le tri choisi.
+  const done = all.filter(missionDone), active = all.filter((m) => !missionDone(m));
+  const doneHtml = done.length
+    ? `<details class="done-box" ${doneOpen ? "open" : ""} data-done-box><summary><span class="grow">Projets terminés</span><span class="muted">${done.length}</span></summary>
+         <div class="list">${done.map(row).join("")}</div></details>`
+    : "";
   return head + renderTodo() + renderBrief() + banner
-    + `<div class="list">${all.length ? rows : '<div class="center-empty">Aucun projet.</div>'}</div>
+    + `<div class="list">${active.length ? active.map(row).join("") : `<div class="center-empty">${all.length ? "Aucun projet en cours." : "Aucun projet."}</div>`}</div>
+       ${doneHtml}
        <button class="btn fab" data-add-mission>+</button>`;
 }
+const missionDone = (m) => (m.statusCode || "aDemarrer") === "terminee";
+let doneOpen = false;
+try { doneOpen = localStorage.getItem("op01_doneOpen") === "1"; } catch (e) {}
 
 // ----------------------------- Projet : fiche à trois vues -----------------------------
 // Résumé · Gestion de projet (tâches par section) · Correspondance (mails liés).
@@ -6123,6 +6134,7 @@ function wire() {
   c.querySelectorAll("[data-del-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); if (!m) return; m.entries = m.entries.filter((e) => e.id !== b.dataset.delEntry); save(); render(); });
   c.querySelectorAll("[data-mview]").forEach((b) => b.onclick = () => { missionView = b.dataset.mview; render(); });
   const mSort = c.querySelector("#missionSort"); if (mSort) mSort.onchange = () => { missionSort = mSort.value; render(); };
+  const dbox = c.querySelector("[data-done-box]"); if (dbox) dbox.ontoggle = () => { doneOpen = dbox.open; try { localStorage.setItem("op01_doneOpen", doneOpen ? "1" : "0"); } catch (e) {} };
   c.querySelectorAll("[data-mission-move]").forEach((b) => b.onclick = (ev) => {
     ev.stopPropagation();
     const m = findMission(b.dataset.m); if (!m) return;
