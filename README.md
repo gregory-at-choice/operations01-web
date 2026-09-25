@@ -135,8 +135,10 @@ dans le navigateur pour y vérifier le montant.
 
 ## Pilotage (Finances)
 
-- **Tableau de bord** : CA du mois, résultat de l'exercice, trésorerie et prévision à 90 jours, à encaisser
-  et à payer (avec retards), TVA estimée du trimestre, budget, graphique produits / charges par mois.
+- **Tableau de bord** (premier onglet de Finances, l'ancienne rubrique du menu y renvoie) : CA du mois,
+  résultat de l'exercice, trésorerie et prévision à 90 jours, à encaisser et à payer (avec retards), TVA
+  estimée du trimestre, budget, pipeline en cours, projets en cours, graphique produits / charges par
+  mois, courbe de trésorerie prévisionnelle, export PDF.
 - **Compte de résultat** par exercice (année civile) ou par mois, comparé à la même période de l'exercice
   précédent ; les catégories « hors résultat » sont listées à part.
 - **TVA** : par trimestre ou par mois, régime des encaissements (services) ou des débits (biens) ;

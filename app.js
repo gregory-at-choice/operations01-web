@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v106";
+const APP_VERSION = "v107";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -369,12 +369,15 @@ const SECTIONS = [
   { id: "contacts", label: "Contacts", ic: icon("users"), fn: renderContacts },
   { id: "pipelines", label: "Pipelines", ic: icon("columns"), fn: renderPipelines },
   { id: "groupe", label: "Groupe", ic: icon("building"), fn: renderGroupe },
-  { id: "dashboard", label: "Tableau de bord", ic: icon("dashboard"), fn: renderDashboard },
   { id: "reader", label: "Documents", ic: icon("book"), fn: renderDocuments },
 ].sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" }));   // rubriques par ordre alphabétique
 const HOME_SECTION = "missions";
 let view = { section: HOME_SECTION, detailId: null };
-function go(section) { if (section === "planning") { section = "rendezvous"; if (planningTab === "rdv") planningTab = "grille"; } view = { section, detailId: null }; render(); }
+function go(section) {
+  if (section === "planning") { section = "rendezvous"; if (planningTab === "rdv") planningTab = "grille"; }
+  if (section === "dashboard") { section = "finances"; financeTab = "tableau"; }   // ancien « Tableau de bord » : celui des Finances
+  view = { section, detailId: null }; render();
+}
 function openDetail(section, id) { view = { section, detailId: id }; render(); }
 
 // ----------------------------- Rendu -----------------------------
@@ -382,6 +385,7 @@ function render() {
   const content = document.getElementById("content");
   if (view.section === "pdftools") { view.section = "reader"; docTab = "outils"; }   // ancienne rubrique « Outils PDF »
   if (view.section === "planning") { view.section = "rendezvous"; if (planningTab === "rdv") planningTab = "grille"; }   // ancienne rubrique « Planning »
+  if (view.section === "dashboard") { view.section = "finances"; financeTab = "tableau"; }
   const sec = SECTIONS.find((s) => s.id === view.section) || SECTIONS.find((s) => s.id === HOME_SECTION);
   // Une erreur dans le dessin d'un écran ne doit jamais figer l'app : on l'affiche
   // (message + où), on la garde en mémoire (menu Plus → « Dernière erreur ») et
@@ -3885,7 +3889,9 @@ function financeDashboard() {
   const tile = (label, val, sub, tab, color) => `<button class="kpi" data-ftab="${tab}"><span class="kpi-label">${label}</span><span class="kpi-val" style="${color ? "color:" + color : ""}">${val}</span><span class="kpi-sub muted">${sub || ""}</span></button>`;
   const top = cdrLinesIn("charge", y, 0).slice(0, 5);
   const upcoming = (arr, dateOf) => arr.slice(0, 5).map((v) => `<div class="inline" style="padding:4px 0;gap:10px;font-size:13px"><span class="muted" style="white-space:nowrap">${dateOf(v) ? fmtDate(dateOf(v)) : "—"}</span><span class="grow"><a href="#" data-open-invoice="${v.id}">${esc(v.title || "Facture")}</a></span><strong style="white-space:nowrap">${euros(invTTC(v))}</strong></div>`).join("") || '<div class="muted" style="font-size:13px;padding:4px 0">Rien en attente.</div>';
-  return `<div class="kpi-grid">
+  const missionsEnCours = state.missions.filter((x) => x.statusCode === "enCours").length;
+  return `<div class="toolbar" style="margin-bottom:10px"><span class="grow muted" style="font-size:13px">Vue d'ensemble : chaque tuile ouvre l'onglet correspondant.</span><button class="btn secondary small" data-export-dashboard>${icon("file-text")} Exporter (PDF)</button></div>
+    <div class="kpi-grid">
       ${tile("CA du mois (HT)", euros(caMois), `${MOIS_LONG_FR[m - 1]} · encaissé ${euros(encaisseMois)}`, "cdr")}
       ${tile(`Résultat ${y} à date`, euros(caAn - chAn), `${euros(caAn)} de produits · ${euros(chAn)} de charges`, "cdr", caAn - chAn >= 0 ? "var(--positive)" : "#d23c3c")}
       ${tile("Trésorerie", euros(treso), `à 90 jours : ${euros(treso90)}`, "tresorerie", treso >= 0 ? "" : "#d23c3c")}
@@ -3895,8 +3901,11 @@ function financeDashboard() {
       ${bRows.length ? tile("Budget charges", euros(bReal), `budget à date ${euros(bBud)} · ${bReal - bBud > 0 ? "dépassé de " + euros(bReal - bBud) : "marge " + euros(bBud - bReal)}`, "budget", bReal - bBud > 0 ? "#d23c3c" : "var(--positive)") : tile("Budget", "—", "définis un budget par catégorie", "budget")}
       ${(() => { const open = state.deals.filter(dealOpen); const tot = open.reduce((t, d) => t + (Number(d.amount) || 0), 0); return open.length ? tile("Pipeline en cours", euros(tot), `${open.length} fiche(s) ouverte(s)`, "cdr").replace('data-ftab="cdr"', 'data-go="pipelines"') : ""; })()}
       ${tile(`Charges ${y} du mois`, euros(chMois), MOIS_LONG_FR[m - 1], "cdr")}
+      ${tile("Projets en cours", String(missionsEnCours), `${state.companies.length} société(s) · ${state.contacts.length} contact(s)`, "cdr").replace('data-ftab="cdr"', 'data-go="missions"')}
     </div>
     ${plChart(y)}
+    <div class="section-h">Trésorerie prévisionnelle (90 jours, TTC)</div>
+    <div class="card">${svgLineChart(Array.from({ length: 19 }, (_, i) => ({ x: i * 5, y: treasuryProjected(now, i * 5) })), { color: "#18c1d8", xTicks: [{ x: 0, label: "auj." }, { x: 30, label: "30j" }, { x: 60, label: "60j" }, { x: 90, label: "90j" }] })}</div>
     <div class="dash-cols">
       <div><div class="section-h">Prochains encaissements</div><div class="card" style="padding:6px 12px">${upcoming(aEncaisser.sort((a, b) => (a.dueDate || a.startDate || "").localeCompare(b.dueDate || b.startDate || "")), (v) => v.dueDate || v.startDate)}</div></div>
       <div><div class="section-h">Prochains paiements</div><div class="card" style="padding:6px 12px">${upcoming(aPayer, (v) => v.dueDate || v.startDate)}</div></div>
@@ -5509,7 +5518,7 @@ function saveCalCache() {
   try { localStorage.setItem(CAL_CACHE, JSON.stringify({ events: calendar.events, at: calendar.at })); } catch (e) {}
 }
 // Les sections qui affichent l'agenda : on ne redessine que si l'une est ouverte.
-const calVisible = () => view.section === "planning" || view.section === "rendezvous" || view.section === "dashboard";
+const calVisible = () => view.section === "planning" || view.section === "rendezvous" || (view.section === "finances" && financeTab === "tableau");
 
 const calHHMM = (iso) => { const d = new Date(iso); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
 const calDay = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
