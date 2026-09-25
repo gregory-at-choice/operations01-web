@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v101";
+const APP_VERSION = "v102";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -4442,8 +4442,10 @@ function financeBanque() {
     const rops = r.ops || [];
     const nImp = rops.filter((o) => invoiceOfOp(o.id)).length, nSkip = rops.filter((o) => state.bankSkip[o.id]).length, nNew = rops.length - nImp - nSkip;
     const open = !!banqueOpen[r.fileId];
-    const title = `${r.au ? monthLabel(r.au.slice(0, 7)) : esc(r.nom)} — ${esc(r.titulaire || r.compte || "")}`;
-    const sub = `${rops.length} opération(s) · ${nImp} importée(s)${nNew ? ` · <strong>${nNew} nouvelle(s)</strong>` : ""}${nSkip ? ` · ${nSkip} ignorée(s)` : ""} · solde fin ${euros(r.soldeFin)}${r.equilibre === false ? ` · <span style="color:#d23c3c">écart ${euros(r.ecart)}</span>` : ""}`;
+    const title = r.csv
+      ? `Export du ${r.du ? fmtDate(r.du) : "?"} au ${r.au ? fmtDate(r.au) : "?"} — ${esc(r.titulaire || (bankCompanyFor(r.compte) ? companyName(bankCompanyFor(r.compte)) : r.compte) || "")} <span class="badge aPayer" title="Export CSV/OFX déposé à la main : opérations provisoires jusqu'au relevé">provisoire</span>`
+      : `${r.au ? monthLabel(r.au.slice(0, 7)) : esc(r.nom)} — ${esc(r.titulaire || r.compte || "")}`;
+    const sub = `${rops.length} opération(s) · ${nImp} importée(s)${nNew ? ` · <strong>${nNew} nouvelle(s)</strong>` : ""}${nSkip ? ` · ${nSkip} ignorée(s)` : ""}${r.csv ? (r.confirmees ? ` · ${r.confirmees} confirmée(s) par un relevé` : "") : ` · solde fin ${euros(r.soldeFin)}`}${r.equilibre === false ? ` · <span style="color:#d23c3c">écart ${euros(r.ecart)}</span>` : ""}`;
     let body = "";
     if (open) {
       body = `<div style="overflow-x:auto;margin-top:8px"><table class="bank-table"><thead><tr><th>Date</th><th>Opération</th><th style="text-align:right">Montant</th><th>Catégorie</th><th>Justificatif</th></tr></thead><tbody>` + rops.map((o) => {

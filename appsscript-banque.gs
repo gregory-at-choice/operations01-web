@@ -210,6 +210,7 @@ function parcourir() {
 
     var vus = {}, aFaire = [];
     listerReleves().forEach(function (f) { vus[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION || (connus[f.id] && vc[f.id] !== VERSION_RELEVES)) aFaire.push(f); });
+    try { listerExports().forEach(function (f) { vus[f.id] = true; if (connus[f.id] !== f.mt + "|" + VERSION) aFaire.push(f); }); } catch (e) { Logger.log("Exports CSV : " + e); }
     // Les factures sont secondaires : si Drive refuse l'inventaire (erreur passagère), on garde
     // celles déjà connues et on passe quand même les relevés.
     var facturesOk = true, vusF = {};
@@ -217,7 +218,7 @@ function parcourir() {
     catch (e) { facturesOk = false; Logger.log("Inventaire des factures impossible ce passage (" + String(e && e.message || e) + ") : relevés seuls."); }
     // Les relevés d'abord : ce sont eux qui comptent, les factures suivent.
     // Ordre : relevés, puis factures clients, puis le reste (les plus récents d'abord).
-    var rang = function (x) { return x.type === "releve" ? 0 : estFactureClient(x.dossier) ? 1 : 2; };
+    var rang = function (x) { return x.type === "releve" || x.type === "export" ? 0 : estFactureClient(x.dossier) ? 1 : 2; };
     aFaire.sort(function (a, b) { return rang(a) - rang(b) || (b.mt || "").localeCompare(a.mt || ""); });
     // Fichiers disparus (corbeille, déplacés hors des dossiers) : retirés.
     data.releves = data.releves.filter(function (r) { return vus[r.fileId]; });
@@ -231,6 +232,14 @@ function parcourir() {
       retirer(data, f.id);
       var texte = "";
       try {
+        if (f.type === "export") {
+          texte = texteDuFichier(f.fichier);
+          var x0 = parserExport(texte, f.nom, f.compte);
+          x0.fileId = f.id; x0.nom = f.nom; x0.url = f.url; x0.mt = f.mt; x0.v = VERSION; x0.vr = VERSION_RELEVES; x0.nbOps = x0.ops.length;
+          x0.texte = String(texte || "").slice(0, 30000);
+          data.releves.push(x0);
+          return;
+        }
         texte = texteDuPdf(f.fichier);
         if (f.type === "releve") {
           var r = parserReleve(texte, f.nom);
@@ -254,6 +263,7 @@ function parcourir() {
         data.erreurs.push({ fileId: f.id, nom: f.nom, url: f.url, mt: f.mt, type: f.type, v: VERSION, erreur: String(e && e.message || e), texte: String(texte || "").slice(0, 30000) });
       }
     });
+    epurerExports(data);
     data.releves.sort(function (a, b) { return (b.au || "").localeCompare(a.au || ""); });
     data.factures.sort(function (a, b) { return (b.date || b.creeLe || "").localeCompare(a.date || a.creeLe || ""); });
     data.comptes = comptesDe(data.releves);
@@ -287,6 +297,109 @@ function descripteur(f, type, dossier) {
   var d = { id: f.getId(), nom: f.getName(), url: f.getUrl(), mt: f.getLastUpdated().toISOString(), creeLe: f.getDateCreated().toISOString().slice(0, 10), type: type, dossier: dossier || "", fichier: f };
   try { var desc = f.getDescription(); if (desc && desc.charAt(0) === "{") { var m = JSON.parse(desc); if (m && m.mail) d.mail = m; } } catch (e) {}
   return d;
+}
+// ----------------------------------------------------------------------------
+// Exports CSV / OFX déposés à la main (dossier « Exports banque » sur le Drive, un sous-dossier par
+// numéro de compte, ex. « Exports banque/00020909761/ »). Lus comme des relevés provisoires : quand
+// le relevé PDF de la période arrive, les opérations qu'il confirme sont retirées de l'export.
+// ----------------------------------------------------------------------------
+var DOSSIER_EXPORTS = "Exports banque";
+function listerExports() {
+  var out = [], it = DriveApp.getFoldersByName(DOSSIER_EXPORTS);
+  while (it.hasNext()) collecterExports(it.next(), null, 0, out);
+  return out;
+}
+function collecterExports(dossier, compte, prof, out) {
+  if (prof > 3 || dossier.isTrashed()) return;
+  var m = /(\d{11})/.exec(dossier.getName()); if (m) compte = m[1];
+  var fichiers = avecReprise(function () { var l = [], fs = dossier.getFiles(); while (fs.hasNext()) l.push(fs.next()); return l; }, "dossier " + dossier.getName());
+  fichiers.forEach(function (f) {
+    if (f.isTrashed() || !/\.(csv|txt|tsv|ofx|qif)$/i.test(f.getName())) return;
+    var d = descripteur(f, "export", dossier.getName()); d.compte = compte; out.push(d);
+  });
+  var sous = avecReprise(function () { var l = [], it = dossier.getFolders(); while (it.hasNext()) l.push(it.next()); return l; }, "sous-dossiers de " + dossier.getName());
+  sous.forEach(function (sd) { collecterExports(sd, compte, prof + 1, out); });
+}
+function texteDuFichier(fichier) {
+  var blob = fichier.getBlob(), bytes = blob.getBytes(), t;
+  try { t = Utilities.newBlob(bytes).getDataAsString("UTF-8"); } catch (e) { t = ""; }
+  if (!t || /\uFFFD/.test(t)) { try { t = Utilities.newBlob(bytes).getDataAsString("ISO-8859-1"); } catch (e2) {} }
+  return String(t || "").replace(/^\uFEFF/, "");
+}
+function csvSplit(l, sep) {
+  var out = [], cur = "", q = false;
+  for (var i = 0; i < l.length; i++) {
+    var ch = l[i];
+    if (q) { if (ch === '"') { if (l[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === sep) { out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out.map(function (x) { return x.trim(); });
+}
+function csvSep(l) { var c = { ";": (l.match(/;/g) || []).length, "\t": (l.match(/\t/g) || []).length, ",": (l.match(/,/g) || []).length }; return Object.keys(c).sort(function (a, b) { return c[b] - c[a]; })[0]; }
+function sansAccents(s) { return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); }
+function parserExport(texte, nom, compteDossier) {
+  var r = { banque: "", csv: true, compte: compteDossier || null, titulaire: "", du: null, au: null, soldeDebut: null, soldeFin: null, totalDebit: 0, totalCredit: 0, ops: [], equilibre: null, ecart: null };
+  var t = String(texte || "");
+  var mc = /\b(\d{11})\b/.exec(t.slice(0, 2000)) || /(\d{11})/.exec(nom); if (mc && !r.compte) r.compte = mc[1];
+  var lignes = t.split(/\r\n|\n|\r/).filter(function (l) { return l.trim() !== ""; });
+  var rows = [];
+  if (/<OFX>|<STMTTRN>/i.test(t)) {
+    t.split(/<STMTTRN>/i).slice(1).forEach(function (b) {
+      var g = function (tag) { var m = new RegExp("<" + tag + ">([^<\\r\\n]*)", "i").exec(b); return m ? m[1].trim() : ""; };
+      var amt = parseFloat(g("TRNAMT").replace(",", ".")), dt = g("DTPOSTED").slice(0, 8);
+      if (isFinite(amt) && dt.length === 8) rows.push({ date: dt.slice(0, 4) + "-" + dt.slice(4, 6) + "-" + dt.slice(6, 8), label: (g("NAME") + " " + g("MEMO")).trim() || "Opération", amount: amt });
+    });
+    var ma = /<ACCTID>([^<]+)/i.exec(t); if (ma && !r.compte) r.compte = ma[1].trim().slice(-11);
+  } else {
+    var hi = -1, sep = ";", cols = [];
+    for (var i = 0; i < Math.min(lignes.length, 30); i++) {
+      var d = csvSep(lignes[i]), cells = csvSplit(lignes[i], d).map(sansAccents);
+      if (cells.some(function (c) { return c.indexOf("date") > -1; }) && cells.some(function (c) { return /montant|debit|credit/.test(c); })) { hi = i; sep = d; cols = cells; break; }
+    }
+    if (hi < 0) throw new Error("Export non reconnu : pas de ligne d'en-tête avec Date et Montant / Débit / Crédit.");
+    var find = function (keys) { for (var k = 0; k < keys.length; k++) { for (var j = 0; j < cols.length; j++) if (cols[j].indexOf(keys[k]) > -1) return j; } return -1; };
+    var iDate = find(["date de comptab", "date d'ope", "date ope", "date operation", "date"]), iVal = find(["date de valeur", "date val"]);
+    var iLabel = find(["libelle", "description", "nature", "motif", "intitule", "operation"]), iDetail = find(["detail", "informations complementaires", "commentaire"]);
+    var iAmount = find(["montant"]), iDebit = find(["debit"]), iCredit = find(["credit"]);
+    for (var n = hi + 1; n < lignes.length; n++) {
+      var c = csvSplit(lignes[n], sep); if (c.length < 2) continue;
+      var ds = datesDans(c[iDate] || ""); if (!ds.length) continue;
+      var amount = null;
+      if (iAmount > -1 && (c[iAmount] || "").trim() !== "") amount = nombreLibre(c[iAmount].replace(/[€ ]/g, ""));
+      else { var deb = iDebit > -1 && c[iDebit] ? nombreLibre(c[iDebit].replace(/[€ ]/g, "")) : null, cred = iCredit > -1 && c[iCredit] ? nombreLibre(c[iCredit].replace(/[€ ]/g, "")) : null; amount = cred != null && cred !== 0 ? Math.abs(cred) : (deb != null && deb !== 0 ? -Math.abs(deb) : null); }
+      if (amount == null) continue;
+      var dv = iVal > -1 ? datesDans(c[iVal] || "") : [];
+      rows.push({ date: ds[0].iso, valeur: dv.length ? dv[0].iso : ds[0].iso, label: ((iLabel > -1 ? c[iLabel] : "") + " " + (iDetail > -1 ? c[iDetail] : "")).replace(/\s+/g, " ").trim() || "Opération", amount: amount });
+    }
+  }
+  var byKey = {};
+  rows.forEach(function (x) {
+    var mots = x.label.split(" "), nature = [], k = 0;
+    for (; k < mots.length && k < 3; k++) { if (!/^[A-Z][A-Z.'\-]*$/.test(mots[k])) break; nature.push(mots[k]); }
+    var key = (r.compte || "?") + "-" + x.date + "-" + x.amount.toFixed(2); byKey[key] = (byKey[key] || 0) + 1;
+    r.ops.push({ id: key + "-x" + byKey[key], date: x.date, valeur: x.valeur || x.date, nature: nature.join(" ") || x.label.slice(0, 30), detail: x.label.slice(0, 400), tiers: "", montant: x.amount, doute: false, csv: true });
+    if (x.amount < 0) r.totalDebit += -x.amount; else r.totalCredit += x.amount;
+  });
+  r.ops.sort(function (a, b) { return a.date.localeCompare(b.date); });
+  if (r.ops.length) { r.du = r.ops[0].date; r.au = r.ops[r.ops.length - 1].date; }
+  r.totalDebit = Math.round(r.totalDebit * 100) / 100; r.totalCredit = Math.round(r.totalCredit * 100) / 100;
+  if (!r.ops.length) throw new Error("Export sans opération lisible.");
+  return r;
+}
+// Les opérations d'un export déjà présentes sur un relevé PDF du même compte (même date à ± 3 j, même montant) sont retirées.
+function epurerExports(data) {
+  var pdf = data.releves.filter(function (r) { return !r.csv; });
+  data.releves.forEach(function (r) {
+    if (!r.csv) return;
+    r.ops = (r.ops || []).filter(function (o) {
+      return !pdf.some(function (p) { return p.compte === r.compte && (p.ops || []).some(function (q) { return Math.abs(q.montant - o.montant) < 0.005 && Math.abs(new Date(q.date) - new Date(o.date)) <= 3 * 86400000; }); });
+    });
+    r.confirmees = (r.nbOps || r.ops.length) - r.ops.length;
+  });
+  data.releves = data.releves.filter(function (r) { return !r.csv || r.ops.length; });
 }
 function listerReleves() {
   var out = [], vus = {};
