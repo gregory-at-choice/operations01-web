@@ -669,3 +669,5 @@ label.field.inline-check > span { margin-bottom: 0; }
 .tl-item:last-child { border-bottom: none; }
 .tl-date { color: var(--muted); font-size: 12px; white-space: nowrap; width: 84px; flex: none; padding-top: 2px; }
 .tl-ic { width: 22px; text-align: center; flex: none; }
+
+.doc-tabs { margin-bottom: 12px; }

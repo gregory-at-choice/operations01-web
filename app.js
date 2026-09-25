@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v104";
+const APP_VERSION = "v105";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -371,8 +371,7 @@ const SECTIONS = [
   { id: "pipelines", label: "Pipelines", ic: icon("columns"), fn: renderPipelines },
   { id: "groupe", label: "Groupe", ic: icon("building"), fn: renderGroupe },
   { id: "dashboard", label: "Tableau de bord", ic: icon("dashboard"), fn: renderDashboard },
-  { id: "reader", label: "Lecteur", ic: icon("book"), fn: renderReader },
-  { id: "pdftools", label: "Outils PDF", ic: icon("file-text"), fn: renderPdfTools },
+  { id: "reader", label: "Documents", ic: icon("book"), fn: renderDocuments },
 ].sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" }));   // rubriques par ordre alphabétique
 const HOME_SECTION = "missions";
 let view = { section: HOME_SECTION, detailId: null };
@@ -382,6 +381,7 @@ function openDetail(section, id) { view = { section, detailId: id }; render(); }
 // ----------------------------- Rendu -----------------------------
 function render() {
   const content = document.getElementById("content");
+  if (view.section === "pdftools") { view.section = "reader"; docTab = "outils"; }   // ancienne rubrique « Outils PDF »
   const sec = SECTIONS.find((s) => s.id === view.section) || SECTIONS.find((s) => s.id === HOME_SECTION);
   // Une erreur dans le dessin d'un écran ne doit jamais figer l'app : on l'affiche
   // (message + où), on la garde en mémoire (menu Plus → « Dernière erreur ») et
@@ -1090,6 +1090,13 @@ function readerTabs() {
       `<button class="chip ${reader.kind === id ? "active" : ""}" data-rkind="${id}">${lbl}</button>`).join("")
   }</div>`;
 }
+// « Documents » regroupe le lecteur (Markdown et PDF du Drive) et les outils PDF (fusion, PDF → Markdown).
+let docTab = "lecteur";
+function renderDocuments() {
+  const chips = [["lecteur", "Lecteur"], ["outils", "Outils PDF"]].map(([id, lbl]) => `<button class="chip ${docTab === id ? "active" : ""}" data-doctab="${id}">${lbl}</button>`).join("");
+  const bar = `<div class="chip-row doc-tabs">${chips}</div>`;
+  return bar + (docTab === "outils" ? renderPdfTools() : renderReader());
+}
 function renderReader() {
   if (reader.kind === "pdf") return renderPdfReader();
   return renderMdReader();
@@ -1168,7 +1175,7 @@ let pdfTool = "fusion";
 let pdfFiles = [];            // [{name, size, bytes}]
 let pdfBusy = "", pdfLog = "";
 
-function pdfSay(msg) { pdfLog = msg; if (view.section === "pdftools") render(); }
+function pdfSay(msg) { pdfLog = msg; if (view.section === "reader" && docTab === "outils") render(); }
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     if (document.querySelector(`script[data-src="${src}"]`)) return resolve();
@@ -6353,6 +6360,7 @@ function wire() {
 
   // outils PDF
   c.querySelectorAll("[data-pdftab]").forEach((b) => b.onclick = () => { pdfTool = b.dataset.pdftab; pdfLog = ""; render(); });
+  c.querySelectorAll("[data-doctab]").forEach((b) => b.onclick = () => { docTab = b.dataset.doctab; render(); });
   const pdfAdd = c.querySelector("[data-pdf-add]");
   if (pdfAdd) pdfAdd.onclick = () => {
     const inp = document.createElement("input");
@@ -6465,7 +6473,7 @@ function wire() {
   if (pdfrDl) pdfrDl.onclick = () => { const d = currentPdf(); if (pdfOpen && d) downloadBytes(d.name, pdfOpen.bytes); };
 
   // lecteur Markdown — les documents sont des fichiers sur le Drive
-  if (view.section === "reader" && !readerBusy && !readerFetched && !readerLib.docs.length && window.DriveSync && DriveSync.isConnected()) refreshDocs();
+  if (view.section === "reader" && docTab === "lecteur" && !readerBusy && !readerFetched && !readerLib.docs.length && window.DriveSync && DriveSync.isConnected()) refreshDocs();
   const mdRef = c.querySelector("[data-md-refresh]"); if (mdRef) mdRef.onclick = () => refreshDocs(true);
   const mdPrint = c.querySelector("[data-md-print]"); if (mdPrint) mdPrint.onclick = printCurrentDoc;
   const mdImp = c.querySelector("[data-md-import]");
