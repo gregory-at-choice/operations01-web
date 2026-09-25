@@ -373,7 +373,14 @@ function sansAccents(s) { return String(s || "").normalize("NFD").replace(/[\u03
 function parserExport(texte, nom, compteDossier) {
   var r = { banque: "", csv: true, compte: compteDossier || null, titulaire: "", du: null, au: null, soldeDebut: null, soldeFin: null, totalDebit: 0, totalCredit: 0, ops: [], equilibre: null, ecart: null };
   var t = String(texte || "");
-  var mc = /\b(\d{11})\b/.exec(t.slice(0, 2000)) || /(\d{11})/.exec(nom); if (mc && !r.compte) r.compte = mc[1];
+  // Numéro de compte : l'IBAN de l'en-tête (SG), sinon 11 chiffres en fin de série dans le nom du fichier
+  // (« 250926-0213000020909761.csv » → 00020909761), sinon près du mot « compte » dans l'en-tête.
+  if (!r.compte) {
+    var mi = /FR\d{2}(?:\s?\d{4}){5}\s?\d{3}/.exec(t.slice(0, 3000));
+    if (mi) r.compte = mi[0].replace(/\s/g, "").slice(14, 25);
+    else { var mn = /(\d{11})(?!\d)/.exec(nom); if (mn) r.compte = mn[1]; else { var mk = /compte[^\d\n]{0,40}(\d{11})(?!\d)/i.exec(t.slice(0, 2000)); if (mk) r.compte = mk[1]; } }
+  }
+  var mtit = /FR\d{2}(?:\s?\d{4}){5}\s?\d{3}"?;"?([^";\n]{3,60})/.exec(t.slice(0, 1000)); if (mtit) r.titulaire = mtit[1].trim();
   var lignes = t.split(/\r\n|\n|\r/).filter(function (l) { return l.trim() !== ""; });
   var rows = [];
   if (/<OFX>|<STMTTRN>/i.test(t)) {
@@ -392,17 +399,24 @@ function parserExport(texte, nom, compteDossier) {
     if (hi < 0) throw new Error("Export non reconnu : pas de ligne d'en-tête avec Date et Montant / Débit / Crédit.");
     var find = function (keys) { for (var k = 0; k < keys.length; k++) { for (var j = 0; j < cols.length; j++) if (cols[j].indexOf(keys[k]) > -1) return j; } return -1; };
     var iDate = find(["date de comptab", "date d'ope", "date ope", "date operation", "date"]), iVal = find(["date de valeur", "date val"]);
-    var iLabel = find(["libelle", "description", "nature", "motif", "intitule", "operation"]), iDetail = find(["detail", "informations complementaires", "commentaire"]);
+    var iLabel = find(["nature de l'op", "libelle de l'op", "libelle", "description", "motif", "intitule", "operation"]);
+    if (iLabel > -1 && /interbancaire/.test(cols[iLabel])) { var alt = cols.findIndex(function (c, j) { return j !== iLabel && /libelle|nature|description/.test(c); }); if (alt > -1) iLabel = alt; }
+    var iDetail = find(["detail", "informations complementaires", "commentaire"]), iCat = find(["libelle interbancaire", "categorie"]);
     var iAmount = find(["montant"]), iDebit = find(["debit"]), iCredit = find(["credit"]);
     for (var n = hi + 1; n < lignes.length; n++) {
       var c = csvSplit(lignes[n], sep); if (c.length < 2) continue;
-      var ds = datesDans(c[iDate] || ""); if (!ds.length) continue;
+      var ds = datesDans(c[iDate] || "");
+      if (!ds.length) {   // ligne de suite (SG) : date vide, le libellé complète l'opération précédente
+        var suite = (iLabel > -1 ? c[iLabel] : "").trim();
+        if (suite && rows.length && !(c[iAmount] || c[iDebit] || c[iCredit] || "").trim()) rows[rows.length - 1].label += " " + suite;
+        continue;
+      }
       var amount = null;
       if (iAmount > -1 && (c[iAmount] || "").trim() !== "") amount = nombreLibre(c[iAmount].replace(/[€ ]/g, ""));
       else { var deb = iDebit > -1 && c[iDebit] ? nombreLibre(c[iDebit].replace(/[€ ]/g, "")) : null, cred = iCredit > -1 && c[iCredit] ? nombreLibre(c[iCredit].replace(/[€ ]/g, "")) : null; amount = cred != null && cred !== 0 ? Math.abs(cred) : (deb != null && deb !== 0 ? -Math.abs(deb) : null); }
       if (amount == null) continue;
       var dv = iVal > -1 ? datesDans(c[iVal] || "") : [];
-      rows.push({ date: ds[0].iso, valeur: dv.length ? dv[0].iso : ds[0].iso, label: ((iLabel > -1 ? c[iLabel] : "") + " " + (iDetail > -1 ? c[iDetail] : "")).replace(/\s+/g, " ").trim() || "Opération", amount: amount });
+      rows.push({ date: ds[0].iso, valeur: dv.length ? dv[0].iso : ds[0].iso, label: ((iLabel > -1 ? c[iLabel] : "") + " " + (iDetail > -1 ? c[iDetail] : "")).replace(/\s+/g, " ").trim() || "Opération", cat: iCat > -1 ? (c[iCat] || "").trim() : "", amount: amount });
     }
   }
   var byKey = {};
@@ -419,15 +433,15 @@ function parserExport(texte, nom, compteDossier) {
   if (!r.ops.length) throw new Error("Export sans opération lisible.");
   return r;
 }
-// Les opérations d'un export déjà présentes sur un relevé PDF du même compte (même date à ± 3 j, même montant) sont retirées.
+// Le relevé PDF fait foi : les opérations d'un export datées dans la période d'un relevé PDF du même
+// compte sont retirées (le relevé regroupe par exemple les petits paiements carte, l'export non).
 function epurerExports(data) {
-  var pdf = data.releves.filter(function (r) { return !r.csv; });
+  var pdf = data.releves.filter(function (r) { return !r.csv && r.du && r.au; });
   data.releves.forEach(function (r) {
     if (!r.csv) return;
-    r.ops = (r.ops || []).filter(function (o) {
-      return !pdf.some(function (p) { return p.compte === r.compte && (p.ops || []).some(function (q) { return Math.abs(q.montant - o.montant) < 0.005 && Math.abs(new Date(q.date) - new Date(o.date)) <= 3 * 86400000; }); });
-    });
+    r.ops = (r.ops || []).filter(function (o) { return !pdf.some(function (p) { return p.compte === r.compte && o.date >= p.du && o.date <= p.au; }); });
     r.confirmees = (r.nbOps || r.ops.length) - r.ops.length;
+    if (r.ops.length) { r.du = r.ops[0].date; r.au = r.ops[r.ops.length - 1].date; }
   });
   data.releves = data.releves.filter(function (r) { return !r.csv || r.ops.length; });
 }
