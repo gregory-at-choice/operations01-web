@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v102";
+const APP_VERSION = "v103";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -4799,6 +4799,34 @@ function renderDashboard() {
 // Période affichée dans l'onglet Temps : semaine ou mois, navigables.
 let timeTab = "semaine";
 let timeRef = todayISO();   // date de référence (un jour de la semaine / du mois affiché)
+let timeProject = null;     // projet ouvert dans Temps : détail jour par jour sur la période
+// Éléments d'un projet ayant du temps sur la période, groupés par jour.
+function timeDetail(m, start, end) {
+  const days = {};
+  (m.entries || []).forEach((e) => {
+    const d = e.date ? new Date(e.date + "T12:00:00") : null; if (!d || d < start || d >= end) return;
+    const s = entryElapsed(e); if (s <= 0) return;
+    (days[e.date] = days[e.date] || { date: e.date, total: 0, items: [] }).items.push({ e, s }); days[e.date].total += s;
+  });
+  return Object.values(days).sort((a, b) => b.date.localeCompare(a.date)).map((d) => { d.items.sort((a, b) => (b.e.createdAt || 0) - (a.e.createdAt || 0)); return d; });
+}
+function renderTimeProject(r) {
+  const m = state.missions.find((x) => x.id === timeProject);
+  if (!m) { timeProject = null; return ""; }
+  const days = timeDetail(m, r.start, r.end), total = days.reduce((t, d) => t + d.total, 0);
+  const dayLabel = (d) => new Date(d + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  const item = ({ e, s }) => `<div class="tm-item"><span class="tm-kind">${kindMeta(e.kind).ic}</span>
+      <div class="grow" style="min-width:0"><div>${esc(e.title || kindMeta(e.kind).label)}${e.timerStartedAt ? ' <span class="run-dot" title="Chronomètre en cours"></span>' : ""}</div>
+        ${e.content ? `<div class="muted" style="font-size:12px;white-space:pre-wrap">${esc(String(e.content).slice(0, 300))}${String(e.content).length > 300 ? "…" : ""}</div>` : ""}
+        ${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener" style="font-size:12px">${icon("external")} lien</a>` : ""}</div>
+      <span class="timer tm-val">${fmtDuration(s)}</span></div>`;
+  return `<button class="back" data-time-back>‹ ${r.kind === "mois" ? "Mois" : "Semaine"}</button>
+    <div class="card"><div class="inline"><strong class="grow">${esc(m.title || "Sans titre")}</strong><span class="timer" style="color:var(--primary);font-size:19px">${fmtDuration(total)}</span></div>
+      <div class="muted" style="font-size:13px;margin-top:4px;text-transform:capitalize">${esc(r.label)}</div>
+      <div style="margin-top:8px"><button class="btn ghost small" data-open-mission="${m.id}">Ouvrir le projet</button></div></div>
+    ${days.length ? days.map((d) => `<div class="section-h" style="text-transform:capitalize">${esc(dayLabel(d.date))} <span class="muted">· ${fmtDuration(d.total)}</span></div><div class="card" style="padding:4px 12px">${d.items.map(item).join("")}</div>`).join("")
+      : '<div class="card muted">Aucun temps sur ce projet pour cette période.</div>'}`;
+}
 const iso = localISO;
 // Renvoie la période courante : bornes, libellé, et si elle contient aujourd'hui.
 function timeRange() {
@@ -4980,7 +5008,7 @@ function renderTime() {
     return `<div class="tm-bar"><div style="width:${pct}%"></div></div><span class="tm-pct">${pct}%</span>`;
   };
   const rows = per.length
-    ? per.map((p) => `<div class="tm-row"><span class="tm-name">${esc(p.title)}</span>${bar(p.s)}<span class="timer tm-val">${fmtDuration(p.s)}</span></div>`).join("")
+    ? per.map((p) => `<div class="tm-row tm-click" data-time-project="${p.id}" title="Voir le détail jour par jour"><span class="tm-name">${esc(p.title)}</span>${bar(p.s)}<span class="timer tm-val">${fmtDuration(p.s)}</span><span class="muted">›</span></div>`).join("")
     : `<div class="muted">Aucun temps sur cette période.</div>`;
   let weekly = "";
   if (r.kind === "mois") {
@@ -4991,7 +5019,7 @@ function renderTime() {
   }
   const moyenne = r.kind === "mois" && per.length
     ? `<div class="muted" style="font-size:12px;margin-top:6px">${per.length} projet(s) · moyenne ${fmtDuration(total / per.length)} par projet</div>` : "";
-  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Temps</div>
+  const head = `<div class="toolbar"><div class="page-title grow" style="margin:0">Temps</div>
       <button class="btn secondary small" data-export-temps-csv>${icon("download")} CSV</button>
       <button class="btn secondary small" data-export-temps-pdf>${icon("file-text")} PDF</button></div>
     <div class="chip-row" style="margin-bottom:12px">${tabs}</div>
@@ -5001,8 +5029,9 @@ function renderTime() {
         <div class="muted" style="font-size:13px">${esc(r.sub)}</div>
         <strong style="text-transform:capitalize">${esc(r.label)}</strong></div>
       <button class="btn ghost small" data-time-nav="1" title="Période suivante">›</button>
-      <button class="btn secondary small" data-time-now>${r.kind === "mois" ? "Ce mois" : "Cette semaine"}</button></div>
-    <div class="card"><div class="inline"><strong class="grow">Temps total</strong>
+      <button class="btn secondary small" data-time-now>${r.kind === "mois" ? "Ce mois" : "Cette semaine"}</button></div>`;
+  if (timeProject) { const det = renderTimeProject(r); if (det) return head + det; }
+  return head + `<div class="card"><div class="inline"><strong class="grow">Temps total</strong>
       <span class="timer" style="color:var(--primary);font-size:19px">${fmtDuration(total)}</span></div>${moyenne}</div>
     <div class="section-h">Par projet</div><div class="card">${rows}</div>
     ${weekly}`;
@@ -6008,6 +6037,8 @@ function wire() {
   onclick("[data-export-temps-csv]", exportTempsCSV);
   // Temps : bascule semaine/mois et navigation dans les périodes
   c.querySelectorAll("[data-ttab]").forEach((b) => b.onclick = () => { timeTab = b.dataset.ttab; render(); });
+  c.querySelectorAll("[data-time-project]").forEach((b) => b.onclick = () => { timeProject = b.dataset.timeProject; render(); });
+  const tBack = c.querySelector("[data-time-back]"); if (tBack) tBack.onclick = () => { timeProject = null; render(); };
   const tNav = c.querySelectorAll("[data-time-nav]");
   tNav.forEach((b) => b.onclick = () => {
     const step = Number(b.dataset.timeNav);
