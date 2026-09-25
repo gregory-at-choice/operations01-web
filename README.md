@@ -148,6 +148,22 @@ dans le navigateur pour y vérifier le montant.
   sur la facture.
 - **Budget** : montant mensuel par catégorie, comparé au réel cumulé de l'exercice.
 
+## CRM : pipelines, contacts enrichis, historique de relation
+
+- **Pipelines** (rubrique du menu) : tableaux à étapes, trois amorcés (Opportunités, Candidatures,
+  Partenariats), étapes renommables, marquables « gagné » / « perdu ». Une fiche porte un contact, une
+  société, un projet, un montant et une date de clôture ; glisser-déposer ou ‹ › pour changer d'étape,
+  le parcours est conservé. Le montant en jeu apparaît sur le tableau de bord Finances.
+- **Contacts** : « Suggestions depuis tes mails » propose les expéditeurs qui t'écrivent (au moins deux
+  messages, ou un récent) et ne sont pas encore des contacts, organisation devinée d'après le domaine ;
+  « Enrichir depuis les mails » (Gmail relié) lit la signature du dernier mail reçu pour compléter
+  téléphone, fonction, organisation et LinkedIn, sans écraser ce qui est déjà renseigné ;
+  « Depuis LinkedIn » fournit un signet de navigateur qui crée la fiche depuis le profil ouvert
+  (paramètre `?addContact=` lu au démarrage).
+- **Relation** sur chaque fiche contact : nombre d'échanges, date « à relancer » (rappel en tête de la
+  liste des contacts), notes datées, et l'historique fusionné des mails et messages reçus (À traiter),
+  rendez-vous, factures, fiches pipeline et éléments de projet liés, du plus récent au plus ancien.
+
 ## Lire les mails dans l'app (Gmail, lecture seule)
 
 Sur la page d'un message « À traiter », la carte **Message complet** affiche le mail lui-même

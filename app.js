@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v103";
+const APP_VERSION = "v104";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -97,9 +97,9 @@ function adoptRemote(remote, why) {
 // distant qui ne fait que « revenir en arrière » (vieille copie poussée par un
 // appareil resté fermé) est reconnu à ses dates et ne fait rien perdre.
 const BASE_KEY = "operations01_base";
-const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets"];
+const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals"];
 const SYNC_NESTED = { missions: "entries" };
-const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "bankMap", "bankSkip"];
+const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "bankMap", "bankSkip", "contactIgnore"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
 let syncBase = (() => { try { const r = localStorage.getItem(BASE_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } })();
 function setSyncBase(obj) {
@@ -224,6 +224,7 @@ function esc(s) {
 // ----------------------------- Icônes (SVG en ligne, trait fin, couleur courante) -----------------------------
 // Remplacent les émojis dans l'interface : rendu identique sur tous les appareils, teinte héritée du texte.
 const ICONS = {
+  columns: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/>',
   inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
@@ -367,6 +368,7 @@ const SECTIONS = [
   { id: "time", label: "Temps", ic: icon("clock"), fn: renderTime },
   { id: "finances", label: "Finances", ic: icon("euro"), fn: renderFinances },
   { id: "contacts", label: "Contacts", ic: icon("users"), fn: renderContacts },
+  { id: "pipelines", label: "Pipelines", ic: icon("columns"), fn: renderPipelines },
   { id: "groupe", label: "Groupe", ic: icon("building"), fn: renderGroupe },
   { id: "dashboard", label: "Tableau de bord", ic: icon("dashboard"), fn: renderDashboard },
   { id: "reader", label: "Lecteur", ic: icon("book"), fn: renderReader },
@@ -1354,6 +1356,7 @@ function renderSearch() {
     state.tasks.forEach((t) => { if (has(t.title)) results.push({ sec: "tasks", id: null, ic: "✅", title: t.title || "Tâche", sub: taskStatusLabel(t.status) }); });
     state.actions.forEach((a) => { if (has(a.title) || has(a.recipientName)) results.push({ sec: "actions", id: a.id, ic: "🎫", title: a.title || "Action", sub: a.recipientName || "" }); });
     state.rendezvous.forEach((r) => { if (has(r.title) || has(r.withName)) results.push({ sec: "rendezvous", id: r.id, ic: "📅", title: r.title || "Rendez-vous", sub: rdvWhen(r) }); });
+    state.deals.forEach((d) => { if (has(d.title) || has(d.notes)) { const p = pipelineOf(d.pipelineId); results.push({ sec: "pipelines", id: d.id, ic: "🧭", title: d.title || "Fiche", sub: p ? `${p.name} · ${stageOf(p, d.stageId).name}` : "" }); } });
   }
   const rows = results.map((r) => `<div class="row" data-search-open="${r.sec}" data-search-id="${r.id || ""}" style="border-left-color:var(--primary)">
     <span class="ic">${r.ic}</span><div class="grow"><div class="r-title">${esc(r.title)}</div><div class="r-sub">${esc(r.sub)}</div></div></div>`).join("");
@@ -3189,8 +3192,16 @@ function renderContacts() {
     <div class="grow"><div class="r-title">${esc(contactName(c))}</div>
       <div class="r-sub">${[esc(c.jobTitle), esc(c.organization)].filter(Boolean).join(" · ")}</div></div>
     <span class="badge aDemarrer">${contactCatLabel(c.category)}</span></div>`).join("");
-  return `<div class="toolbar"><div class="page-title grow" style="margin:0">Contacts</div>
-      <button class="btn" data-add-contact>+ Nouveau contact</button></div>
+  const sugg = contactSuggestions();
+  const suggHtml = sugg.length ? `<details class="done-box" style="margin:0 0 14px" ${suggOpen ? "open" : ""} data-sugg-box><summary><span class="grow">Suggestions depuis tes mails</span><span class="muted">${sugg.length}</span></summary>
+      <div class="card" style="padding:6px 12px"><div class="inline" style="gap:8px;flex-wrap:wrap;margin:4px 0 6px"><span class="grow muted" style="font-size:13px">Expéditeurs qui t'écrivent et ne sont pas encore dans tes contacts (organisation devinée d'après le domaine).</span>${sugg.length > 1 ? `<button class="btn secondary small" data-suggest-all>Tout ajouter (${sugg.length})</button>` : ""}</div>
+      ${sugg.slice(0, 40).map((s) => `<div class="inline" style="padding:5px 0;gap:10px;flex-wrap:wrap"><span class="grow" style="min-width:160px"><strong>${esc(s.nom)}</strong> <span class="muted" style="font-size:12px">· ${esc(s.addr)}${orgFromDomain(s.addr) ? " · " + esc(orgFromDomain(s.addr)) : ""}</span></span><span class="muted" style="font-size:12px;white-space:nowrap">${s.n} message(s) · ${s.last ? fmtDateTimeISO(s.last).slice(0, 10) : ""}</span><button class="btn small" data-suggest-add="${esc(s.addr)}">Ajouter</button><button class="btn ghost small" data-suggest-ignore="${esc(s.addr)}" title="Ne plus proposer">✕</button></div>`).join("")}</div></details>` : "";
+  const due = state.contacts.filter((c) => c.nextContactAt && c.nextContactAt <= todayISO());
+  return `<div class="toolbar nowrap"><div class="page-title grow" style="margin:0">Contacts</div>
+      <span class="tb-actions desk-only"><button class="btn secondary small" data-linkedin-help>${icon("users")} Depuis LinkedIn</button><button class="btn" data-add-contact>+ Nouveau contact</button></span>
+      ${moreMenu(`<button class="btn secondary small" data-linkedin-help>Depuis LinkedIn</button>`)}</div>
+    ${due.length ? `<div class="card" style="margin-bottom:12px;padding:8px 12px"><div class="muted" style="font-size:12px;margin-bottom:4px">À relancer</div>${due.map((c) => `<div class="inline" style="padding:3px 0;gap:10px"><a href="#" data-open-contact-link="${c.id}" class="grow">${esc(contactName(c))}</a><span class="muted" style="font-size:12px">${fmtDate(c.nextContactAt)}</span></div>`).join("")}</div>` : ""}
+    ${suggHtml}
     <div class="list">${items.length ? rows : '<div class="center-empty">Aucun contact.</div>'}</div>
     <button class="btn fab" data-add-contact>+</button>`;
 }
@@ -3209,7 +3220,294 @@ function renderContactDetail(id) {
       ${F("IBAN (virements fournisseur)", "iban")}${F("BIC", "bic")}
       <label class="field"><span>Notes</span><textarea data-bind="contacts|${c.id}|notes">${esc(c.notes)}</textarea></label>
     </div>
-    <div style="margin-top:18px"><button class="btn danger small" data-del-contact="${c.id}">Supprimer le contact</button></div>`;
+    ${contactRelationHtml(c)}
+    ${state.deals.some((d) => d.contactId === c.id) ? `<div class="section-h">Fiches pipeline</div><div class="card" style="padding:4px 12px">${state.deals.filter((d) => d.contactId === c.id).map((d) => { const p = pipelineOf(d.pipelineId); return `<div class="inline" style="padding:5px 0;gap:10px"><a href="#" data-tl-open="pipelines|${d.id}" class="grow">${esc(d.title || "Fiche")}</a><span class="muted" style="font-size:12px">${p ? esc(p.name) + " · " + esc(stageOf(p, d.stageId).name) : ""}</span>${d.amount ? `<strong>${euros(d.amount)}</strong>` : ""}</div>`; }).join("")}</div>` : ""}
+    <div style="margin-top:14px" class="inline"><button class="btn secondary small" data-deal-for-contact="${c.id}">+ Fiche pipeline</button><span class="grow"></span><button class="btn danger small" data-del-contact="${c.id}">Supprimer le contact</button></div>`;
+}
+let suggOpen = false;
+
+// ----------------------------- CRM : pipelines, contacts enrichis, historique de relation -----------------------------
+// Pipelines : des tableaux à étapes (opportunités, candidatures, partenariats…). Une « fiche » (deal)
+// est reliée à un contact, une société, un projet, avec un montant et une date de clôture prévue.
+const DEFAULT_PIPELINES = [
+  ["pipe-opportunites", "Opportunités", [["Prospect"], ["Contact pris"], ["Proposition envoyée"], ["Négociation"], ["Gagnée", "won"], ["Perdue", "lost"]]],
+  ["pipe-candidatures", "Candidatures", [["Repéré"], ["Contacté"], ["Entretien"], ["Offre"], ["Recruté", "won"], ["Refusé", "lost"]]],
+  ["pipe-partenariats", "Partenariats", [["Idée"], ["Contact"], ["Discussion"], ["Accord signé", "won"], ["Abandonné", "lost"]]],
+];
+function seedPipelines() {
+  let done = false;
+  try { done = localStorage.getItem("op01_pipesSeeded") === "1"; } catch (e) {}
+  if (done || state.pipelines.length) { try { localStorage.setItem("op01_pipesSeeded", "1"); } catch (e) {} return; }
+  DEFAULT_PIPELINES.forEach(([id, name, stages], i) => state.pipelines.push({ id, name, stages: stages.map(([n, closed], j) => ({ id: id + "-" + (j + 1), name: n, closed: closed || "" })), sortIndex: i, createdAt: Date.now() }));
+  try { localStorage.setItem("op01_pipesSeeded", "1"); } catch (e) {}
+  storeState();
+}
+let pipelineTab = null;
+const pipelineOf = (id) => state.pipelines.find((p) => p.id === id);
+const currentPipeline = () => pipelineOf(pipelineTab) || state.pipelines[0] || null;
+const dealsOf = (p) => state.deals.filter((d) => d.pipelineId === p.id);
+const stageOf = (p, id) => (p.stages || []).find((s) => s.id === id) || p.stages[0];
+const dealOpen = (d) => { const p = pipelineOf(d.pipelineId); return p ? !stageOf(p, d.stageId).closed : true; };
+const daysSince = (iso) => iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)) : 0;
+function moveDeal(d, stageId) {
+  if (d.stageId === stageId) return;
+  d.stageId = stageId; d.updatedAt = Date.now();
+  (d.history = d.history || []).push({ stageId, at: new Date().toISOString() });
+  save();
+}
+function newDeal(p, extra) {
+  const d = Object.assign({ id: uid(), pipelineId: p.id, stageId: p.stages[0].id, title: "", contactId: null, companyId: null, missionId: null, amount: 0, closeDate: "", notes: "", history: [{ stageId: p.stages[0].id, at: new Date().toISOString() }], createdAt: Date.now(), updatedAt: Date.now() }, extra || {});
+  state.deals.push(d); save();
+  return d;
+}
+function renderPipelines() {
+  if (view.detailId) return renderDealDetail(view.detailId);
+  const p = currentPipeline();
+  const tabs = [...state.pipelines].sort((a, b) => (a.sortIndex || 0) - (b.sortIndex || 0)).map((x) => `<button class="chip ${p && x.id === p.id ? "active" : ""}" data-pipe-tab="${x.id}">${esc(x.name)}${dealsOf(x).filter(dealOpen).length ? ` <span class="kb-count">${dealsOf(x).filter(dealOpen).length}</span>` : ""}</button>`).join("")
+    + `<button class="chip" data-pipe-add title="Nouveau pipeline">+</button>`;
+  const head = `<div class="toolbar nowrap"><div class="page-title grow" style="margin:0">Pipelines</div>
+      ${p ? `<button class="btn" data-deal-add="${p.id}">+ Nouvelle fiche</button>` : ""}</div>
+    <div class="chip-row" style="margin-bottom:12px">${tabs}</div>`;
+  if (!p) return head + '<div class="center-empty">Aucun pipeline. Crée-en un avec « + ».</div>';
+  const deals = dealsOf(p), open = deals.filter(dealOpen);
+  const enCours = open.reduce((t, d) => t + (Number(d.amount) || 0), 0);
+  const y = String(new Date().getFullYear());
+  const won = deals.filter((d) => stageOf(p, d.stageId).closed === "won" && (d.history || []).some((h) => h.stageId === d.stageId && String(h.at).slice(0, 4) === y));
+  const cols = p.stages.map((st, idx) => {
+    const items = deals.filter((d) => stageOf(p, d.stageId).id === st.id).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const cards = items.map((d) => {
+      const ct = d.contactId ? state.contacts.find((c) => c.id === d.contactId) : null;
+      const last = (d.history || []).slice(-1)[0];
+      return `<div class="kb-card deal-card" data-deal-card="${d.id}" style="border-left-color:${st.closed === "won" ? "var(--positive)" : st.closed === "lost" ? "#d23c3c" : "var(--primary)"}">
+        <div class="kb-title-row"><span class="grow">${esc(d.title || "Sans titre")}</span>${d.amount ? `<strong style="white-space:nowrap">${euros(d.amount)}</strong>` : ""}</div>
+        <div class="kb-meta">${ct ? esc(contactName(ct)) + (ct.organization ? " · " + esc(ct.organization) : "") : (d.companyId ? esc(companyName(d.companyId)) : '<span class="muted">sans contact</span>')}</div>
+        <div class="kb-meta">${last ? `${daysSince(last.at)} j dans cette étape` : ""}${d.closeDate ? ` · échéance ${fmtDate(d.closeDate)}` : ""}</div>
+        <div class="kb-actions"><button class="btn ghost small" data-open-deal="${d.id}">Ouvrir</button><span class="grow"></span>
+          <button class="btn ghost small" data-deal-move="-1" data-d="${d.id}" ${idx === 0 ? "disabled" : ""} title="Étape précédente">‹</button>
+          <button class="btn ghost small" data-deal-move="1" data-d="${d.id}" ${idx === p.stages.length - 1 ? "disabled" : ""} title="Étape suivante">›</button></div></div>`;
+    }).join("");
+    const tot = items.reduce((t, d) => t + (Number(d.amount) || 0), 0);
+    return `<div class="kb-col" data-deal-col="${st.id}"><div class="kb-head"><span class="grow">${esc(st.name)}</span>${tot ? `<span class="muted" style="font-size:12px;margin-right:6px">${euros(tot)}</span>` : ""}<span class="kb-count">${items.length}</span></div>
+      <div class="kb-body">${cards || '<div class="kb-empty">—</div>'}</div></div>`;
+  }).join("");
+  const stagesEdit = `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer;font-size:13px">Étapes et réglages du pipeline « ${esc(p.name)} »</summary><div class="card" style="margin-top:8px">
+      <label class="field"><span>Nom du pipeline</span><input data-pipe-name="${p.id}" value="${esc(p.name)}"/></label>
+      ${p.stages.map((st, i) => `<div class="inline" style="padding:4px 0;gap:8px"><input class="grow" data-stage-name="${p.id}|${st.id}" value="${esc(st.name)}"/><select data-stage-closed="${p.id}|${st.id}" style="width:auto"><option value="" ${!st.closed ? "selected" : ""}>En cours</option><option value="won" ${st.closed === "won" ? "selected" : ""}>Gagné</option><option value="lost" ${st.closed === "lost" ? "selected" : ""}>Perdu</option></select><button class="btn ghost small" data-stage-up="${p.id}|${st.id}" ${i === 0 ? "disabled" : ""}>↑</button><button class="btn ghost small" data-stage-del="${p.id}|${st.id}" ${p.stages.length <= 2 ? "disabled" : ""}>✕</button></div>`).join("")}
+      <div class="inline" style="margin-top:8px;gap:8px"><button class="btn secondary small" data-stage-add="${p.id}">+ Étape</button><span class="grow"></span><button class="btn danger small" data-pipe-del="${p.id}" ${deals.length ? "disabled title=\"Supprime d'abord ses fiches\"" : ""}>Supprimer le pipeline</button></div></div></details>`;
+  return head + `<div class="card" style="margin-bottom:12px"><div class="inline" style="flex-wrap:wrap;gap:10px"><span class="grow"><strong>${open.length}</strong> fiche(s) en cours${enCours ? ` · <strong>${euros(enCours)}</strong> en jeu` : ""}</span><span class="muted" style="font-size:13px">${won.length} gagnée(s) en ${y}${won.length ? " · " + euros(won.reduce((t, d) => t + (Number(d.amount) || 0), 0)) : ""}</span></div></div>
+    <div class="muted" style="font-size:12px;margin-bottom:10px">Glisse une fiche vers une autre étape, ou utilise ‹ ›.</div>
+    <div class="kb-board kb-scroll" style="grid-template-columns:repeat(${p.stages.length}, minmax(190px, 1fr))">${cols}</div>${stagesEdit}
+    <button class="btn fab" data-deal-add="${p.id}">+</button>`;
+}
+function renderDealDetail(id) {
+  const d = state.deals.find((x) => x.id === id);
+  if (!d) { view.detailId = null; return renderPipelines(); }
+  const p = pipelineOf(d.pipelineId) || state.pipelines[0];
+  const pipeOpts = state.pipelines.map((x) => `<option value="${x.id}" ${x.id === d.pipelineId ? "selected" : ""}>${esc(x.name)}</option>`).join("");
+  const stOpts = (p ? p.stages : []).map((s) => `<option value="${s.id}" ${s.id === d.stageId ? "selected" : ""}>${esc(s.name)}</option>`).join("");
+  const ctOpts = ['<option value="">Aucun</option>'].concat([...state.contacts].sort((a, b) => contactName(a).localeCompare(contactName(b), "fr")).map((c) => `<option value="${c.id}" ${c.id === d.contactId ? "selected" : ""}>${esc(contactName(c))}${c.organization ? " · " + esc(c.organization) : ""}</option>`)).join("");
+  const ct = d.contactId ? state.contacts.find((c) => c.id === d.contactId) : null;
+  const hist = (d.history || []).slice().reverse().map((h) => `<div class="inline" style="padding:3px 0;font-size:13px;gap:10px"><span class="muted" style="white-space:nowrap">${fmtDateTimeISO(h.at)}</span><span>→ ${esc(p ? stageOf(p, h.stageId).name : h.stageId)}</span></div>`).join("");
+  return `<button class="back" data-back-deal>‹ ${esc(p ? p.name : "Pipelines")}</button>
+    <div class="page-title">${esc(d.title || "Nouvelle fiche")}</div>
+    <div class="card">
+      <label class="field"><span>Intitulé</span><input data-bind="deals|${d.id}|title" value="${esc(d.title)}"/></label>
+      <label class="field"><span>Pipeline</span><select data-deal-pipe="${d.id}">${pipeOpts}</select></label>
+      <label class="field"><span>Étape</span><select data-deal-stage="${d.id}">${stOpts}</select></label>
+      <label class="field"><span>Contact</span><select data-bind="deals|${d.id}|contactId" data-rerender>${ctOpts}</select></label>
+      <label class="field"><span>Société (la mienne)</span>${companySelect(`deals|${d.id}|companyId`, d.companyId)}</label>
+      <label class="field"><span>Projet lié</span>${missionSelect(`deals|${d.id}|missionId`, d.missionId)}</label>
+      <label class="field"><span>Montant (€ HT)</span><input type="number" data-bind="deals|${d.id}|amount" value="${d.amount || 0}"/></label>
+      <label class="field"><span>Clôture prévue</span><input type="date" data-bind="deals|${d.id}|closeDate" value="${esc(d.closeDate || "")}"/></label>
+      <label class="field"><span>Notes</span><textarea data-bind="deals|${d.id}|notes">${esc(d.notes)}</textarea></label>
+    </div>
+    <div class="section-h">Parcours</div><div class="card" style="padding:6px 12px">${hist || '<div class="muted">—</div>'}</div>
+    ${ct ? `<div class="section-h">Relation avec ${esc(contactName(ct))} <span class="muted"><button class="btn ghost small" data-open-contact="${ct.id}">Fiche contact</button></span></div>${timelineHtml(contactTimeline(ct).slice(0, 20))}` : ""}
+    <div style="margin-top:18px"><button class="btn danger small" data-del-deal="${d.id}">Supprimer la fiche</button></div>`;
+}
+function wirePipelines(c) {
+  c.querySelectorAll("[data-pipe-tab]").forEach((b) => b.onclick = () => { pipelineTab = b.dataset.pipeTab; render(); });
+  const pAdd = c.querySelector("[data-pipe-add]"); if (pAdd) pAdd.onclick = () => { const name = prompt("Nom du nouveau pipeline :", "Nouveau pipeline"); if (!name) return; const id = "pipe-" + uid(); state.pipelines.push({ id, name: name.trim(), stages: [{ id: id + "-1", name: "À faire", closed: "" }, { id: id + "-2", name: "En cours", closed: "" }, { id: id + "-3", name: "Terminé", closed: "won" }], sortIndex: state.pipelines.length, createdAt: Date.now() }); pipelineTab = id; save(); render(); };
+  c.querySelectorAll("[data-deal-add]").forEach((b) => b.onclick = () => { const p = pipelineOf(b.dataset.dealAdd); if (!p) return; const d = newDeal(p); openDetail("pipelines", d.id); });
+  c.querySelectorAll("[data-open-deal]").forEach((b) => b.onclick = (ev) => { ev.stopPropagation(); openDetail("pipelines", b.dataset.openDeal); });
+  c.querySelectorAll("[data-deal-move]").forEach((b) => b.onclick = (ev) => { ev.stopPropagation(); const d = state.deals.find((x) => x.id === b.dataset.d); const p = d && pipelineOf(d.pipelineId); if (!p) return; const i = p.stages.findIndex((s) => s.id === stageOf(p, d.stageId).id); const j = Math.max(0, Math.min(p.stages.length - 1, i + Number(b.dataset.dealMove))); if (j !== i) { moveDeal(d, p.stages[j].id); render(); } });
+  wireBoardDnD(c, "data-deal-card", "data-deal-col",
+    (id) => { const d = state.deals.find((x) => x.id === id); return d ? (d.title || "Fiche") : null; },
+    (id) => { const d = state.deals.find((x) => x.id === id); return d ? d.stageId : ""; },
+    (id, code) => { const d = state.deals.find((x) => x.id === id); if (d) { moveDeal(d, code); render(); } });
+  const back = c.querySelector("[data-back-deal]"); if (back) back.onclick = () => { view.detailId = null; render(); };
+  c.querySelectorAll("[data-deal-pipe]").forEach((s) => s.onchange = () => { const d = state.deals.find((x) => x.id === s.dataset.dealPipe); const p = pipelineOf(s.value); if (!d || !p) return; d.pipelineId = p.id; moveDeal(d, p.stages[0].id); pipelineTab = p.id; render(); });
+  c.querySelectorAll("[data-deal-stage]").forEach((s) => s.onchange = () => { const d = state.deals.find((x) => x.id === s.dataset.dealStage); if (d) { moveDeal(d, s.value); render(); } });
+  c.querySelectorAll("[data-del-deal]").forEach((b) => b.onclick = () => { if (!confirm("Supprimer cette fiche ?")) return; state.deals = state.deals.filter((x) => x.id !== b.dataset.delDeal); save(); view.detailId = null; render(); });
+  c.querySelectorAll("[data-pipe-name]").forEach((el) => el.onchange = () => { const p = pipelineOf(el.dataset.pipeName); if (p) { p.name = el.value.trim() || p.name; save(); render(); } });
+  c.querySelectorAll("[data-stage-name]").forEach((el) => el.onchange = () => { const [pid, sid] = el.dataset.stageName.split("|"); const p = pipelineOf(pid); const st = p && p.stages.find((s) => s.id === sid); if (st) { st.name = el.value.trim() || st.name; save(); render(); } });
+  c.querySelectorAll("[data-stage-closed]").forEach((el) => el.onchange = () => { const [pid, sid] = el.dataset.stageClosed.split("|"); const p = pipelineOf(pid); const st = p && p.stages.find((s) => s.id === sid); if (st) { st.closed = el.value; save(); render(); } });
+  c.querySelectorAll("[data-stage-up]").forEach((b) => b.onclick = () => { const [pid, sid] = b.dataset.stageUp.split("|"); const p = pipelineOf(pid); if (!p) return; const i = p.stages.findIndex((s) => s.id === sid); if (i > 0) { const t = p.stages[i - 1]; p.stages[i - 1] = p.stages[i]; p.stages[i] = t; save(); render(); } });
+  c.querySelectorAll("[data-stage-del]").forEach((b) => b.onclick = () => { const [pid, sid] = b.dataset.stageDel.split("|"); const p = pipelineOf(pid); if (!p || p.stages.length <= 2) return; const used = state.deals.filter((d) => d.pipelineId === pid && d.stageId === sid).length; if (used && !confirm(`${used} fiche(s) sont dans cette étape : elles passeront dans la première étape. Continuer ?`)) return; p.stages = p.stages.filter((s) => s.id !== sid); state.deals.forEach((d) => { if (d.pipelineId === pid && d.stageId === sid) d.stageId = p.stages[0].id; }); save(); render(); });
+  c.querySelectorAll("[data-stage-add]").forEach((b) => b.onclick = () => { const p = pipelineOf(b.dataset.stageAdd); if (!p) return; p.stages.push({ id: p.id + "-" + uid(), name: "Nouvelle étape", closed: "" }); save(); render(); });
+  c.querySelectorAll("[data-pipe-del]").forEach((b) => b.onclick = () => { const p = pipelineOf(b.dataset.pipeDel); if (!p || dealsOf(p).length) return; if (!confirm(`Supprimer le pipeline « ${p.name} » ?`)) return; state.pipelines = state.pipelines.filter((x) => x.id !== p.id); pipelineTab = null; save(); render(); });
+}
+// ---- Contacts : suggestions depuis les mails, enrichissement, LinkedIn ----
+const GENERIC_DOMAINS = /^(gmail|googlemail|outlook|hotmail|live|msn|yahoo|orange|wanadoo|free|sfr|laposte|icloud|me|mac|protonmail|proton|bbox|neuf|aol)\./i;
+const NOISE_ADDR = /no-?reply|ne-?pas-?repondre|notification|newsletter|mailer|daemon|bounce|marketing|info@|news@|contact@|support@|service@|hello@|team@|alert|noreply|billing|facture|invoice|comms?\.|email\.|mail\.|reply\./i;
+function orgFromDomain(addr) {
+  const dom = String(addr || "").split("@")[1] || ""; if (!dom || GENERIC_DOMAINS.test(dom)) return "";
+  const base = dom.replace(/\.(com|fr|net|org|io|co|eu|ai|app|dev|info)(\.[a-z]{2})?$/i, "").split(".").pop();
+  return base ? base.charAt(0).toUpperCase() + base.slice(1) : "";
+}
+function splitName(full) {
+  const parts = String(full || "").replace(/[<>"]/g, "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { firstName: "", lastName: "" };
+  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+  // « ARBIA Grégory » (nom en capitales d'abord) → prénom Grégory
+  if (parts[0] === parts[0].toUpperCase() && parts[1] !== parts[1].toUpperCase()) return { firstName: parts.slice(1).join(" "), lastName: parts[0] };
+  return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+}
+function ownAddresses() {
+  const out = new Set(state.mailboxes.map((b) => String(b.email || "").toLowerCase()).filter(Boolean));
+  const acc = window.DriveSync && DriveSync.account && DriveSync.account(); if (acc) out.add(String(acc).toLowerCase());
+  return out;
+}
+function contactSuggestions() {
+  const known = new Set(state.contacts.map((c) => String(c.email || "").toLowerCase()).filter(Boolean));
+  const own = ownAddresses(), ignored = state.contactIgnore || {};
+  const by = {};
+  eventsAll().forEach((e) => {
+    if (e.source && e.source !== "mail") return;
+    const addr = String((e.expediteur && e.expediteur.adresse) || "").toLowerCase().trim(); if (!addr || !addr.includes("@")) return;
+    if (known.has(addr) || own.has(addr) || ignored[addr] || NOISE_ADDR.test(addr)) return;
+    const nom = String((e.expediteur && e.expediteur.nom) || "").trim();
+    if (!nom || nom.includes("@") || /newsletter|team|équipe|equipe|service|support|no.?reply/i.test(nom)) return;
+    const b = by[addr] = by[addr] || { addr, nom, n: 0, last: "", comptes: {} };
+    b.n++; if ((e.recu_le || "") > b.last) b.last = e.recu_le || ""; if (e.compte) b.comptes[e.compte] = 1;
+  });
+  return Object.values(by).filter((b) => b.n >= 2 || (b.last && daysSince(b.last) <= 30)).sort((a, b) => b.n - a.n || b.last.localeCompare(a.last));
+}
+function addContactFrom(s, extra) {
+  const { firstName, lastName } = splitName(s.nom);
+  const x = Object.assign({ id: uid(), firstName, lastName, organization: orgFromDomain(s.addr), jobTitle: "", email: s.addr || "", phone: "", address: "", linkedIn: "", category: "prospect", notes: "", companyId: null, source: "gmail", createdAt: Date.now() }, extra || {});
+  state.contacts.push(x); save();
+  return x;
+}
+// Enrichissement depuis la signature du dernier mail reçu de ce contact (Gmail relié) : téléphone,
+// fonction, organisation, LinkedIn. Seuls les champs vides sont remplis.
+function parseSignature(text, c) {
+  const t = String(text || "").replace(/\r/g, "").replace(/[ \t]+/g, " ");
+  const out = {};
+  const ph = /(?:\+33\s?[1-9]|0[1-9])(?:[\s.-]?\d{2}){4}/.exec(t); if (ph) out.phone = ph[0].replace(/[\s.-]/g, " ").trim();
+  const li = /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[\w\-%]+\/?/i.exec(t); if (li) out.linkedIn = li[0];
+  const lines = t.split("\n").map((l) => l.trim()).filter(Boolean);
+  const nm = normName(contactName(c)), first = normName(c.firstName), last = normName(c.lastName);
+  let i = lines.findIndex((l) => { const n = normName(l); return n && nm && (n === nm || (first && last && n.indexOf(first) > -1 && n.indexOf(last) > -1 && n.length <= nm.length + 30)); });
+  if (i > -1) {
+    const next = lines.slice(i + 1, i + 5).filter((l) => !/@|https?:|\+33|^0[1-9]|^t[ée]l|^mob|^port|^www\./i.test(l) && l.length <= 80);
+    if (next[0]) { const m = /^(.+?)\s+(?:chez|@|-|–|\||,)\s+(.+)$/.exec(next[0]); if (m) { out.jobTitle = m[1].trim(); out.organization = m[2].trim(); } else out.jobTitle = next[0]; }
+    if (!out.organization && next[1] && !/^\d/.test(next[1]) && next[1].length <= 60) out.organization = next[1];
+  }
+  const tel = /(?:t[ée]l[ée]phone|t[ée]l|mobile|portable|mob)\s*[.:]?\s*((?:\+33\s?[1-9]|0[1-9])(?:[\s.-]?\d{2}){4})/i.exec(t); if (tel) out.phone = tel[1].replace(/[\s.-]/g, " ").trim();
+  return out;
+}
+function applyEnrichment(c, found) {
+  const filled = [];
+  ["phone", "jobTitle", "organization", "linkedIn"].forEach((k) => { if (found[k] && !c[k]) { c[k] = found[k]; filled.push(k); } });
+  c.enrichedAt = Date.now(); save();
+  return filled;
+}
+async function enrichContact(c) {
+  if (!c.email) throw new Error("Ce contact n'a pas d'adresse e-mail.");
+  const res = await DriveSync.searchMails(`from:${c.email} -in:sent`, 3);
+  if (!res.length) return { filled: [], found: {}, none: true };
+  let found = {};
+  for (const m of res.slice(0, 2)) {
+    const full = await DriveSync.readMail(m.id, null);
+    const text = full.text || String(full.html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|tr|li)>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+    const f = parseSignature(text, c);
+    Object.keys(f).forEach((k) => { if (!found[k]) found[k] = f[k]; });
+    if (found.phone && found.jobTitle) break;
+  }
+  return { filled: applyEnrichment(c, found), found };
+}
+// LinkedIn : un signet (bookmarklet) lit le profil ouvert dans le navigateur et ouvre l'app avec ses champs.
+function linkedinBookmarklet() {
+  const base = location.origin + location.pathname;
+  const code = `(function(){var t=document.title.replace(/\\s*\\|\\s*LinkedIn\\s*$/,'');var h=document.querySelector('h1');var n=h?h.textContent.trim():t.split(' - ')[0];var d=document.querySelector('meta[property="og:description"]');var hl=t.indexOf(' - ')>-1?t.slice(t.indexOf(' - ')+3):'';var m=document.querySelector('.text-body-medium');if(m&&m.textContent.trim())hl=m.textContent.trim();var loc=document.querySelector('.text-body-small.inline');window.open('${base}?addContact='+encodeURIComponent(JSON.stringify({nom:n,titre:hl,url:location.href.split('?')[0],desc:d?d.content:'',lieu:loc?loc.textContent.trim():''})),'_blank');})();`;
+  return "javascript:" + encodeURIComponent(code);
+}
+function handleAddContactParam() {
+  let raw = null;
+  try { const u = new URL(location.href); raw = u.searchParams.get("addContact"); if (raw) { u.searchParams.delete("addContact"); history.replaceState(null, "", u.pathname + (u.search || "") + u.hash); } } catch (e) {}
+  if (!raw) return false;
+  let p; try { p = JSON.parse(raw); } catch (e) { return false; }
+  const { firstName, lastName } = splitName(String(p.nom || "").replace(/\s*\(.*?\)\s*/g, " "));
+  let jobTitle = String(p.titre || "").trim(), organization = "";
+  const m = /^(.*?)\s+(?:chez|at|@)\s+(.+)$/i.exec(jobTitle); if (m) { jobTitle = m[1].trim(); organization = m[2].trim(); }
+  if (!organization) { const me = /Exp[ée]rience\s*:\s*([^·\n]+)/i.exec(String(p.desc || "")); if (me) organization = me[1].trim(); }
+  const existing = state.contacts.find((c) => p.url && c.linkedIn && c.linkedIn.replace(/\/$/, "") === String(p.url).replace(/\/$/, ""));
+  const c = existing || { id: uid(), firstName, lastName, organization, jobTitle, email: "", phone: "", address: String(p.lieu || ""), linkedIn: String(p.url || ""), category: "prospect", notes: "", companyId: null, source: "linkedin", createdAt: Date.now() };
+  if (!existing) state.contacts.push(c); else { if (!c.jobTitle) c.jobTitle = jobTitle; if (!c.organization) c.organization = organization; }
+  save(); view = { section: "contacts", detailId: c.id };
+  toast(existing ? "Contact déjà présent : fiche ouverte" : "Contact ajouté depuis LinkedIn");
+  return true;
+}
+// ---- Historique de relation ----
+function contactMatchesEvent(c, e) {
+  const addr = String((e.expediteur && e.expediteur.adresse) || "").toLowerCase();
+  if (c.email && addr && addr === String(c.email).toLowerCase()) return true;
+  const nm = normName(contactName(c)), en = normName((e.expediteur && e.expediteur.nom) || "");
+  return !!(nm && en && nm.length >= 6 && (en === nm || (normName(c.firstName) && normName(c.lastName) && en.indexOf(normName(c.firstName)) > -1 && en.indexOf(normName(c.lastName)) > -1)));
+}
+function contactTimeline(c) {
+  const items = [];
+  eventsAll().forEach((e) => { if (contactMatchesEvent(c, e)) items.push({ date: e.recu_le || "", ic: e.source === "mail" ? "✉️" : "💬", label: e.sujet || e.resume || "Message", sub: `${EVENT_COMPTES[e.compte] || e.compte || ""}${e.statut === "traite" ? " · traité" : e.statut === "ignore" ? " · ignoré" : ""}`, sec: "atraiter", id: e.id }); });
+  state.rendezvous.forEach((r) => { if (r.contactId === c.id || (r.withName && normName(r.withName) === normName(contactName(c)))) items.push({ date: r.date + "T" + (r.time || "12:00") + ":00", ic: "📅", label: r.title || "Rendez-vous", sub: rdvWhen(r), sec: "rendezvous", id: r.id }); });
+  state.invoices.forEach((v) => { if (v.contactId === c.id) items.push({ date: (v.startDate || "") + "T12:00:00", ic: "€", label: `${v.title || "Facture"} · ${euros(v.amount)}`, sub: invStatusLabel(v.status), sec: "finances", id: v.id }); });
+  state.deals.forEach((d) => { if (d.contactId !== c.id) return; const p = pipelineOf(d.pipelineId); (d.history || []).forEach((h) => items.push({ date: h.at, ic: "🧭", label: `${d.title || "Fiche"} → ${p ? stageOf(p, h.stageId).name : ""}`, sub: p ? p.name : "", sec: "pipelines", id: d.id })); });
+  (c.log || []).forEach((n) => items.push({ date: n.date + "T12:00:00", ic: "📝", label: n.text, sub: "note", sec: "", id: "", noteId: n.id }));
+  state.missions.forEach((m) => (m.entries || []).forEach((e) => { if (e.contactId === c.id) items.push({ date: (e.date || "") + "T12:00:00", ic: kindMeta(e.kind).ic, label: e.title || kindMeta(e.kind).label, sub: m.title || "", sec: "missions", id: m.id }); }));
+  return items.filter((i) => i.date).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+function timelineHtml(items) {
+  if (!items.length) return '<div class="card muted" style="font-size:13px">Aucun échange enregistré. Les mails de ce contact apparaissent ici dès qu\'ils passent par « À traiter ».</div>';
+  return `<div class="card" style="padding:4px 12px">${items.map((i) => `<div class="tl-item"><span class="tl-date">${esc(fmtDateTimeISO(i.date).slice(0, 10))}</span><span class="tl-ic">${i.ic}</span><span class="grow" style="min-width:0">${i.sec ? `<a href="#" data-tl-open="${i.sec}|${esc(i.id)}">${esc(i.label)}</a>` : esc(i.label)}${i.sub ? ` <span class="muted" style="font-size:12px">· ${esc(i.sub)}</span>` : ""}</span>${i.noteId ? `<button class="btn ghost small" data-del-note="${i.noteId}">✕</button>` : ""}</div>`).join("")}</div>`;
+}
+function contactRelationHtml(c) {
+  const tl = contactTimeline(c), last = tl[0];
+  const due = c.nextContactAt && c.nextContactAt <= todayISO();
+  return `<div class="section-h">Relation</div>
+    <div class="card"><div class="inline" style="flex-wrap:wrap;gap:10px">
+      <span class="grow"><strong>${tl.length}</strong> échange(s)${last ? ` · dernier le ${esc(fmtDateTimeISO(last.date).slice(0, 10))}` : ""}</span>
+      <label class="md-ctl" style="flex-direction:row;align-items:center"><span>À relancer le</span><input type="date" data-bind="contacts|${c.id}|nextContactAt" value="${esc(c.nextContactAt || "")}" style="width:auto;${due ? "border-color:#d23c3c" : ""}"/></label>
+      ${gmailLinked() && c.email ? `<button class="btn secondary small" data-enrich-contact="${c.id}">${icon("refresh")} Enrichir depuis les mails</button>` : ""}</div>
+      ${c.enrichedAt ? `<div class="muted" style="font-size:12px;margin-top:4px">Dernier enrichissement : ${esc(fmtDateTimeISO(new Date(c.enrichedAt).toISOString()))}</div>` : ""}
+      <div class="inline" style="margin-top:8px;gap:8px"><input class="grow" data-note-text="${c.id}" placeholder="Ajouter une note datée (appel, rencontre, décision…)"/><button class="btn secondary small" data-note-add="${c.id}">Ajouter</button></div></div>
+    <div class="section-h">Historique</div>${timelineHtml(tl)}`;
+}
+function wireCRM(c) {
+  c.querySelectorAll("[data-tl-open]").forEach((a) => a.onclick = (ev) => { ev.preventDefault(); const [sec, id] = a.dataset.tlOpen.split("|"); if (sec === "atraiter") openEvent(id); else openDetail(sec, id); });
+  c.querySelectorAll("[data-note-add]").forEach((b) => b.onclick = () => { const ct = state.contacts.find((x) => x.id === b.dataset.noteAdd); const inp = c.querySelector(`[data-note-text="${b.dataset.noteAdd}"]`); if (!ct || !inp || !inp.value.trim()) return; (ct.log = ct.log || []).push({ id: uid(), date: todayISO(), text: inp.value.trim() }); save(); render(); });
+  c.querySelectorAll("[data-del-note]").forEach((b) => b.onclick = () => { const ct = state.contacts.find((x) => x.id === view.detailId); if (!ct) return; ct.log = (ct.log || []).filter((n) => n.id !== b.dataset.delNote); save(); render(); });
+  c.querySelectorAll("[data-enrich-contact]").forEach((b) => b.onclick = async () => {
+    const ct = state.contacts.find((x) => x.id === b.dataset.enrichContact); if (!ct) return;
+    b.disabled = true; b.textContent = "Lecture des mails…";
+    try { const r = await enrichContact(ct); toast(r.none ? "Aucun mail reçu de cette adresse" : r.filled.length ? `Complété : ${r.filled.map((k) => ({ phone: "téléphone", jobTitle: "fonction", organization: "organisation", linkedIn: "LinkedIn" })[k]).join(", ")}` : "Rien de nouveau dans la signature"); }
+    catch (e) { alert("Enrichissement impossible : " + (e.message || e)); }
+    render();
+  });
+  c.querySelectorAll("[data-suggest-add]").forEach((b) => b.onclick = () => { const s = contactSuggestions().find((x) => x.addr === b.dataset.suggestAdd); if (!s) return; const ct = addContactFrom(s); toast("Contact ajouté"); openDetail("contacts", ct.id); });
+  c.querySelectorAll("[data-suggest-ignore]").forEach((b) => b.onclick = () => { (state.contactIgnore = state.contactIgnore || {})[b.dataset.suggestIgnore] = 1; save(); render(); });
+  const sAll = c.querySelector("[data-suggest-all]"); if (sAll) sAll.onclick = () => { const list = contactSuggestions(); list.forEach((s) => addContactFrom(s)); toast(`${list.length} contact(s) ajouté(s)`); render(); };
+  const lk = c.querySelector("[data-linkedin-help]"); if (lk) lk.onclick = () => {
+    const url = linkedinBookmarklet();
+    showModal(`<div class="modal-head"><strong class="grow">Ajouter un profil LinkedIn en un clic</strong><button class="btn ghost small" data-modal-close>${icon("x")}</button></div>
+      <p style="font-size:14px">Un <strong>signet</strong> dans ton navigateur lit le profil LinkedIn ouvert et crée le contact dans choice (nom, fonction, organisation, lien, lieu).</p>
+      <ol style="font-size:14px;padding-left:18px">
+        <li><strong>Sur Mac</strong> : glisse ce bouton dans la barre des favoris → <a class="btn small" href="${url}" onclick="return false" style="display:inline-block">+ choice ← LinkedIn</a></li>
+        <li><strong>Sur iPhone</strong> : copie le code ci-dessous, ajoute n'importe quelle page aux favoris Safari, puis modifie ce favori et remplace son adresse par le code collé. <button class="btn secondary small" data-copy-bookmarklet>Copier le code</button></li>
+        <li>Ouvre un profil LinkedIn, clique le signet : choice s'ouvre sur la fiche créée.</li></ol>
+      <textarea readonly style="font-size:11px;height:80px" id="bmCode">${esc(url)}</textarea>`);
+    document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
+    const cp = document.querySelector("[data-copy-bookmarklet]"); if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(url); toast("Code copié"); } catch (e) { const ta = document.getElementById("bmCode"); if (ta) { ta.select(); document.execCommand("copy"); toast("Code copié"); } } };
+  };
 }
 
 // ----------------------------- Groupe (sociétés) -----------------------------
@@ -3588,6 +3886,7 @@ function financeDashboard() {
       ${tile("À payer", euros(aPayTot), `${aPayer.length} facture(s)${aPayLate.length ? ` · ${aPayLate.length} en retard` : ""}`, "apayer", aPayLate.length ? "#d23c3c" : "")}
       ${tile("TVA du trimestre", euros(Math.abs(tva.net)), tva.net >= 0 ? "à décaisser (estimation)" : "crédit de TVA (estimation)", "tva")}
       ${bRows.length ? tile("Budget charges", euros(bReal), `budget à date ${euros(bBud)} · ${bReal - bBud > 0 ? "dépassé de " + euros(bReal - bBud) : "marge " + euros(bBud - bReal)}`, "budget", bReal - bBud > 0 ? "#d23c3c" : "var(--positive)") : tile("Budget", "—", "définis un budget par catégorie", "budget")}
+      ${(() => { const open = state.deals.filter(dealOpen); const tot = open.reduce((t, d) => t + (Number(d.amount) || 0), 0); return open.length ? tile("Pipeline en cours", euros(tot), `${open.length} fiche(s) ouverte(s)`, "cdr").replace('data-ftab="cdr"', 'data-go="pipelines"') : ""; })()}
       ${tile(`Charges ${y} du mois`, euros(chMois), MOIS_LONG_FR[m - 1], "cdr")}
     </div>
     ${plChart(y)}
@@ -5957,6 +6256,7 @@ function wire() {
 
   // onglets Finances
   c.querySelectorAll("[data-ftab]").forEach((b) => b.onclick = () => { financeTab = b.dataset.ftab; render(); });
+  c.querySelectorAll("[data-go]").forEach((b) => b.onclick = () => go(b.dataset.go));
   wireBanque(c);
   // pilotage
   const py = c.querySelector("[data-period-year]"); if (py) py.onchange = () => { cdrPeriod.year = Number(py.value) || 0; if (!cdrPeriod.year) cdrPeriod.month = 0; render(); };
@@ -6424,6 +6724,10 @@ function wire() {
   const gs = c.querySelector("#globalSearch");
   if (gs) { gs.oninput = () => { searchQ = gs.value; render(); }; if (searchQ) { gs.focus(); const v = gs.value; try { gs.setSelectionRange(v.length, v.length); } catch (e) {} } }
   c.querySelectorAll("[data-search-open]").forEach((r) => r.onclick = () => { const sec = r.dataset.searchOpen, id = r.dataset.searchId; if (id) openDetail(sec, id); else go(sec); });
+  wirePipelines(c); wireCRM(c);
+  c.querySelectorAll("[data-open-contact-link]").forEach((a) => a.onclick = (ev) => { ev.preventDefault(); openDetail("contacts", a.dataset.openContactLink); });
+  const sbox = c.querySelector("[data-sugg-box]"); if (sbox) sbox.ontoggle = () => { suggOpen = sbox.open; };
+  c.querySelectorAll("[data-deal-for-contact]").forEach((b) => b.onclick = () => { const p = currentPipeline(); if (!p) { alert("Crée d'abord un pipeline."); return; } const ct = state.contacts.find((x) => x.id === b.dataset.dealForContact); const d = newDeal(p, { contactId: ct.id, title: ct.organization ? `${ct.organization} · ${contactName(ct)}` : contactName(ct) }); openDetail("pipelines", d.id); });
 
   // filtres factures
   const fs = c.querySelector("#factureSearch");
@@ -7070,6 +7374,8 @@ document.getElementById("installClose").onclick = () => { document.getElementByI
 if (generateRecurrences() > 0) save();
 seedVip();
 seedBilan();
+seedPipelines();
+handleAddContactParam();
 render();
 renderDriveBar();
 if (window.DriveSync && DriveSync.setMerger) DriveSync.setMerger((remote, local) => mergeStates(syncBase, local, remote));
