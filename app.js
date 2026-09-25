@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v105";
+const APP_VERSION = "v106";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -363,8 +363,7 @@ const SECTIONS = [
   { id: "missions", label: "Projets", ic: icon("folder"), fn: renderMissions },
   { id: "tasks", label: "Tâches", ic: icon("check-circle"), fn: renderTasks },
   { id: "actions", label: "Actions", ic: icon("ticket"), fn: renderActions },
-  { id: "rendezvous", label: "Rendez-vous", ic: icon("calendar"), fn: renderRendezvous },
-  { id: "planning", label: "Planning", ic: icon("calendar-days"), fn: renderPlanning },
+  { id: "rendezvous", label: "Planning", ic: icon("calendar"), fn: renderPlanningHub },
   { id: "time", label: "Temps", ic: icon("clock"), fn: renderTime },
   { id: "finances", label: "Finances", ic: icon("euro"), fn: renderFinances },
   { id: "contacts", label: "Contacts", ic: icon("users"), fn: renderContacts },
@@ -375,13 +374,14 @@ const SECTIONS = [
 ].sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" }));   // rubriques par ordre alphabétique
 const HOME_SECTION = "missions";
 let view = { section: HOME_SECTION, detailId: null };
-function go(section) { view = { section, detailId: null }; render(); }
+function go(section) { if (section === "planning") { section = "rendezvous"; if (planningTab === "rdv") planningTab = "grille"; } view = { section, detailId: null }; render(); }
 function openDetail(section, id) { view = { section, detailId: id }; render(); }
 
 // ----------------------------- Rendu -----------------------------
 function render() {
   const content = document.getElementById("content");
   if (view.section === "pdftools") { view.section = "reader"; docTab = "outils"; }   // ancienne rubrique « Outils PDF »
+  if (view.section === "planning") { view.section = "rendezvous"; if (planningTab === "rdv") planningTab = "grille"; }   // ancienne rubrique « Planning »
   const sec = SECTIONS.find((s) => s.id === view.section) || SECTIONS.find((s) => s.id === HOME_SECTION);
   // Une erreur dans le dessin d'un écran ne doit jamais figer l'app : on l'affiche
   // (message + où), on la garde en mémoire (menu Plus → « Dernière erreur ») et
@@ -458,7 +458,7 @@ function navCount(id) {
   if (id === "tasks") return state.tasks.filter((t) => (t.status || "aFaire") !== "termine").length || null;
   if (id === "actions") return state.actions.filter((a) => !a.closed).length || null;
   if (id === "rendezvous") return (state.rendezvous.filter((r) => (r.date || "9999") >= today).length
-    + calendar.events.filter((e) => e.date >= today).length) || null;
+    + calendar.events.filter((e) => e.date >= today).length) || null;   // Planning : rendez-vous et événements à venir
   if (id === "planning") return (state.slots.filter((s) => s.date === today).length
     + calendar.events.filter((e) => e.date === today).length) || null;
   if (id === "time") { const t = weekWorkedSeconds(); return t > 0 ? fmtDurationShort(t) : null; }
@@ -6007,13 +6007,17 @@ function planningEvents() {
   });
   return ev.sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));
 }
-let planningTab = "grille", planningDate = todayISO();
-function renderPlanning() {
-  const tabs = [["grille", "Emploi du temps"], ["agenda", "Agenda"], ["synthese", "Synthèse agenda"]]
-    .map(([id, lbl]) => `<button class="chip ${planningTab === id ? "active" : ""}" data-ptab="${id}">${lbl}</button>`).join("");
-  const body = planningTab === "grille" ? renderTimetable() : planningTab === "synthese" ? renderCalSummary() : renderAgenda();
+let planningTab = "rdv", planningDate = todayISO();
+// « Planning » regroupe les rendez-vous (saisis ici et agenda Google), l'emploi du temps, l'agenda et la synthèse.
+const PLANNING_TABS = [["rdv", "Rendez-vous"], ["grille", "Emploi du temps"], ["agenda", "Agenda"], ["synthese", "Synthèse agenda"]];
+function renderPlanningHub() {
+  if (view.detailId) return renderRendezvous();   // fiche d'un rendez-vous ou d'un événement Google
+  const tabs = PLANNING_TABS.map(([id, lbl]) => `<button class="chip ${planningTab === id ? "active" : ""}" data-ptab="${id}">${lbl}</button>`).join("");
+  const body = planningTab === "rdv" ? renderRendezvous().replace('<div class="page-title grow" style="margin:0">Rendez-vous</div>', '<span class="grow"></span>')
+    : planningTab === "grille" ? renderTimetable() : planningTab === "synthese" ? renderCalSummary() : renderAgenda();
   return `<div class="page-title">Planning</div><div class="chip-row" style="margin-bottom:14px">${tabs}</div>${body}${planningTab === "grille" ? calHint() : ""}`;
 }
+function renderPlanning() { return renderPlanningHub(); }
 function renderAgenda() {
   const today = todayISO();
   const all = planningEvents();
