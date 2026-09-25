@@ -108,6 +108,13 @@ reçoivent une lecture dédiée : numéro, client, date, échéance, HT, TVA, TT
 passe « payée » et l'écriture que ce virement avait créée est fusionnée. Une facture saisie à la main
 dont l'intitulé porte le numéro (« 25236 - Synthenova… ») est complétée, pas dupliquée.
 
+**Alertes bancaires (opérations provisoires).** Si les alertes par e-mail sont activées chez SG et
+au Crédit Mutuel, le script lit ces mails (`ALERTES_EXPEDITEURS`, depuis `ALERTES_DEPUIS`) et en tire
+date, montant, sens et libellé. Dans Finances → Banque, « Alertes bancaires » propose chaque opération
+annoncée tant qu'aucun relevé ne la confirme ; importée, elle est une écriture **provisoire** (payée,
+comptée dans la trésorerie) qui se rattache d'elle-même à l'opération du relevé quand il arrive
+(même compte, même montant, ± 4 jours). Le texte de chaque alerte est conservé pour vérifier la lecture.
+
 **Justificatifs.** Le script dépose aussi, dans « Justificatifs / Reçus mails » (dossier
 `DOSSIER_JUSTIFICATIFS_ID`), les PDF joints aux mails reçus depuis `MAILS_DEPUIS` (25 par passage),
 avec en description l'expéditeur, le sujet et la date du mail ; ils sont lus comme des factures.

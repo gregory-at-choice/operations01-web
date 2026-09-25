@@ -77,6 +77,52 @@ function expediteurCourt(de) {
   if (!nom || nom.indexOf("@") > -1) { var ma = /@([\w.-]+)/.exec(String(de || "")); nom = ma ? ma[1].replace(/\.(com|fr|net|org|io|co)$/, "").split(".").pop() : nom; }
   return nom.replace(/[\/\\:*?"<>|]+/g, " ").trim().slice(0, 40);
 }
+// Alertes bancaires reçues par mail (SG « Alertes », CM « Alertes Web ») : chaque mail est lu, et
+// s'il contient un montant et une opération, elle est déposée comme opération PROVISOIRE, en
+// attendant le relevé qui la confirmera. Le texte est conservé (400 caractères) pour vérifier la lecture.
+var LIRE_ALERTES = true;
+var ALERTES_EXPEDITEURS = ["socgen.com", "societegenerale.fr", "sg.fr", "particuliers.sg.fr", "professionnels.sg.fr", "creditmutuel.fr", "creditmutuel.com", "cmut.fr", "e-i.com"];
+var ALERTES_DEPUIS = "2026/09/01";
+var ALERTES_MAX = 400;
+function importerAlertes(data) {
+  if (!LIRE_ALERTES || typeof GmailApp === "undefined") return 0;
+  data.alertes = Array.isArray(data.alertes) ? data.alertes : [];
+  data.alertesVues = data.alertesVues || {};
+  var q = "(" + ALERTES_EXPEDITEURS.map(function (d) { return "from:" + d; }).join(" OR ") + ") -in:sent -in:trash after:" + ALERTES_DEPUIS;
+  var threads = GmailApp.search(q, 0, 100), n = 0;
+  threads.forEach(function (t) {
+    t.getMessages().forEach(function (msg) {
+      var id = msg.getId(); if (data.alertesVues[id]) return;
+      data.alertesVues[id] = 1;
+      var a = parserAlerte(msg.getSubject(), msg.getPlainBody(), msg.getFrom(), Utilities.formatDate(msg.getDate(), "Europe/Paris", "yyyy-MM-dd"));
+      a.mail = id; data.alertes.push(a); n++;
+    });
+  });
+  data.alertes.sort(function (a, b) { return (b.dateMail || "").localeCompare(a.dateMail || ""); });
+  data.alertes = data.alertes.slice(0, ALERTES_MAX);
+  if (n) Logger.log(n + " alerte(s) bancaire(s) lue(s).");
+  return n;
+}
+var ALERTE_DEBIT_RE = /d[ée]bit|paiement|pr[ée]l[èe]vement|retrait|virement (?:[ée]mis|effectu[ée]|envoy[ée])|achat|carte/i;
+var ALERTE_CREDIT_RE = /cr[ée]dit|virement (?:re[çc]u|en votre faveur)|remise|versement|encaissement/i;
+function parserAlerte(sujet, corps, de, dateMail) {
+  var t = normaliser(sujet + "\n" + String(corps || "")).replace(/\r/g, "");
+  var a = { sujet: String(sujet || "").slice(0, 120), de: String(de || "").slice(0, 80), dateMail: dateMail, banque: /creditmutuel|cmut|e-i\.com/i.test(de) ? "CM" : /socgen|societegenerale|sg\.fr/i.test(de) ? "SG" : "", date: null, montant: null, sens: null, libelle: "", compteFin: null, texte: t.slice(0, 400) };
+  var mm = /(-?\s?\d{1,3}(?:[ \u00a0.]?\d{3})*(?:,\d{2})?)\s?(?:€|EUR|euros?)/i.exec(t);
+  if (mm) { var v = nombreLibre(mm[1].replace(/\s/g, "")); if (v != null) a.montant = Math.abs(v); }
+  if (a.montant == null) return a;
+  var ds = datesDans(t.slice(0, 600));
+  if (ds.length) a.date = ds[0].iso;
+  else { var md = /\b(\d{1,2})\/(\d{1,2})\b/.exec(t); if (md) { var y = +dateMail.slice(0, 4); a.date = isoDate(y, +md[2], +md[1]) || null; if (a.date && a.date > dateMail) a.date = isoDate(y - 1, +md[2], +md[1]); } }
+  if (!a.date) a.date = dateMail;
+  var around = t.slice(0, 600);
+  a.sens = (/-\s?\d/.test(mm[0]) || ALERTE_DEBIT_RE.test(around)) && !ALERTE_CREDIT_RE.test(around) ? "debit" : ALERTE_CREDIT_RE.test(around) ? "credit" : "debit";
+  var mc = /\b(\d{11})\b/.exec(t) || /(?:\.{2,}|\*{2,}|x{2,}|X{2,})\s?(\d{4})\b/.exec(t) || /compte[^\n\d]{0,30}(\d{4})\b/i.exec(t);
+  if (mc) a.compteFin = mc[1].slice(-4);
+  var ml = /(?:chez|aupr[èe]s de|libell[ée]\s*:?|b[ée]n[ée]ficiaire\s*:?|de la part de|[ée]metteur\s*:?|\d{1,2}\/\d{1,2}(?:\/\d{4})?\s*:)\s*([^\n.]{3,80})/i.exec(t);
+  a.libelle = (ml ? ml[1] : String(sujet || "")).replace(/\s+(a [ée]t[ée]|sur (votre|le|ton|vos)|de votre|du compte|depuis) .*$/i, "").replace(/\s+/g, " ").trim().slice(0, 60);
+  return a;
+}
 function importerRecusMails(data) {
   if (!LIRE_MAILS || !DOSSIER_JUSTIFICATIFS_ID || typeof GmailApp === "undefined") return 0;
   var parent; try { parent = DriveApp.getFolderById(DOSSIER_JUSTIFICATIFS_ID); } catch (e) { return 0; }
@@ -154,6 +200,7 @@ function parcourir() {
     data.factures = Array.isArray(data.factures) ? data.factures : [];
     data.erreurs = Array.isArray(data.erreurs) ? data.erreurs : [];
     try { importerRecusMails(data); } catch (e) { Logger.log("Reçus des mails : " + String(e && e.message || e)); }
+    try { importerAlertes(data); } catch (e) { Logger.log("Alertes bancaires : " + String(e && e.message || e)); }
     // Un fichier est (re)lu s'il est nouveau, modifié, ou analysé par une version antérieure du script.
     var connus = {}, vc = {};
     var cle = function (x) { return x.mt + "|" + (x.v || 0); };

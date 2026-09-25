@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v100";
+const APP_VERSION = "v101";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3303,7 +3303,7 @@ function financeFactures() {
   const nbMissing = missingReceipts().length;
   const rows = items.map((v) => {
     const miss = receiptMissing(v);
-    const mark = miss ? '<span title="Justificatif manquant" style="color:#d23c3c">⚠️</span>' : (v.receiptUrl ? '<span title="Justificatif présent" style="color:var(--positive)">📎</span>' : "");
+    const mark = (v.provisoire ? '<span class="badge aPayer" title="Annoncée par une alerte bancaire, en attente du relevé">provisoire</span> ' : "") + (miss ? '<span title="Justificatif manquant" style="color:#d23c3c">⚠️</span>' : (v.receiptUrl ? '<span title="Justificatif présent" style="color:var(--positive)">📎</span>' : ""));
     return `<div class="row" data-open-invoice="${v.id}" style="border-left-color:${v.direction === "recette" ? "var(--finance)" : "var(--alert)"}">
     <div class="grow"><div class="r-title">${mark} ${esc(v.title || "Nouvelle facture")}</div>
       <div class="r-sub">${[fmtDate(v.startDate), esc(companyName(v.companyId)), v.categoryName ? esc(v.categoryName) : null].filter(Boolean).join(" · ")}</div></div>
@@ -4052,6 +4052,47 @@ function importClientFactures(list) {
   if (list.length) save();
   return { created, completed, paid };
 }
+// ---- Alertes bancaires (mails SG / CM lus par le script) : opérations provisoires ----
+// Une alerte devient une opération provisoire tant qu'aucun relevé ne porte la même opération
+// (même compte ou même banque, même montant, date à ± 4 jours). À l'import du relevé, l'écriture
+// provisoire est rattachée à l'opération réelle au lieu d'être créée en double.
+const ALERTE_JOURS = 4;
+const daysBetween = (a, b) => Math.abs((new Date(a + "T12:00:00") - new Date(b + "T12:00:00")) / 86400000);
+const banqueAlertes = () => ((banqueStore && banqueStore.alertes) || []).filter((a) => a.montant != null && a.date);
+function alertCompte(a) {
+  const comptes = (banqueStore && banqueStore.comptes) || [];
+  if (a.compteFin) { const c = comptes.find((x) => String(x.compte).endsWith(a.compteFin)); if (c) return c.compte; }
+  const ofBank = [...new Set(banqueReleves().filter((r) => r.banque === a.banque).map((r) => r.compte))];
+  return ofBank.length === 1 ? ofBank[0] : (comptes.length === 1 ? comptes[0].compte : null);
+}
+const alertSigned = (a) => (a.sens === "credit" ? 1 : -1) * Math.abs(a.montant);
+function alertConfirmedBy(a) {
+  const compte = alertCompte(a), amt = alertSigned(a);
+  return banqueOps().find((o) => (!compte || o._compte === compte) && Math.abs(o.montant - amt) < 0.005 && daysBetween(o.date, a.date) <= ALERTE_JOURS) || null;
+}
+const invoiceOfAlert = (id) => state.invoices.find((v) => v.bankAlertId === id);
+function alertesProvisoires() { return banqueAlertes().filter((a) => !alertConfirmedBy(a) && !invoiceOfAlert(a.mail)); }
+function importAlerte(a) {
+  if (invoiceOfAlert(a.mail)) return null;
+  const compte = alertCompte(a), cid = compte ? bankCompanyFor(compte) : clientCompanyId();
+  if (!cid) return null;
+  const acc = companyAccounts(cid)[0];
+  const op = { nature: a.sens === "credit" ? "VIR RECU" : /carte|paiement/i.test(a.sujet + " " + a.texte) ? "CARTE" : "PRELEVEMENT", detail: a.libelle, tiers: a.libelle, montant: alertSigned(a), _compte: compte, _titulaire: "" };
+  const rule = bankRuleFor(op);
+  if (rule.categoryName) ensureCategory(rule.categoryName, rule.nature || (op.montant >= 0 ? "produit" : "charge"));
+  const v = { id: uid(), title: bankOpLabel(op), reference: "", direction: op.montant >= 0 ? "recette" : "depense", status: "payee",
+    amount: Math.abs(op.montant), vatRate: 0, startDate: a.date, hasDueDate: false, dueDate: "", paymentDate: a.date,
+    companyId: cid, contactId: null, categoryName: rule.categoryName, payMode: "compte", accountId: acc ? acc.id : null, associateId: null,
+    receiptUrl: "", noReceipt: !!rule.noReceipt, bankAlertId: a.mail, bankCompte: compte, bankDetail: String(a.libelle || "").slice(0, 200), provisoire: true };
+  state.invoices.push(v);
+  return v;
+}
+function importAlertes(list) { let n = 0; list.forEach((a) => { if (importAlerte(a)) n++; }); if (n) save(); return n; }
+// Écriture provisoire correspondant à une opération de relevé qui arrive : même montant, date proche.
+function provisionalFor(op, compte) {
+  return state.invoices.find((v) => v.provisoire && !v.bankOpId && (!v.bankCompte || !compte || v.bankCompte === compte)
+    && Math.abs(v.amount - Math.abs(op.montant)) < 0.005 && (v.direction === "recette") === (op.montant >= 0) && daysBetween(v.paymentDate || v.startDate, op.date) <= ALERTE_JOURS) || null;
+}
 // Importe les opérations nouvelles d'un relevé (ni déjà importées, ni ignorées) en écritures payées.
 function importReleve(r) {
   const cid = bankCompanyFor(r.compte, r.titulaire);
@@ -4072,6 +4113,12 @@ function importReleve(r) {
     } else if (op.montant > 0) {
       const f = clientFactureForOp(full);
       if (f) { const v = importClientFacture(f).v; if (!v.bankOpId) markClientInvoicePaid(v, full); added++; return; }
+    }
+    const prov = provisionalFor(op, r.compte);
+    if (prov) {   // l'alerte l'avait annoncée : on rattache l'écriture provisoire à l'opération réelle
+      prov.bankOpId = op.id; prov.provisoire = false; prov.bankCompte = r.compte; prov.paymentDate = op.date; prov.startDate = op.date;
+      prov.title = bankOpLabel(full); prov.bankDetail = (op.detail || "").slice(0, 200);
+      added++; return;
     }
     const rule = bankRuleFor(full);
     if (rule.categoryName) ensureCategory(rule.categoryName, rule.nature || (op.montant >= 0 ? "produit" : "charge"));
@@ -4381,6 +4428,8 @@ function financeBanque() {
   const orphDel = orph.orphans.filter((v) => !v.receiptUrl).length;
   if (orphDel) alerts.push(`<button class="chip" data-bank-purge-orphans="${orphDel}" title="Écritures importées d'une ancienne lecture des relevés, dont l'opération n'existe plus">🧹 ${orphDel} écriture(s) d'une ancienne lecture à supprimer</button>`);
   if (sansJustif.length) alerts.push(`<button class="chip" data-banque-alert="justif">⚠️ ${sansJustif.length} opération(s) sans justificatif</button>`);
+  const provisoires = alertesProvisoires();
+  if (provisoires.length) alerts.push(`<button class="chip" data-banque-alert="alertes">⚡ ${provisoires.length} opération(s) signalée(s) par alerte, en attente de relevé</button>`);
   const pendingClients = clientFacturesPending();
   if (pendingClients.length) alerts.push(`<button class="chip" data-banque-alert="clients">📥 ${pendingClients.length} facture(s) client(s) à importer</button>`);
   if (sansPaiement.length) alerts.push(`<span class="chip">📄 ${sansPaiement.length} facture(s) sans paiement repéré</span>`);
@@ -4428,6 +4477,11 @@ function financeBanque() {
         <button class="btn secondary small" data-bank-toggle="${esc(r.fileId)}">${open ? "Replier" : "Voir"}</button></div>${body}</div>`;
   }).join("");
   const relevesBlock = releves.length ? `<div class="section-h">${icon("file-text")} Relevés</div>${relevesHtml}` : "";
+  // Opérations annoncées par les alertes bancaires (mails), pas encore sur un relevé
+  const nbAlertes = ((st && st.alertes) || []).length;
+  const alertesHtml = provisoires.length || nbAlertes ? `<div class="section-h" id="bank-alertes">⚡ Alertes bancaires <span class="muted">(${provisoires.length} opération(s) en attente de relevé)</span></div><div class="card" style="padding:8px 12px">
+      <div class="inline" style="gap:8px;flex-wrap:wrap;margin-bottom:4px"><span class="grow muted" style="font-size:13px">Les mails d'alerte de SG et du Crédit Mutuel sont lus par le script. Chaque opération annoncée est proposée ici tant que le relevé ne l'a pas confirmée ; importée, elle compte dans la trésorerie et se rattache d'elle-même à l'opération du relevé quand il arrive.</span>${provisoires.length ? `<button class="btn small" data-bank-alertes-import-all>Importer les ${provisoires.length} opérations</button>` : ""}</div>
+      ${provisoires.map((a) => `<div class="inline" style="padding:6px 0;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:12px;white-space:nowrap">${fmtDate(a.date)}</span><span class="grow" style="min-width:160px">${esc(a.libelle || a.sujet || "Opération")} <span class="muted" style="font-size:12px">· ${esc(a.banque || "?")}${a.compteFin ? " …" + esc(a.compteFin) : ""} · <a href="${esc(gmailMsgLink(a.mail))}" target="_blank" rel="noopener">mail</a></span></span><strong style="white-space:nowrap;color:${a.sens === "credit" ? "var(--positive)" : "inherit"}">${a.sens === "credit" ? "+" : "−"}${euros(a.montant)}</strong><button class="btn ghost small" data-bank-alerte-import="${esc(a.mail)}">Importer</button></div>`).join("") || `<div class="muted" style="font-size:13px;padding:6px 0">${nbAlertes} alerte(s) lue(s), toutes confirmées par un relevé ou déjà importées.</div>`}</div>` : "";
   // Factures clients lues sur le Drive et pas encore dans l'app
   const nbOld = clientsAll ? 0 : banqueFacturesClients().filter((f) => !state.invoices.some((v) => v.bankFactureId === f.fileId) && (f.client.date || f.date || "") < CLIENTS_DEPUIS).length;
   const clientsHtml = pendingClients.length || nbOld ? `<div class="section-h" id="bank-clients">${icon("euro")} Factures clients sur le Drive <span class="muted">(${pendingClients.length} à importer)</span></div><div class="card" style="padding:8px 12px">
@@ -4440,7 +4494,7 @@ function financeBanque() {
   // Règles
   const rulesHtml = `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer;font-size:13px">Règles de catégorisation (${state.bankRules.length})</summary><div class="card" style="margin-top:8px;padding:6px 12px">${state.bankRules.length ? state.bankRules.map((ru) => `<div class="inline" style="padding:4px 0;gap:8px"><span class="grow"><code>${esc(ru.motif)}</code> → ${esc(ru.categoryName || "—")}${ru.noReceipt ? ' <span class="muted" style="font-size:12px">(sans justificatif)</span>' : ""}</span><button class="btn ghost small" data-bank-rule-del="${ru.id}">✕</button></div>`).join("") : '<div class="muted" style="font-size:13px">Aucune règle personnelle. Choisis une catégorie sur une opération importée : la règle se crée toute seule.</div>'}<div class="muted" style="font-size:12px;margin-top:6px">Règles automatiques : emprunts, frais bancaires, URSSAF, TVA, impôts, retraite, assurances, télécom, énergie, déplacements, virements entre tes sociétés.</div></div></details>`;
   const manual = `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer;font-size:13px">Import manuel d'un fichier CSV ou OFX</summary><div style="margin-top:8px">${financeImport()}</div></details>`;
-  return head + comptesHtml + alertsHtml + clientsHtml + justifBlock(sansJustif) + relevesBlock + spHtml + rulesHtml + manual;
+  return head + comptesHtml + alertsHtml + alertesHtml + clientsHtml + justifBlock(sansJustif) + relevesBlock + spHtml + rulesHtml + manual;
 }
 function wireBanque(c) {
   const rf = c.querySelector("[data-banque-refresh]"); if (rf) rf.onclick = () => loadBanque(true);
@@ -4500,7 +4554,7 @@ function wireBanque(c) {
     const k = purgeBankOrphans(); toast(`${k} écriture(s) supprimée(s)`); render();
   };
   c.querySelectorAll("[data-banque-alert]").forEach((al) => al.onclick = () => {
-    if (al.dataset.banqueAlert === "clients") { const el = document.getElementById("bank-clients"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    if (al.dataset.banqueAlert === "clients" || al.dataset.banqueAlert === "alertes") { const el = document.getElementById(al.dataset.banqueAlert === "clients" ? "bank-clients" : "bank-alertes"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
     factureFilter.noReceipt = true; financeTab = "factures"; render();
   });
   const cAll = c.querySelector("[data-bank-clients-import-all]"); if (cAll) cAll.onclick = () => {
@@ -4511,6 +4565,8 @@ function wireBanque(c) {
     const f = banqueFacturesClients().find((x) => x.fileId === b.dataset.bankClientImport); if (!f) return;
     const r = importClientFactures([f]); toast(r.created ? "Facture client ajoutée" : "Facture client complétée"); render();
   });
+  const aAll = c.querySelector("[data-bank-alertes-import-all]"); if (aAll) aAll.onclick = () => { const n = importAlertes(alertesProvisoires()); toast(`${n} opération(s) provisoire(s) importée(s)`); render(); };
+  c.querySelectorAll("[data-bank-alerte-import]").forEach((b) => b.onclick = () => { const a = banqueAlertes().find((x) => x.mail === b.dataset.bankAlerteImport); if (a && importAlerte(a)) { save(); toast("Opération provisoire importée"); } render(); });
   const cOld = c.querySelector("[data-bank-clients-all]"); if (cOld) cOld.onclick = () => { clientsAll = true; render(); };
   c.querySelectorAll("[data-bank-facture-inv]").forEach((b) => b.onclick = () => {
     const f = banqueFactures().find((x) => x.fileId === b.dataset.bankFactureInv); if (!f) return;
