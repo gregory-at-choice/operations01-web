@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v108";
+const APP_VERSION = "v109";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -359,10 +359,9 @@ const sumAmount = (arr) => arr.reduce((t, v) => t + (v.amount || 0), 0);
 const SECTIONS = [
   { id: "search", label: "Recherche", ic: icon("search"), fn: renderSearch },
   { id: "relances", label: "Relances", ic: icon("mail"), fn: renderRelances },
-  { id: "atraiter", label: "À traiter", ic: icon("tray"), fn: renderATraiter },
+  { id: "atraiter", label: "À traiter", ic: icon("tray"), fn: renderATraiterHub },
   { id: "missions", label: "Projets", ic: icon("folder"), fn: renderMissions },
   { id: "tasks", label: "Tâches", ic: icon("check-circle"), fn: renderTasks },
-  { id: "actions", label: "Actions", ic: icon("ticket"), fn: renderActions },
   { id: "rendezvous", label: "Planning", ic: icon("calendar"), fn: renderPlanningHub },
   { id: "time", label: "Temps", ic: icon("clock"), fn: renderTime },
   { id: "finances", label: "Finances", ic: icon("euro"), fn: renderFinances },
@@ -376,9 +375,27 @@ let view = { section: HOME_SECTION, detailId: null };
 function go(section) {
   if (section === "planning") { section = "rendezvous"; if (planningTab === "rdv") planningTab = "grille"; }
   if (section === "dashboard") { section = "finances"; financeTab = "tableau"; }   // ancien « Tableau de bord » : celui des Finances
+  if (section === "actions") { section = "atraiter"; atTab = "actions"; }
   view = { section, detailId: null }; render();
 }
-function openDetail(section, id) { view = { section, detailId: id }; render(); }
+function openDetail(section, id) {
+  if (section === "actions") { section = "atraiter"; atTab = "actions"; id = "action:" + id; }   // les actions vivent dans « À traiter »
+  view = { section, detailId: id }; render();
+}
+// « À traiter » regroupe les messages classés par le Mac mini et les actions (documents ou informations à recevoir).
+let atTab = "messages";
+function renderATraiterHub() {
+  const did = String(view.detailId || "");
+  if (did.indexOf("action:") === 0) return renderActionDetail(did.slice(7));
+  if (view.detailId) return renderATraiter();
+  const nOpen = state.actions.filter((a) => !a.closed).length, nNew = eventsNew().length;
+  const chips = [["messages", `Messages${nNew ? ` <span class="kb-count">${nNew}</span>` : ""}`], ["actions", `Actions${nOpen ? ` <span class="kb-count">${nOpen}</span>` : ""}`]]
+    .map(([id, lbl]) => `<button class="chip ${atTab === id ? "active" : ""}" data-attab="${id}">${lbl}</button>`).join("");
+  const body = atTab === "actions"
+    ? renderActions().replace('<div class="page-title grow" style="margin:0">Actions</div>', '<span class="grow"></span>')
+    : renderATraiter().replace('<div class="page-title grow" style="margin:0">À traiter</div>', '<span class="grow"></span>');
+  return `<div class="page-title">À traiter</div><div class="chip-row" style="margin-bottom:12px">${chips}</div>${body}`;
+}
 
 // ----------------------------- Rendu -----------------------------
 function render() {
@@ -386,6 +403,7 @@ function render() {
   if (view.section === "pdftools") { view.section = "reader"; docTab = "outils"; }   // ancienne rubrique « Outils PDF »
   if (view.section === "planning") { view.section = "rendezvous"; if (planningTab === "rdv") planningTab = "grille"; }   // ancienne rubrique « Planning »
   if (view.section === "dashboard") { view.section = "finances"; financeTab = "tableau"; }
+  if (view.section === "actions") { view.section = "atraiter"; atTab = "actions"; if (view.detailId && String(view.detailId).indexOf("action:") !== 0) view.detailId = "action:" + view.detailId; }
   const sec = SECTIONS.find((s) => s.id === view.section) || SECTIONS.find((s) => s.id === HOME_SECTION);
   // Une erreur dans le dessin d'un écran ne doit jamais figer l'app : on l'affiche
   // (message + où), on la garde en mémoire (menu Plus → « Dernière erreur ») et
@@ -5455,7 +5473,7 @@ function renderActions() {
 }
 function renderActionDetail(id) {
   const a = state.actions.find((x) => x.id === id);
-  if (!a) { view.detailId = null; return renderActions(); }
+  if (!a) { view.detailId = null; return renderATraiterHub(); }
   const ctOpts = ['<option value="">— Saisie libre —</option>'].concat(
     state.contacts.map((c) => `<option value="${c.id}" ${c.id === a.contactId ? "selected" : ""}>${esc(contactName(c))}${c.email ? ` · ${esc(c.email)}` : ""}</option>`)
   ).join("");
@@ -6878,6 +6896,7 @@ function wire() {
   // Planning : ouvrir l'élément dans sa section
   c.querySelectorAll("[data-plan-open]").forEach((r) => r.onclick = () => { const sec = r.dataset.planOpen, id = r.dataset.planId; if (id) openDetail(sec, id); else go(sec); });
   c.querySelectorAll("[data-ptab]").forEach((b) => b.onclick = () => { planningTab = b.dataset.ptab; render(); });
+  c.querySelectorAll("[data-attab]").forEach((b) => b.onclick = () => { atTab = b.dataset.attab; render(); });
 
   // ---- Agenda Google -----------------------------------------------------
   if (calVisible() && !calBusy && window.DriveSync && DriveSync.isConnected()) loadCalendar(false);
