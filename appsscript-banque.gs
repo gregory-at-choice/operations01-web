@@ -235,6 +235,9 @@ function parcourir() {
         if (f.type === "export") {
           texte = texteDuFichier(f.fichier);
           var x0 = parserExport(texte, f.nom, f.compte);
+          if (f.banque) x0.banque = f.banque;
+          if (!x0.compte && x0.banque) { var cb = compteParBanque(data, x0.banque); if (cb) { x0.compte = cb; x0.ops.forEach(function (o) { o.id = o.id.replace(/^\?-/, cb + "-"); }); } }
+          if (!x0.compte) throw new Error("Compte introuvable pour cet export : nomme le sous-dossier avec le numéro de compte (ex. 00020909761).");
           x0.fileId = f.id; x0.nom = f.nom; x0.url = f.url; x0.mt = f.mt; x0.v = VERSION; x0.vr = VERSION_RELEVES; x0.nbOps = x0.ops.length;
           x0.texte = String(texte || "").slice(0, 30000);
           data.releves.push(x0);
@@ -303,28 +306,55 @@ function descripteur(f, type, dossier) {
 // numéro de compte, ex. « Exports banque/00020909761/ »). Lus comme des relevés provisoires : quand
 // le relevé PDF de la période arrive, les opérations qu'il confirme sont retirées de l'export.
 // ----------------------------------------------------------------------------
-var DOSSIER_EXPORTS = "Exports banque";
+var DOSSIER_EXPORTS = "Exports banque";                          // nom du dossier (si l'identifiant ci-dessous est vide)
+var DOSSIER_EXPORTS_ID = "1hNNUYzl1IGhtWmtQe26__TY3lJHKO8wI";      // identifiant Drive du dossier « Exports banque »
+// Sous-dossier « SocieteGenerale » ou « CreditMutuel » → banque ; un numéro de compte dans le nom
+// du dossier, du fichier ou du contenu l'emporte. Sans numéro, le compte est celui des relevés PDF de
+// cette banque (s'il n'y en a qu'un).
+function banqueDuNom(nom) { var n = sansAccents(nom).replace(/[^a-z]/g, ""); return /societegenerale|^sg$|sgpro/.test(n) ? "SG" : /creditmutuel|^cm$|cic/.test(n) ? "CM" : ""; }
 function listerExports() {
-  var out = [], it = DriveApp.getFoldersByName(DOSSIER_EXPORTS);
-  while (it.hasNext()) collecterExports(it.next(), null, 0, out);
+  var out = [];
+  if (DOSSIER_EXPORTS_ID) { try { collecterExports(DriveApp.getFolderById(DOSSIER_EXPORTS_ID), null, "", 0, out); return out; } catch (e) { Logger.log("Dossier des exports introuvable par identifiant : " + e); } }
+  var it = DriveApp.getFoldersByName(DOSSIER_EXPORTS);
+  while (it.hasNext()) collecterExports(it.next(), null, "", 0, out);
   return out;
 }
-function collecterExports(dossier, compte, prof, out) {
+function collecterExports(dossier, compte, banque, prof, out) {
   if (prof > 3 || dossier.isTrashed()) return;
   var m = /(\d{11})/.exec(dossier.getName()); if (m) compte = m[1];
+  banque = banqueDuNom(dossier.getName()) || banque;
   var fichiers = avecReprise(function () { var l = [], fs = dossier.getFiles(); while (fs.hasNext()) l.push(fs.next()); return l; }, "dossier " + dossier.getName());
   fichiers.forEach(function (f) {
-    if (f.isTrashed() || !/\.(csv|txt|tsv|ofx|qif)$/i.test(f.getName())) return;
-    var d = descripteur(f, "export", dossier.getName()); d.compte = compte; out.push(d);
+    if (f.isTrashed() || !/\.(csv|txt|tsv|ofx|qif|xls|xlsx)$/i.test(f.getName())) return;
+    var d = descripteur(f, "export", dossier.getName()); d.compte = compte; d.banque = banque; out.push(d);
   });
   var sous = avecReprise(function () { var l = [], it = dossier.getFolders(); while (it.hasNext()) l.push(it.next()); return l; }, "sous-dossiers de " + dossier.getName());
-  sous.forEach(function (sd) { collecterExports(sd, compte, prof + 1, out); });
+  sous.forEach(function (sd) { collecterExports(sd, compte, banque, prof + 1, out); });
+}
+// Compte d'un export sans numéro : l'unique compte des relevés PDF de la même banque.
+function compteParBanque(data, banque) {
+  var comptes = {};
+  (data.releves || []).forEach(function (r) { if (!r.csv && r.banque === banque && r.compte) comptes[r.compte] = true; });
+  var k = Object.keys(comptes); return k.length === 1 ? k[0] : null;
 }
 function texteDuFichier(fichier) {
+  if (/\.xlsx?$/i.test(fichier.getName())) return texteDuTableur(fichier);
   var blob = fichier.getBlob(), bytes = blob.getBytes(), t;
   try { t = Utilities.newBlob(bytes).getDataAsString("UTF-8"); } catch (e) { t = ""; }
   if (!t || /\uFFFD/.test(t)) { try { t = Utilities.newBlob(bytes).getDataAsString("ISO-8859-1"); } catch (e2) {} }
   return String(t || "").replace(/^\uFEFF/, "");
+}
+// Export Excel : converti en feuille Google le temps de le lire, puis rendu en CSV (« ; »).
+function texteDuTableur(fichier) {
+  var id = null;
+  try {
+    var nom = "tmp-operations01-" + fichier.getId();
+    if (typeof Drive !== "undefined" && Drive.Files && Drive.Files.create) id = Drive.Files.create({ name: nom, mimeType: "application/vnd.google-apps.spreadsheet" }, fichier.getBlob()).id;
+    else if (typeof Drive !== "undefined" && Drive.Files && Drive.Files.insert) id = Drive.Files.insert({ title: nom, mimeType: "application/vnd.google-apps.spreadsheet" }, fichier.getBlob()).id;
+    else throw new Error("Service « Drive API » non ajouté.");
+    var sh = SpreadsheetApp.openById(id).getSheets()[0], vals = sh.getDataRange().getValues();
+    return vals.map(function (row) { return row.map(function (v) { if (v instanceof Date) return Utilities.formatDate(v, "Europe/Paris", "dd/MM/yyyy"); if (typeof v === "number") return String(v).replace(".", ","); return String(v == null ? "" : v).replace(/;/g, ","); }).join(";"); }).join("\n");
+  } finally { if (id) { try { Drive.Files.remove(id); } catch (e) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e2) {} } } }
 }
 function csvSplit(l, sep) {
   var out = [], cur = "", q = false;

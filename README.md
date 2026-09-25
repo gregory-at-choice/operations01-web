@@ -108,9 +108,10 @@ reçoivent une lecture dédiée : numéro, client, date, échéance, HT, TVA, TT
 passe « payée » et l'écriture que ce virement avait créée est fusionnée. Une facture saisie à la main
 dont l'intitulé porte le numéro (« 25236 - Synthenova… ») est complétée, pas dupliquée.
 
-**Exports CSV / OFX (opérations de la semaine).** Crée sur le Drive un dossier « Exports banque »
-avec un sous-dossier par numéro de compte (ex. « 00020909761 »). Les fichiers CSV, OFX ou QIF
-téléchargés depuis l'espace SG ou CM et déposés là sont lus par le script comme des relevés
+**Exports CSV / OFX (opérations de la semaine).** Le dossier Drive « Exports banque »
+(`DOSSIER_EXPORTS_ID`) contient un sous-dossier par banque (« SocieteGenerale », « CreditMutuel »)
+ou par numéro de compte. Les fichiers CSV, OFX, QIF ou Excel téléchargés depuis l'espace SG ou CM et
+déposés là sont lus par le script comme des relevés
 **provisoires** : leurs opérations s'importent comme les autres, et quand le relevé PDF de la période
 arrive, celles qu'il confirme sont retirées de l'export et les écritures se rattachent au relevé.
 
