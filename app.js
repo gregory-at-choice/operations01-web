@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v107";
+const APP_VERSION = "v108";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1698,11 +1698,11 @@ function projectWeekSeconds(m) {
     return a + ((d && d >= start && d < end) ? entryElapsed(e) : 0);
   }, 0);
 }
-// Sections d'un projet : celles déclarées, puis celles rencontrées dans les tâches.
+// Sections d'un projet : celles déclarées et celles rencontrées dans les tâches, par ordre alphabétique.
 function projectSections(m) {
   const out = [...(m.sections || [])];
   projectTasks(m).forEach((t) => { const s = t.section || ""; if (s && out.indexOf(s) === -1) out.push(s); });
-  return out;
+  return out.sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base", numeric: true }));
 }
 const sortTasks = (ts) => [...ts].sort((a, b) => (taskDone(a) - taskDone(b))
   || (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31") || (a.createdAt || 0) - (b.createdAt || 0));
