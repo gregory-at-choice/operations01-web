@@ -119,6 +119,21 @@ ouvre l'aperçu, « Rapprocher » rattache le document à l'écriture. « Mails 
 recherche Gmail par le nom du tiers (Gmail ne retrouve pas un montant), chaque PDF étant relu
 dans le navigateur pour y vérifier le montant.
 
+## Pilotage (Finances)
+
+- **Tableau de bord** : CA du mois, résultat de l'exercice, trésorerie et prévision à 90 jours, à encaisser
+  et à payer (avec retards), TVA estimée du trimestre, budget, graphique produits / charges par mois.
+- **Compte de résultat** par exercice (année civile) ou par mois, comparé à la même période de l'exercice
+  précédent ; les catégories « hors résultat » sont listées à part.
+- **TVA** : par trimestre ou par mois, régime des encaissements (services) ou des débits (biens) ;
+  TVA collectée par taux, TVA déductible, TVA nette ou crédit, avec les lignes de la CA3. Les dépenses
+  sans taux renseigné (importées du relevé) sont signalées.
+- **À payer** : dépenses « à payer » triées par échéance ; sélection puis fichier de virement SEPA
+  (pain.001.001.03) à déposer sur l'espace bancaire, et passage en « payée ». L'IBAN débiteur se
+  renseigne sur le compte bancaire de la société (Groupe), l'IBAN du bénéficiaire sur le contact ou
+  sur la facture.
+- **Budget** : montant mensuel par catégorie, comparé au réel cumulé de l'exercice.
+
 ## Lire les mails dans l'app (Gmail, lecture seule)
 
 Sur la page d'un message « À traiter », la carte **Message complet** affiche le mail lui-même

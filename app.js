@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v99";
+const APP_VERSION = "v100";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], updatedAt: 0 };
 }
 function load() {
   try {
@@ -97,7 +97,7 @@ function adoptRemote(remote, why) {
 // distant qui ne fait que « revenir en arrière » (vieille copie poussée par un
 // appareil resté fermé) est reconnu à ses dates et ne fait rien perdre.
 const BASE_KEY = "operations01_base";
-const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders"];
+const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets"];
 const SYNC_NESTED = { missions: "entries" };
 const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "bankMap", "bankSkip"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
@@ -3206,6 +3206,7 @@ function renderContactDetail(id) {
       <label class="field"><span>Catégorie</span><select data-bind="contacts|${c.id}|category" data-rerender>${catOpts}</select></label>
       <label class="field"><span>Société</span>${companySelect(`contacts|${c.id}|companyId`, c.companyId)}</label>
       ${F("Email", "email", "email")}${F("Téléphone", "phone", "tel")}${F("Adresse", "address")}${F("LinkedIn", "linkedIn")}
+      ${F("IBAN (virements fournisseur)", "iban")}${F("BIC", "bic")}
       <label class="field"><span>Notes</span><textarea data-bind="contacts|${c.id}|notes">${esc(c.notes)}</textarea></label>
     </div>
     <div style="margin-top:18px"><button class="btn danger small" data-del-contact="${c.id}">Supprimer le contact</button></div>`;
@@ -3248,6 +3249,8 @@ function renderCompanyDetail(id) {
         <input class="grow" style="min-width:130px" data-accfield="name" data-acc="${a.id}" value="${esc(a.name)}" placeholder="Nom du compte (ex. BNP courant)"/>
         <input type="number" style="width:120px" data-accfield="initialBalance" data-acc="${a.id}" value="${a.initialBalance || 0}" title="Solde initial (€)"/>
         <input type="date" style="width:150px" data-accfield="balanceDate" data-acc="${a.id}" value="${esc((a.balanceDate || "").slice(0, 10) || todayISO())}" title="À la date du"/>
+        <input style="width:250px" data-accfield="iban" data-acc="${a.id}" value="${esc(a.iban || "")}" placeholder="IBAN (pour les virements SEPA)" title="IBAN"/>
+        <input style="width:110px" data-accfield="bic" data-acc="${a.id}" value="${esc(a.bic || "")}" placeholder="BIC" title="BIC"/>
         <span class="muted" style="font-size:13px;white-space:nowrap">${euros(accountBalance(a, new Date()))}</span>
         <button class="btn ghost small" data-del-acc="${a.id}">✕</button></div>`).join("") || '<div class="muted">Aucun compte bancaire.</div>'}
       <div style="margin-top:8px"><button class="btn secondary small" data-add-acc="${c.id}">+ Ajouter un compte</button></div>
@@ -3256,14 +3259,18 @@ function renderCompanyDetail(id) {
 }
 
 // ----------------------------- Finances -----------------------------
-let financeTab = "factures";
+let financeTab = "tableau";
 function renderFinances() {
   if (view.detailId) return renderInvoiceDetail(view.detailId);
-  const tabs = [["factures", "Factures"], ["cdr", "Compte de résultat"], ["tresorerie", "Trésorerie"], ["cca", "Compte courant d'associé"], ["salaires", "Salaires"], ["categories", "Catégories"], ["recurrences", "Récurrences"], ["banque", "Banque"]]
+  const tabs = [["tableau", "Tableau de bord"], ["factures", "Factures"], ["cdr", "Compte de résultat"], ["tva", "TVA"], ["apayer", "À payer"], ["budget", "Budget"], ["tresorerie", "Trésorerie"], ["cca", "Compte courant d'associé"], ["salaires", "Salaires"], ["categories", "Catégories"], ["recurrences", "Récurrences"], ["banque", "Banque"]]
     .map(([id, lbl]) => `<button class="chip ${financeTab === id ? "active" : ""}" data-ftab="${id}">${lbl}</button>`).join("");
   let body = "";
   if (financeTab === "factures") body = financeFactures();
+  else if (financeTab === "tableau") body = financeDashboard();
   else if (financeTab === "cdr") body = financeCDR();
+  else if (financeTab === "tva") body = financeTVA();
+  else if (financeTab === "apayer") body = financeAPayer();
+  else if (financeTab === "budget") body = financeBudget();
   else if (financeTab === "banque" || financeTab === "import") body = financeBanque();
   else if (financeTab === "categories") body = financeCategories();
   else if (financeTab === "recurrences") body = financeRecurrences();
@@ -3317,23 +3324,278 @@ function financeFactures() {
     <div class="muted" style="font-size:13px;margin:2px 0 8px">${items.length} facture(s) · Total HT ${euros(totalHT)}</div>
     <div class="list">${items.length ? rows : '<div class="center-empty">Aucune facture.</div>'}</div>`;
 }
+// ----------------------------- Pilotage : période, tableau de bord, TVA, à payer, budget -----------------------------
+// L'exercice est l'année civile. Une facture compte dans le mois de sa date ; pour la TVA et la
+// trésorerie, c'est la date d'encaissement / de paiement qui compte.
+const thisYear = () => new Date().getFullYear();
+let cdrPeriod = { year: thisYear(), month: 0 };   // month 0 = exercice entier ; year 0 = tout
+const invDay = (v) => String(v.startDate || "").slice(0, 10);
+const invPayDay = (v) => String(v.paymentDate || v.startDate || "").slice(0, 10);
+const inYearMonth = (day, y, m) => !y || (!!day && day.slice(0, 4) === String(y) && (!m || +day.slice(5, 7) === m));
+const MOIS_COURT = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+const MOIS_LONG_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+function fiscalYears() {
+  const ys = new Set(state.invoices.map((v) => invDay(v).slice(0, 4)).filter((x) => /^\d{4}$/.test(x)));
+  ys.add(String(thisYear()));
+  return [...ys].sort().reverse().map(Number);
+}
+function cdrLinesIn(nature, y, m) {
+  const map = {};
+  state.invoices.filter((v) => invNature(v) === nature && inYearMonth(invDay(v), y, m)).forEach((v) => { const k = v.categoryName || "À catégoriser"; map[k] = (map[k] || 0) + (v.amount || 0); });
+  return Object.entries(map).filter(([, val]) => val !== 0).sort((a, b) => b[1] - a[1]);
+}
+const sumLines = (arr) => arr.reduce((t, l) => t + l[1], 0);
+function monthlyPL(y) {
+  const out = [];
+  for (let m = 1; m <= 12; m++) {
+    let p = 0, c = 0;
+    state.invoices.forEach((v) => { if (!inYearMonth(invDay(v), y, m)) return; const n = invNature(v); if (n === "produit") p += v.amount || 0; else if (n === "charge") c += v.amount || 0; });
+    out.push({ m, produits: p, charges: c });
+  }
+  return out;
+}
+const periodLabel = (p) => !p.year ? "Toutes périodes" : p.month ? `${MOIS_LONG_FR[p.month - 1]} ${p.year}` : `Exercice ${p.year}`;
+function periodBar(p) {
+  const ys = fiscalYears();
+  return `<label class="md-ctl"><span>Exercice</span><select data-period-year style="width:auto"><option value="0" ${!p.year ? "selected" : ""}>Tout</option>${ys.map((y) => `<option value="${y}" ${p.year === y ? "selected" : ""}>${y}</option>`).join("")}</select></label>
+    <label class="md-ctl"><span>Mois</span><select data-period-month style="width:auto" ${!p.year ? "disabled" : ""}><option value="0">Exercice entier</option>${MOIS_LONG_FR.map((n, i) => `<option value="${i + 1}" ${p.month === i + 1 ? "selected" : ""}>${n}</option>`).join("")}</select></label>`;
+}
+// Graphique produits / charges par mois : barres fines groupées, deux séries, légende + valeurs au survol.
+const PL_COLORS = { produits: "#2a9d8f", charges: "#d98c2b" };
+function plChart(y) {
+  const data = monthlyPL(y);
+  const max = Math.max(1, ...data.map((d) => Math.max(d.produits, d.charges)));
+  const W = 720, H = 220, padL = 56, padB = 28, padT = 12, plotW = W - padL - 8, plotH = H - padT - padB;
+  const colW = plotW / 12, bw = Math.min(16, colW * 0.32);
+  const yv = (v) => padT + plotH - (v / max) * plotH;
+  const fmtK = (v) => v >= 1000 ? Math.round(v / 1000) + " k€" : Math.round(v) + " €";
+  const ticks = [0, 0.5, 1].map((f) => { const v = max * f; return `<line x1="${padL}" x2="${W - 8}" y1="${yv(v)}" y2="${yv(v)}" stroke="var(--line)" stroke-width="1"/><text x="${padL - 6}" y="${yv(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${fmtK(v)}</text>`; }).join("");
+  const bars = data.map((d, i) => {
+    const x0 = padL + i * colW + colW / 2;
+    const bar = (v, dx, color, name) => v > 0 ? `<rect x="${x0 + dx}" y="${yv(v)}" width="${bw}" height="${Math.max(2, padT + plotH - yv(v))}" rx="3" fill="${color}"><title>${name} ${MOIS_LONG_FR[i]} ${y || ""} : ${euros(v)}</title></rect>` : "";
+    return bar(d.produits, -bw - 1, PL_COLORS.produits, "Produits") + bar(d.charges, 1, PL_COLORS.charges, "Charges")
+      + `<text x="${x0}" y="${H - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${MOIS_COURT[i]}</text>`;
+  }).join("");
+  const legend = `<div class="pl-legend"><span><i style="background:${PL_COLORS.produits}"></i>Produits</span><span><i style="background:${PL_COLORS.charges}"></i>Charges</span><span class="muted">HT, par mois de facture · survole une barre pour le montant</span></div>`;
+  return `<div class="pl-chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Produits et charges par mois">${ticks}${bars}</svg>${legend}</div>`;
+}
+// ---- Compte de résultat par période, avec comparaison à la même période de l'exercice précédent ----
 function financeCDR() {
-  const lines = (nature) => {
-    const map = {};
-    state.invoices.filter((v) => invNature(v) === nature).forEach((v) => { const key = v.categoryName || "À catégoriser"; map[key] = (map[key] || 0) + (v.amount || 0); });
-    return Object.entries(map).filter(([, val]) => val !== 0).sort((a, b) => b[1] - a[1]);
-  };
-  const produits = lines("produit"), charges = lines("charge"), bilan = lines("bilan");
-  const totP = produits.reduce((t, l) => t + l[1], 0), totC = charges.reduce((t, l) => t + l[1], 0);
+  const p = cdrPeriod, y = p.year, m = p.month, prev = y ? y - 1 : 0;
+  const produits = cdrLinesIn("produit", y, m), charges = cdrLinesIn("charge", y, m), bilan = cdrLinesIn("bilan", y, m);
+  const totP = sumLines(produits), totC = sumLines(charges);
+  const prevMap = (nature) => { const o = {}; if (prev) cdrLinesIn(nature, prev, m).forEach((l) => o[l[0]] = l[1]); return o; };
+  const pP = prevMap("produit"), pC = prevMap("charge");
+  const totPP = Object.values(pP).reduce((t, v) => t + v, 0), totCP = Object.values(pC).reduce((t, v) => t + v, 0);
+  const delta = (a, b) => b ? `<span class="muted" style="font-size:12px;white-space:nowrap">${a - b >= 0 ? "+" : "−"}${Math.round(Math.abs(a - b) / b * 100)} %</span>` : "";
+  const line = (l, prevVal) => `<div class="inline" style="padding:4px 0;gap:10px"><span class="grow">${esc(l[0])}</span>${prev ? `<span class="muted" style="font-size:12px;min-width:90px;text-align:right">${prevVal != null ? euros(prevVal) : "—"}</span>` : ""}<span style="min-width:100px;text-align:right">${euros(l[1])}</span>${prev ? delta(l[1], prevVal) : ""}</div>`;
+  const head = (title) => `<div class="inline" style="padding:2px 0 6px;gap:10px;border-bottom:1px solid var(--line);font-size:12px" class="muted"><span class="grow muted">${title}</span>${prev ? `<span class="muted" style="min-width:90px;text-align:right">${m ? MOIS_COURT[m - 1] + " " : ""}${prev}</span>` : ""}<span class="muted" style="min-width:100px;text-align:right">${m ? MOIS_COURT[m - 1] + " " : ""}${y || "Tout"}</span>${prev ? `<span style="min-width:44px"></span>` : ""}</div>`;
+  const block = (title, arr, tot, prevTot, prevVals, color) => `<div class="section-h">${title}</div><div class="card">${head("Catégorie")}
+    ${arr.length ? arr.map((l) => line(l, prevVals[l[0]])).join("") : '<div class="muted" style="padding:6px 0">—</div>'}
+    <div class="inline" style="padding:6px 0;border-top:1px solid var(--line);margin-top:6px;gap:10px"><strong class="grow">Total ${title.toLowerCase()}</strong>${prev ? `<span class="muted" style="min-width:90px;text-align:right">${euros(prevTot)}</span>` : ""}<strong style="color:${color};min-width:100px;text-align:right">${euros(tot)}</strong>${prev ? delta(tot, prevTot) : ""}</div></div>`;
   const bilanHtml = bilan.length ? `<div class="section-h">Hors résultat <span class="muted">(mouvements de bilan, non comptés)</span></div><div class="card">${bilan.map((l) => `<div class="inline" style="padding:4px 0"><span class="grow">${esc(l[0])}</span><span class="muted">${euros(l[1])}</span></div>`).join("")}</div>` : "";
-  const expBar = `<div class="toolbar"><span class="grow"></span><button class="btn secondary small" data-export-cdr>${icon("file-text")} Exporter (PDF)</button></div>`;
-  const block = (title, arr, tot, color) => `<div class="section-h">${title}</div><div class="card">
-    ${arr.length ? arr.map((l) => `<div class="inline" style="padding:4px 0"><span class="grow">${esc(l[0])}</span><span class="muted">${euros(l[1])}</span></div>`).join("") : '<div class="muted">—</div>'}
-    <div class="inline" style="padding:6px 0;border-top:1px solid var(--line);margin-top:6px"><strong class="grow">Total ${title.toLowerCase()}</strong><strong style="color:${color}">${euros(tot)}</strong></div></div>`;
-  return `${expBar}${block("Produits", produits, totP, "var(--finance)")}${block("Charges", charges, totC, "var(--alert)")}
-    <div class="card" style="margin-top:12px"><div class="inline"><strong class="grow">Résultat à date</strong>
-      <strong style="color:${totP - totC >= 0 ? "var(--positive)" : "#d23c3c"};font-size:19px">${euros(totP - totC)}</strong></div>
-      <div class="muted" style="font-size:13px;margin-top:4px">Montants HT, toutes factures confondues. Les mouvements hors résultat (virements entre tes sociétés, remboursements de créances) n'entrent ni dans les produits ni dans les charges.</div></div>${bilanHtml}`;
+  const bar = `<div class="toolbar" style="flex-wrap:wrap;gap:8px">${periodBar(p)}<span class="grow"></span><button class="btn secondary small" data-export-cdr>${icon("file-text")} Exporter (PDF)</button></div>`;
+  const res = totP - totC, resP = totPP - totCP;
+  return `${bar}${y ? plChart(y) : ""}
+    <div class="card" style="margin-top:12px"><div class="inline" style="gap:10px"><strong class="grow">Résultat · ${esc(periodLabel(p))}</strong>${prev ? `<span class="muted" style="min-width:90px;text-align:right">${euros(resP)}</span>` : ""}
+      <strong style="color:${res >= 0 ? "var(--positive)" : "#d23c3c"};font-size:19px;min-width:100px;text-align:right">${euros(res)}</strong>${prev ? delta(res, resP) : ""}</div>
+      <div class="muted" style="font-size:13px;margin-top:4px">Montants HT, par date de facture. ${prev ? `Colonne de gauche : même période de ${prev}.` : ""} Les mouvements hors résultat (virements entre tes sociétés, remboursements de créances) n'entrent ni dans les produits ni dans les charges.</div></div>
+    ${block("Produits", produits, totP, totPP, pP, "var(--finance)")}${block("Charges", charges, totC, totCP, pC, "var(--alert)")}${bilanHtml}`;
+}
+// ---- TVA : collectée, déductible, à décaisser, par mois ou trimestre, régime des encaissements ou des débits ----
+let tvaPeriod = { year: thisYear(), mode: "trimestre", index: Math.floor(new Date().getMonth() / 3) + 1, regime: "encaissements" };
+function tvaRange(p) {
+  const y = p.year, pad = (n) => String(n).padStart(2, "0");
+  if (p.mode === "mois") { const last = new Date(y, p.index, 0).getDate(); return { from: `${y}-${pad(p.index)}-01`, to: `${y}-${pad(p.index)}-${pad(last)}` }; }
+  const m0 = (p.index - 1) * 3 + 1, m1 = m0 + 2, last = new Date(y, m1, 0).getDate();
+  return { from: `${y}-${pad(m0)}-01`, to: `${y}-${pad(m1)}-${pad(last)}` };
+}
+const tvaLabel = (p) => p.mode === "mois" ? `${MOIS_LONG_FR[p.index - 1]} ${p.year}` : `${p.index}${p.index === 1 ? "er" : "e"} trimestre ${p.year}`;
+function tvaCompute(p) {
+  const { from, to } = tvaRange(p), inR = (d) => d >= from && d <= to;
+  const enc = p.regime === "encaissements";
+  const collectee = {}, rows = [];
+  let deductible = 0, baseDed = 0, sansTva = 0, sansTvaMontant = 0;
+  state.invoices.forEach((v) => {
+    if (invNature(v) === "bilan") return;
+    const rate = Number(v.vatRate) || 0, base = v.amount || 0, tva = Math.round(base * rate) / 100;
+    if (v.direction === "recette") {
+      const ok = enc ? (v.status === "payee" && inR(invPayDay(v))) : ((v.status === "emise" || v.status === "payee") && inR(invDay(v)));
+      if (!ok) return;
+      const k = String(rate); collectee[k] = collectee[k] || { rate, base: 0, tva: 0 }; collectee[k].base += base; collectee[k].tva += tva;
+      rows.push({ v, side: "collectee", base, tva, rate });
+    } else {
+      const ok = enc ? (v.status === "payee" && inR(invPayDay(v))) : (v.status !== "aEmettre" && inR(invDay(v)));
+      if (!ok) return;
+      if (!rate) { sansTva++; sansTvaMontant += base; return; }
+      deductible += tva; baseDed += base;
+      rows.push({ v, side: "deductible", base, tva, rate });
+    }
+  });
+  const totCollectee = Object.values(collectee).reduce((t, c) => t + c.tva, 0);
+  return { from, to, collectee: Object.values(collectee).sort((a, b) => b.rate - a.rate), totCollectee, deductible, baseDed, net: totCollectee - deductible, sansTva, sansTvaMontant, rows };
+}
+function financeTVA() {
+  const p = tvaPeriod, r = tvaCompute(p);
+  const ys = fiscalYears();
+  const idxOpts = p.mode === "mois" ? MOIS_LONG_FR.map((n, i) => `<option value="${i + 1}" ${p.index === i + 1 ? "selected" : ""}>${n}</option>`).join("") : [1, 2, 3, 4].map((q) => `<option value="${q}" ${p.index === q ? "selected" : ""}>${q}${q === 1 ? "er" : "e"} trimestre</option>`).join("");
+  const bar = `<div class="toolbar" style="flex-wrap:wrap;gap:8px">
+      <label class="md-ctl"><span>Exercice</span><select data-tva="year" style="width:auto">${ys.map((y) => `<option value="${y}" ${p.year === y ? "selected" : ""}>${y}</option>`).join("")}</select></label>
+      <label class="md-ctl"><span>Période</span><select data-tva="mode" style="width:auto"><option value="trimestre" ${p.mode === "trimestre" ? "selected" : ""}>Trimestre</option><option value="mois" ${p.mode === "mois" ? "selected" : ""}>Mois</option></select></label>
+      <label class="md-ctl"><span>&nbsp;</span><select data-tva="index" style="width:auto">${idxOpts}</select></label>
+      <label class="md-ctl"><span>Régime</span><select data-tva="regime" style="width:auto"><option value="encaissements" ${p.regime === "encaissements" ? "selected" : ""}>Encaissements (services)</option><option value="debits" ${p.regime === "debits" ? "selected" : ""}>Débits (biens)</option></select></label>
+      <span class="grow"></span><button class="btn secondary small" data-export-tva>${icon("file-text")} Exporter (PDF)</button></div>`;
+  const li = (label, val, strong, ligne) => `<div class="inline" style="padding:5px 0;gap:10px"><span class="grow">${label}${ligne ? ` <span class="muted" style="font-size:12px">· CA3 ligne ${ligne}</span>` : ""}</span>${strong ? `<strong>${euros(val)}</strong>` : `<span>${euros(val)}</span>`}</div>`;
+  const coll = r.collectee.length ? r.collectee.map((c) => li(`Base HT à ${c.rate} %${c.rate ? "" : " <span class=\"muted\" style=\"font-size:12px\">(taux non renseigné ou exonéré)</span>"}`, c.base, false, c.rate === 20 ? "A1 (base) · 08 (taxe)" : c.rate === 10 ? "A1 · 9B" : c.rate === 5.5 ? "A1 · 09" : "") + (c.rate ? li(`TVA collectée à ${c.rate} %`, c.tva, false) : "")).join("") : '<div class="muted" style="padding:6px 0">Aucune recette sur la période.</div>';
+  const netLabel = r.net >= 0 ? "TVA nette à décaisser" : "Crédit de TVA";
+  const detail = r.rows.length ? `<details style="margin-top:12px"><summary class="muted" style="cursor:pointer;font-size:13px">Détail des ${r.rows.length} facture(s) retenue(s)</summary><div class="card" style="margin-top:8px;padding:6px 12px">${r.rows.sort((a, b) => (invPayDay(a.v) || "").localeCompare(invPayDay(b.v) || "")).map((x) => `<div class="inline" style="padding:4px 0;gap:10px;font-size:13px"><span class="muted" style="white-space:nowrap">${fmtDate(p.regime === "encaissements" ? invPayDay(x.v) : invDay(x.v))}</span><span class="grow"><a href="#" data-open-invoice="${x.v.id}">${esc(x.v.title || "Facture")}</a></span><span class="muted">${x.side === "collectee" ? "collectée" : "déductible"} ${x.rate} %</span><span style="white-space:nowrap">${euros(x.base)} HT</span><strong style="white-space:nowrap;min-width:90px;text-align:right">${euros(x.tva)}</strong></div>`).join("")}</div></details>` : "";
+  return `${bar}
+    <div class="card"><div style="font-weight:600;margin-bottom:6px">${esc(tvaLabel(p))} · du ${fmtDate(r.from)} au ${fmtDate(r.to)}</div>
+      <div class="muted" style="font-size:13px">${p.regime === "encaissements" ? "Régime des encaissements : la TVA est due sur les factures encaissées dans la période (prestations de services)." : "Régime des débits : la TVA est due sur les factures émises dans la période (ventes de biens)."} La TVA déductible est prise sur les dépenses ${p.regime === "encaissements" ? "payées" : "datées"} de la période dont le taux est renseigné.</div></div>
+    <div class="section-h">TVA collectée</div><div class="card">${coll}<div class="inline" style="padding:6px 0;border-top:1px solid var(--line);margin-top:6px"><strong class="grow">Total TVA collectée</strong><strong>${euros(r.totCollectee)}</strong></div></div>
+    <div class="section-h">TVA déductible</div><div class="card">${li("Base HT des achats et services", r.baseDed)}${li("TVA déductible", r.deductible, true, "20")}
+      ${r.sansTva ? `<div class="muted" style="font-size:12px;margin-top:6px">${r.sansTva} dépense(s) pour ${euros(r.sansTvaMontant)} sans taux de TVA renseigné (importées du relevé) : ouvre-les et indique le taux pour récupérer leur TVA.</div>` : ""}</div>
+    <div class="card" style="margin-top:12px"><div class="inline"><strong class="grow">${netLabel} <span class="muted" style="font-size:12px">· CA3 ligne ${r.net >= 0 ? "28" : "25"}</span></strong><strong style="font-size:19px;color:${r.net >= 0 ? "#d23c3c" : "var(--positive)"}">${euros(Math.abs(r.net))}</strong></div>
+      <div class="muted" style="font-size:13px;margin-top:4px">À reporter sur impots.gouv, déclaration CA3 de la période. Les lignes indiquées sont celles du formulaire 3310-CA3.</div></div>${detail}`;
+}
+function reportTVA() {
+  const p = tvaPeriod, r = tvaCompute(p);
+  const row = (l, v, tot) => `<tr${tot ? ' class="rep-total"' : ""}><td>${l}</td><td class="num">${repNum(v)}</td></tr>`;
+  return `<div class="rep-section">${esc(tvaLabel(p))} · du ${fmtDate(r.from)} au ${fmtDate(r.to)} · régime des ${p.regime}</div>
+    <table class="rep-table"><thead><tr><th>TVA collectée</th><th class="num">Montant</th></tr></thead><tbody>${r.collectee.map((c) => row(`Base HT à ${c.rate} %`, c.base) + row(`TVA à ${c.rate} %`, c.tva)).join("")}${row("Total TVA collectée", r.totCollectee, true)}</tbody></table>
+    <table class="rep-table"><thead><tr><th>TVA déductible</th><th class="num">Montant</th></tr></thead><tbody>${row("Base HT", r.baseDed)}${row("TVA déductible", r.deductible, true)}</tbody></table>
+    <table class="rep-table"><tbody>${row(r.net >= 0 ? "TVA nette à décaisser (ligne 28)" : "Crédit de TVA (ligne 25)", Math.abs(r.net), true)}</tbody></table>`;
+}
+// ---- Fournisseurs à payer : échéancier, sélection, virement SEPA (pain.001) ----
+const invoicesAPayer = () => depenses().filter((v) => v.status === "aPayer").sort((a, b) => (a.dueDate || a.startDate || "").localeCompare(b.dueDate || b.startDate || ""));
+const daysLate = (v) => { const d = v.dueDate || v.startDate; if (!d) return 0; return Math.floor((new Date() - new Date(d + "T12:00:00")) / 86400000); };
+const cleanIban = (s) => String(s || "").replace(/\s+/g, "").toUpperCase();
+const ibanOk = (s) => /^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(cleanIban(s));
+function creditorOf(v) {
+  const ct = v.contactId ? state.contacts.find((c) => c.id === v.contactId) : null;
+  return { name: (ct && (ct.organization || contactName(ct))) || v.title || "Bénéficiaire", iban: cleanIban(v.creditorIban || (ct && ct.iban) || ""), bic: cleanIban(v.creditorBic || (ct && ct.bic) || "") };
+}
+const paySel = {};
+let sepaAccount = "";
+function financeAPayer() {
+  const list = invoicesAPayer();
+  const accs = state.accounts.filter((a) => ibanOk(a.iban));
+  if (!sepaAccount && accs[0]) sepaAccount = accs[0].id;
+  const total = list.reduce((t, v) => t + invTTC(v), 0), late = list.filter((v) => daysLate(v) > 0);
+  const sel = list.filter((v) => paySel[v.id]);
+  const rows = list.map((v) => {
+    const cr = creditorOf(v), dl = daysLate(v);
+    return `<div class="inline" style="padding:7px 0;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--line)">
+      <input type="checkbox" data-pay-sel="${v.id}" ${paySel[v.id] ? "checked" : ""} ${ibanOk(cr.iban) ? "" : "disabled title=\"IBAN du bénéficiaire manquant\""}/>
+      <span class="muted" style="font-size:12px;white-space:nowrap;min-width:84px">${v.dueDate ? fmtDate(v.dueDate) : "sans échéance"}</span>
+      <span class="grow" style="min-width:160px"><a href="#" data-open-invoice="${v.id}">${esc(v.title || "Facture")}</a> <span class="muted" style="font-size:12px">· ${esc(cr.name)}${ibanOk(cr.iban) ? "" : ' · <span style="color:#d23c3c">IBAN manquant</span>'}</span></span>
+      ${dl > 0 ? `<span class="badge aPayer" style="background:#fde8e8;color:#b42318">retard ${dl} j</span>` : dl > -8 ? `<span class="badge aPayer">échéance proche</span>` : ""}
+      <strong style="white-space:nowrap">${euros(invTTC(v))}</strong>
+      <button class="btn ghost small" data-pay-done="${v.id}" title="Marquer payée aujourd'hui">Payée</button></div>`;
+  }).join("");
+  const accOpts = accs.map((a) => `<option value="${a.id}" ${a.id === sepaAccount ? "selected" : ""}>${esc(a.name || "Compte")} · ${esc(companyName(a.companyId))}</option>`).join("");
+  return `<div class="card" style="margin-bottom:12px"><div class="inline" style="flex-wrap:wrap;gap:8px"><div class="grow"><div style="font-weight:600">${list.length} facture(s) à payer · ${euros(total)} TTC</div>
+      <div class="muted" style="font-size:13px">${late.length ? `${late.length} en retard pour ${euros(late.reduce((t, v) => t + invTTC(v), 0))}.` : "Aucun retard."} Coche des factures puis génère le fichier de virement SEPA à déposer sur ton espace bancaire (SG : Virements → Import de fichier ; CM : Virements → Remise de fichier).</div></div>
+      ${accs.length ? `<label class="md-ctl"><span>Compte débiteur</span><select data-sepa-acc style="width:auto">${accOpts}</select></label>` : `<span class="muted" style="font-size:12px">Renseigne l'IBAN d'un compte dans Groupe → ta société → Comptes bancaires pour générer des virements.</span>`}
+      <button class="btn small" data-sepa-gen ${sel.length && accs.length ? "" : "disabled"}>Virement SEPA (${sel.length}) · ${euros(sel.reduce((t, v) => t + invTTC(v), 0))}</button></div></div>
+    <div class="card" style="padding:4px 12px">${rows || '<div class="muted" style="padding:8px 0">Aucune facture à payer. Une dépense passe ici quand son statut est « À payer ».</div>'}</div>`;
+}
+const sepaText = (s, max) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9 \/\-?:().,'+]/g, " ").replace(/\s+/g, " ").trim().slice(0, max || 70) || "-";
+function sepaXml(debtor, items, execDate) {
+  const now = new Date(), msgId = "CHOICE-" + now.toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const total = items.reduce((t, v) => t + invTTC(v), 0).toFixed(2);
+  const tx = items.map((v, i) => { const cr = creditorOf(v); return `
+      <CdtTrfTxInf><PmtId><EndToEndId>${sepaText((v.reference || v.title || "FACT") + "-" + (i + 1), 35)}</EndToEndId></PmtId>
+        <Amt><InstdAmt Ccy="EUR">${invTTC(v).toFixed(2)}</InstdAmt></Amt>${cr.bic ? `<CdtrAgt><FinInstnId><BIC>${cr.bic}</BIC></FinInstnId></CdtrAgt>` : ""}
+        <Cdtr><Nm>${sepaText(cr.name)}</Nm></Cdtr><CdtrAcct><Id><IBAN>${cr.iban}</IBAN></Id></CdtrAcct>
+        <RmtInf><Ustrd>${sepaText(v.reference ? `${v.reference} ${v.title || ""}` : v.title, 140)}</Ustrd></RmtInf></CdtTrfTxInf>`; }).join("");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.03" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <CstmrCdtTrfInitn>
+    <GrpHdr><MsgId>${msgId}</MsgId><CreDtTm>${now.toISOString().slice(0, 19)}</CreDtTm><NbOfTxs>${items.length}</NbOfTxs><CtrlSum>${total}</CtrlSum><InitgPty><Nm>${sepaText(debtor.name)}</Nm></InitgPty></GrpHdr>
+    <PmtInf><PmtInfId>${msgId}-1</PmtInfId><PmtMtd>TRF</PmtMtd><BtchBookg>false</BtchBookg><NbOfTxs>${items.length}</NbOfTxs><CtrlSum>${total}</CtrlSum>
+      <PmtTpInf><SvcLvl><Cd>SEPA</Cd></SvcLvl></PmtTpInf><ReqdExctnDt>${execDate}</ReqdExctnDt>
+      <Dbtr><Nm>${sepaText(debtor.name)}</Nm></Dbtr><DbtrAcct><Id><IBAN>${cleanIban(debtor.iban)}</IBAN></Id></DbtrAcct>
+      <DbtrAgt><FinInstnId>${debtor.bic ? `<BIC>${cleanIban(debtor.bic)}</BIC>` : "<Othr><Id>NOTPROVIDED</Id></Othr>"}</FinInstnId></DbtrAgt><ChrgBr>SLEV</ChrgBr>${tx}
+    </PmtInf>
+  </CstmrCdtTrfInitn>
+</Document>
+`;
+}
+function generateSepa() {
+  const acc = state.accounts.find((a) => a.id === sepaAccount); if (!acc || !ibanOk(acc.iban)) { alert("Choisis un compte débiteur avec un IBAN valide."); return null; }
+  const items = invoicesAPayer().filter((v) => paySel[v.id] && ibanOk(creditorOf(v).iban)); if (!items.length) return null;
+  const debtor = { name: acc.holder || companyName(acc.companyId) || acc.name, iban: acc.iban, bic: acc.bic };
+  const exec = todayISO();
+  const xml = sepaXml(debtor, items, exec);
+  downloadFile(`virements-${exec}.xml`, xml, "application/xml");
+  return { items, xml };
+}
+// ---- Budget : montant mensuel par catégorie, comparé au réel de l'exercice ----
+let budgetYear = thisYear();
+const budgetOf = (cat, y) => state.budgets.find((b) => b.categoryName === cat && b.year === y);
+function setBudget(cat, y, monthly) {
+  let b = budgetOf(cat, y);
+  if (!b) { b = { id: uid(), categoryName: cat, year: y, monthly: 0 }; state.budgets.push(b); }
+  b.monthly = Number(monthly) || 0; b.updatedAt = Date.now();
+  save();
+}
+function realOf(cat, y, m) { return state.invoices.filter((v) => (v.categoryName || "À catégoriser") === cat && inYearMonth(invDay(v), y, m) && invNature(v) !== "bilan").reduce((t, v) => t + (v.amount || 0), 0); }
+function budgetMonths(y) { const now = new Date(); return y < now.getFullYear() ? 12 : y > now.getFullYear() ? 0 : now.getMonth() + 1; }
+function budgetRows(y, nature) {
+  const names = new Set(state.categories.filter((c) => (c.nature || "charge") === nature).map((c) => c.name));
+  state.invoices.forEach((v) => { if (invNature(v) === nature && inYearMonth(invDay(v), y, 0)) names.add(v.categoryName || "À catégoriser"); });
+  const n = budgetMonths(y), cur = new Date().getMonth() + 1;
+  return [...names].sort((a, b) => a.localeCompare(b, "fr")).map((cat) => {
+    const b = budgetOf(cat, y), monthly = b ? b.monthly : 0;
+    return { cat, monthly, budgetToDate: monthly * n, real: realOf(cat, y, 0), realMonth: y === thisYear() ? realOf(cat, y, cur) : 0 };
+  }).filter((r) => r.monthly || r.real);
+}
+function financeBudget() {
+  const y = budgetYear, ys = fiscalYears(), n = budgetMonths(y);
+  const block = (nature, title, color) => {
+    const rows = budgetRows(y, nature);
+    const tot = rows.reduce((t, r) => ({ b: t.b + r.budgetToDate, r: t.r + r.real, m: t.m + r.realMonth }), { b: 0, r: 0, m: 0 });
+    const ecart = (r) => { const e = r.real - r.budgetToDate; if (!r.monthly) return '<span class="muted">—</span>'; const bad = nature === "charge" ? e > 0 : e < 0; return `<span style="color:${bad ? "#d23c3c" : "var(--positive)"};white-space:nowrap">${e >= 0 ? "+" : "−"}${euros(Math.abs(e))}</span>`; };
+    return `<div class="section-h">${title}</div><div class="card" style="padding:6px 12px;overflow-x:auto">
+      <div class="inline budget-row muted" style="font-size:12px;gap:10px"><span class="grow">Catégorie</span><span style="width:110px">Budget / mois</span><span style="width:100px;text-align:right">Ce mois</span><span style="width:110px;text-align:right">Budget à date</span><span style="width:110px;text-align:right">Réel à date</span><span style="width:110px;text-align:right">Écart</span></div>
+      ${rows.map((r) => `<div class="inline budget-row" style="gap:10px;padding:5px 0"><span class="grow">${esc(r.cat)}</span><input type="number" step="10" data-budget="${esc(r.cat)}" value="${r.monthly || ""}" placeholder="0" style="width:110px"/><span style="width:100px;text-align:right" class="muted">${euros(r.realMonth)}</span><span style="width:110px;text-align:right" class="muted">${euros(r.budgetToDate)}</span><span style="width:110px;text-align:right">${euros(r.real)}</span><span style="width:110px;text-align:right">${ecart(r)}</span></div>`).join("") || '<div class="muted" style="padding:8px 0">Aucune catégorie.</div>'}
+      <div class="inline budget-row" style="gap:10px;padding:6px 0;border-top:1px solid var(--line);margin-top:4px;font-weight:600"><span class="grow">Total ${title.toLowerCase()}</span><span style="width:110px"></span><span style="width:100px;text-align:right">${euros(tot.m)}</span><span style="width:110px;text-align:right">${euros(tot.b)}</span><span style="width:110px;text-align:right;color:${color}">${euros(tot.r)}</span><span style="width:110px;text-align:right">${tot.b ? (nature === "charge" ? (tot.r - tot.b > 0 ? '<span style="color:#d23c3c">' : '<span style="color:var(--positive)">') : (tot.r - tot.b < 0 ? '<span style="color:#d23c3c">' : '<span style="color:var(--positive)">')) + (tot.r - tot.b >= 0 ? "+" : "−") + euros(Math.abs(tot.r - tot.b)) + "</span>" : "—"}</span></div></div>`;
+  };
+  return `<div class="toolbar" style="flex-wrap:wrap;gap:8px"><label class="md-ctl"><span>Exercice</span><select data-budget-year style="width:auto">${ys.map((x) => `<option value="${x}" ${x === y ? "selected" : ""}>${x}</option>`).join("")}</select></label><span class="grow muted" style="font-size:13px">Saisis un budget mensuel par catégorie : l'app le compare au réel, cumulé sur les ${n} mois écoulés de l'exercice.</span></div>
+    ${block("charge", "Charges", "var(--alert)")}${block("produit", "Produits", "var(--finance)")}`;
+}
+// ---- Tableau de bord ----
+function financeDashboard() {
+  const now = new Date(), y = now.getFullYear(), m = now.getMonth() + 1, today = todayISO();
+  const caMois = sumLines(cdrLinesIn("produit", y, m)), chMois = sumLines(cdrLinesIn("charge", y, m));
+  const caAn = sumLines(cdrLinesIn("produit", y, 0)), chAn = sumLines(cdrLinesIn("charge", y, 0));
+  const encaisseMois = recettes().filter((v) => v.status === "payee" && inYearMonth(invPayDay(v), y, m)).reduce((t, v) => t + (v.amount || 0), 0);
+  const aEncaisser = recettes().filter((v) => v.status === "emise");
+  const aEncTot = aEncaisser.reduce((t, v) => t + invTTC(v), 0), aEncLate = aEncaisser.filter((v) => v.dueDate && v.dueDate < today);
+  const aPayer = invoicesAPayer(), aPayTot = aPayer.reduce((t, v) => t + invTTC(v), 0), aPayLate = aPayer.filter((v) => daysLate(v) > 0);
+  const treso = treasuryNow(now), treso90 = treasuryProjected(now, 90);
+  const tva = tvaCompute({ year: y, mode: "trimestre", index: Math.floor(now.getMonth() / 3) + 1, regime: tvaPeriod.regime });
+  const bRows = budgetRows(y, "charge").filter((r) => r.monthly), bBud = bRows.reduce((t, r) => t + r.budgetToDate, 0), bReal = bRows.reduce((t, r) => t + r.real, 0);
+  const tile = (label, val, sub, tab, color) => `<button class="kpi" data-ftab="${tab}"><span class="kpi-label">${label}</span><span class="kpi-val" style="${color ? "color:" + color : ""}">${val}</span><span class="kpi-sub muted">${sub || ""}</span></button>`;
+  const top = cdrLinesIn("charge", y, 0).slice(0, 5);
+  const upcoming = (arr, dateOf) => arr.slice(0, 5).map((v) => `<div class="inline" style="padding:4px 0;gap:10px;font-size:13px"><span class="muted" style="white-space:nowrap">${dateOf(v) ? fmtDate(dateOf(v)) : "—"}</span><span class="grow"><a href="#" data-open-invoice="${v.id}">${esc(v.title || "Facture")}</a></span><strong style="white-space:nowrap">${euros(invTTC(v))}</strong></div>`).join("") || '<div class="muted" style="font-size:13px;padding:4px 0">Rien en attente.</div>';
+  return `<div class="kpi-grid">
+      ${tile("CA du mois (HT)", euros(caMois), `${MOIS_LONG_FR[m - 1]} · encaissé ${euros(encaisseMois)}`, "cdr")}
+      ${tile(`Résultat ${y} à date`, euros(caAn - chAn), `${euros(caAn)} de produits · ${euros(chAn)} de charges`, "cdr", caAn - chAn >= 0 ? "var(--positive)" : "#d23c3c")}
+      ${tile("Trésorerie", euros(treso), `à 90 jours : ${euros(treso90)}`, "tresorerie", treso >= 0 ? "" : "#d23c3c")}
+      ${tile("À encaisser", euros(aEncTot), `${aEncaisser.length} facture(s)${aEncLate.length ? ` · ${aEncLate.length} en retard` : ""}`, "factures", aEncLate.length ? "#d23c3c" : "")}
+      ${tile("À payer", euros(aPayTot), `${aPayer.length} facture(s)${aPayLate.length ? ` · ${aPayLate.length} en retard` : ""}`, "apayer", aPayLate.length ? "#d23c3c" : "")}
+      ${tile("TVA du trimestre", euros(Math.abs(tva.net)), tva.net >= 0 ? "à décaisser (estimation)" : "crédit de TVA (estimation)", "tva")}
+      ${bRows.length ? tile("Budget charges", euros(bReal), `budget à date ${euros(bBud)} · ${bReal - bBud > 0 ? "dépassé de " + euros(bReal - bBud) : "marge " + euros(bBud - bReal)}`, "budget", bReal - bBud > 0 ? "#d23c3c" : "var(--positive)") : tile("Budget", "—", "définis un budget par catégorie", "budget")}
+      ${tile(`Charges ${y} du mois`, euros(chMois), MOIS_LONG_FR[m - 1], "cdr")}
+    </div>
+    ${plChart(y)}
+    <div class="dash-cols">
+      <div><div class="section-h">Prochains encaissements</div><div class="card" style="padding:6px 12px">${upcoming(aEncaisser.sort((a, b) => (a.dueDate || a.startDate || "").localeCompare(b.dueDate || b.startDate || "")), (v) => v.dueDate || v.startDate)}</div></div>
+      <div><div class="section-h">Prochains paiements</div><div class="card" style="padding:6px 12px">${upcoming(aPayer, (v) => v.dueDate || v.startDate)}</div></div>
+      <div><div class="section-h">Principales charges ${y}</div><div class="card" style="padding:6px 12px">${top.map((l) => `<div class="inline" style="padding:4px 0;font-size:13px"><span class="grow">${esc(l[0])}</span><strong>${euros(l[1])}</strong></div>`).join("") || '<div class="muted" style="font-size:13px;padding:4px 0">—</div>'}</div></div>
+    </div>`;
 }
 function financeTresorerie() {
   const now = new Date();
@@ -3372,6 +3634,7 @@ function renderInvoiceDetail(id) {
       <label class="field"><span>Date</span><input type="date" data-bind="invoices|${v.id}|startDate" value="${esc((v.startDate || "").slice(0, 10) || todayISO())}"/></label>
       <label class="field"><span>Échéance</span><input type="date" data-bind="invoices|${v.id}|dueDate" value="${esc((v.dueDate || "").slice(0, 10))}"/></label>
       <label class="field"><span>Payée le</span><input type="date" data-bind="invoices|${v.id}|paymentDate" value="${esc((v.paymentDate || "").slice(0, 10))}"/></label>
+      ${v.direction === "depense" ? `<label class="field"><span>IBAN du bénéficiaire <span class="muted">(sinon celui du tiers)</span></span><input data-bind="invoices|${v.id}|creditorIban" value="${esc(v.creditorIban || "")}" placeholder="FR76 …"/></label>` : ""}
     </div>
     <div class="section-h">Règlement</div>
     <div class="card">${invoicePaymentFields(v)}</div>
@@ -5608,6 +5871,21 @@ function wire() {
   // onglets Finances
   c.querySelectorAll("[data-ftab]").forEach((b) => b.onclick = () => { financeTab = b.dataset.ftab; render(); });
   wireBanque(c);
+  // pilotage
+  const py = c.querySelector("[data-period-year]"); if (py) py.onchange = () => { cdrPeriod.year = Number(py.value) || 0; if (!cdrPeriod.year) cdrPeriod.month = 0; render(); };
+  const pm = c.querySelector("[data-period-month]"); if (pm) pm.onchange = () => { cdrPeriod.month = Number(pm.value) || 0; render(); };
+  c.querySelectorAll("[data-tva]").forEach((el) => el.onchange = () => { const k = el.dataset.tva; tvaPeriod[k] = k === "mode" || k === "regime" ? el.value : Number(el.value); if (k === "mode") tvaPeriod.index = el.value === "mois" ? new Date().getMonth() + 1 : Math.floor(new Date().getMonth() / 3) + 1; render(); });
+  c.querySelectorAll("[data-export-tva]").forEach((b) => b.onclick = () => printReport("choice - TVA " + tvaLabel(tvaPeriod), "TVA · " + tvaLabel(tvaPeriod), reportTVA()));
+  c.querySelectorAll("[data-pay-sel]").forEach((el) => el.onchange = () => { paySel[el.dataset.paySel] = el.checked; render(); });
+  const sa = c.querySelector("[data-sepa-acc]"); if (sa) sa.onchange = () => { sepaAccount = sa.value; };
+  c.querySelectorAll("[data-pay-done]").forEach((b) => b.onclick = () => { const v = state.invoices.find((x) => x.id === b.dataset.payDone); if (!v) return; v.status = "payee"; v.paymentDate = todayISO(); if (!v.accountId && sepaAccount) v.accountId = sepaAccount; delete paySel[v.id]; save(); render(); });
+  c.querySelectorAll("[data-sepa-gen]").forEach((b) => b.onclick = () => {
+    const r = generateSepa(); if (!r) return;
+    if (confirm(`Fichier de ${r.items.length} virement(s) téléchargé. Marquer ces factures payées aujourd'hui ?`)) { r.items.forEach((v) => { v.status = "payee"; v.paymentDate = todayISO(); v.accountId = sepaAccount; delete paySel[v.id]; }); save(); }
+    render();
+  });
+  const by = c.querySelector("[data-budget-year]"); if (by) by.onchange = () => { budgetYear = Number(by.value); render(); };
+  c.querySelectorAll("[data-budget]").forEach((el) => { const h = () => { setBudget(el.dataset.budget, budgetYear, el.value); }; el.addEventListener("change", () => { h(); render(); }); });
 
   // comptes bancaires (fiche société)
   c.querySelectorAll("[data-add-acc]").forEach((b) => b.onclick = () => { state.accounts.push({ id: uid(), companyId: b.dataset.addAcc, name: "", initialBalance: 0, balanceDate: todayISO() }); save(); render(); });
@@ -6586,7 +6864,7 @@ function cdrLines(nature) {
   return Object.entries(map).filter(([, val]) => val !== 0).sort((a, b) => b[1] - a[1]);
 }
 function reportCDR() {
-  const produits = cdrLines("produit"), charges = cdrLines("charge"), bilan = cdrLines("bilan");
+  const produits = cdrLinesIn("produit", cdrPeriod.year, cdrPeriod.month), charges = cdrLinesIn("charge", cdrPeriod.year, cdrPeriod.month), bilan = cdrLinesIn("bilan", cdrPeriod.year, cdrPeriod.month);
   const totP = produits.reduce((t, l) => t + l[1], 0), totC = charges.reduce((t, l) => t + l[1], 0);
   const tbl = (title, arr, tot) => `<div class="rep-section">${title}</div>
     <table class="rep-table"><thead><tr><th>Catégorie</th><th class="num">Montant HT</th></tr></thead><tbody>
@@ -6595,7 +6873,7 @@ function reportCDR() {
   return tbl("Produits", produits, totP) + tbl("Charges", charges, totC) +
     `<table class="rep-table"><tbody><tr class="rep-total"><td>Résultat à date (produits − charges)</td><td class="num">${repNum(totP - totC)}</td></tr></tbody></table>` +
     (bilan.length ? `<div class="rep-section">Hors résultat (mouvements de bilan, non comptés)</div><table class="rep-table"><tbody>${bilan.map((l) => `<tr><td>${esc(l[0])}</td><td class="num">${repNum(l[1])}</td></tr>`).join("")}</tbody></table>` : "") +
-    `<div class="rep-date">Montants HT, toutes factures confondues.</div>`;
+    `<div class="rep-date">Montants HT · ${esc(periodLabel(cdrPeriod))}.</div>`;
 }
 function reportTresorerie() {
   const now = new Date();
