@@ -162,6 +162,11 @@ dans le navigateur pour y vérifier le montant.
   téléphone, fonction, organisation et LinkedIn, sans écraser ce qui est déjà renseigné ;
   « Depuis LinkedIn » fournit un signet de navigateur qui crée la fiche depuis le profil ouvert
   (paramètre `?addContact=` lu au démarrage).
+- **Import LinkedIn** : « Importer LinkedIn » dans Contacts lit l'archive ZIP fournie par LinkedIn
+  (Préférences → Confidentialité des données → Obtenir une copie de vos données → Relations) ou son
+  fichier `Connections.csv` : nouveaux contacts créés (catégorie au choix, date de mise en relation),
+  contacts existants complétés (lien, e-mail, entreprise, fonction), sans doublon ; option pour ignorer
+  les relations sans entreprise ni fonction. Le ZIP est lu dans le navigateur, sans envoi.
 - **Relation** sur chaque fiche contact : nombre d'échanges, date « à relancer » (rappel en tête de la
   liste des contacts), notes datées, et l'historique fusionné des mails et messages reçus (À traiter),
   rendez-vous, factures, fiches pipeline et éléments de projet liés, du plus récent au plus ancien.

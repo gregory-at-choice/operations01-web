@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v109";
+const APP_VERSION = "v110";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3227,8 +3227,8 @@ function renderContacts() {
       ${sugg.slice(0, 40).map((s) => `<div class="inline" style="padding:5px 0;gap:10px;flex-wrap:wrap"><span class="grow" style="min-width:160px"><strong>${esc(s.nom)}</strong> <span class="muted" style="font-size:12px">· ${esc(s.addr)}${orgFromDomain(s.addr) ? " · " + esc(orgFromDomain(s.addr)) : ""}</span></span><span class="muted" style="font-size:12px;white-space:nowrap">${s.n} message(s) · ${s.last ? fmtDateTimeISO(s.last).slice(0, 10) : ""}</span><button class="btn small" data-suggest-add="${esc(s.addr)}">Ajouter</button><button class="btn ghost small" data-suggest-ignore="${esc(s.addr)}" title="Ne plus proposer">✕</button></div>`).join("")}</div></details>` : "";
   const due = state.contacts.filter((c) => c.nextContactAt && c.nextContactAt <= todayISO());
   return `<div class="toolbar nowrap"><div class="page-title grow" style="margin:0">Contacts</div>
-      <span class="tb-actions desk-only"><button class="btn secondary small" data-linkedin-help>${icon("users")} Depuis LinkedIn</button><button class="btn" data-add-contact>+ Nouveau contact</button></span>
-      ${moreMenu(`<button class="btn secondary small" data-linkedin-help>Depuis LinkedIn</button>`)}</div>
+      <span class="tb-actions desk-only"><button class="btn secondary small" data-linkedin-import>${icon("download")} Importer LinkedIn</button><button class="btn secondary small" data-linkedin-help>${icon("users")} Signet LinkedIn</button><button class="btn" data-add-contact>+ Nouveau contact</button></span>
+      ${moreMenu(`<button class="btn secondary small" data-linkedin-import>Importer LinkedIn</button><button class="btn secondary small" data-linkedin-help>Signet LinkedIn</button>`)}</div>
     ${due.length ? `<div class="card" style="margin-bottom:12px;padding:8px 12px"><div class="muted" style="font-size:12px;margin-bottom:4px">À relancer</div>${due.map((c) => `<div class="inline" style="padding:3px 0;gap:10px"><a href="#" data-open-contact-link="${c.id}" class="grow">${esc(contactName(c))}</a><span class="muted" style="font-size:12px">${fmtDate(c.nextContactAt)}</span></div>`).join("")}</div>` : ""}
     ${suggHtml}
     <div class="list">${items.length ? rows : '<div class="center-empty">Aucun contact.</div>'}</div>
@@ -3247,6 +3247,7 @@ function renderContactDetail(id) {
       <label class="field"><span>Société</span>${companySelect(`contacts|${c.id}|companyId`, c.companyId)}</label>
       ${F("Email", "email", "email")}${F("Téléphone", "phone", "tel")}${F("Adresse", "address")}${F("LinkedIn", "linkedIn")}
       ${F("IBAN (virements fournisseur)", "iban")}${F("BIC", "bic")}
+      ${c.linkedInSince ? `<div class="muted" style="font-size:12px">Relation LinkedIn depuis le ${esc(fmtDate(c.linkedInSince))}${c.source ? " · source : " + esc(c.source) : ""}</div>` : ""}
       <label class="field"><span>Notes</span><textarea data-bind="contacts|${c.id}|notes">${esc(c.notes)}</textarea></label>
     </div>
     ${contactRelationHtml(c)}
@@ -3478,6 +3479,120 @@ function handleAddContactParam() {
   toast(existing ? "Contact déjà présent : fiche ouverte" : "Contact ajouté depuis LinkedIn");
   return true;
 }
+
+// ---- Import de l'export LinkedIn (fichier « Connections.csv », seul ou dans l'archive ZIP de LinkedIn) ----
+// Colonnes LinkedIn : First Name, Last Name, URL, Email Address, Company, Position, Connected On.
+// Le fichier commence par quelques lignes de notes : l'en-tête est repéré par « First Name ».
+function parseLinkedInConnections(text) {
+  const raw = String(text || "").replace(/^\ufeff/, "").replace(/\r/g, "");
+  const lines = raw.split("\n");
+  const hi = lines.findIndex((l) => /^"?First Name"?\s*,/i.test(l));
+  if (hi < 0) throw new Error("Ce fichier n'est pas l'export « Connections.csv » de LinkedIn (en-tête « First Name » introuvable).");
+  const rows = parseCSV(lines.slice(hi).join("\n"));
+  const head = rows[0].map((h) => h.toLowerCase().trim());
+  const col = (name) => head.indexOf(name.toLowerCase());
+  const iF = col("First Name"), iL = col("Last Name"), iU = col("URL"), iE = col("Email Address"), iC = col("Company"), iP = col("Position"), iD = col("Connected On");
+  const out = [];
+  rows.slice(1).forEach((r) => {
+    const firstName = (r[iF] || "").trim(), lastName = (r[iL] || "").trim();
+    if (!firstName && !lastName) return;
+    out.push({ firstName, lastName, linkedIn: (r[iU] || "").trim(), email: (r[iE] || "").trim().toLowerCase(), organization: (r[iC] || "").trim(), jobTitle: (r[iP] || "").trim(), connectedOn: parseLinkedInDate((r[iD] || "").trim()) });
+  });
+  return out;
+}
+const LI_MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12, janv: 1, févr: 2, fevr: 2, mars: 3, avr: 4, mai: 5, juin: 6, juil: 7, août: 8, aout: 8, sept: 9, déc: 12 };
+function parseLinkedInDate(s) {   // « 12 May 2024 » ou « 12 mai 2024 »
+  const m = /^(\d{1,2})\s+([A-Za-zéûô.]+)\s+(\d{4})$/.exec(s); if (!m) return "";
+  const mo = LI_MONTHS[m[2].toLowerCase().replace(".", "").slice(0, 4)] || LI_MONTHS[m[2].toLowerCase().replace(".", "").slice(0, 3)];
+  return mo ? `${m[3]}-${String(mo).padStart(2, "0")}-${m[1].padStart(2, "0")}` : "";
+}
+// Rapprochement avec les contacts existants : même lien LinkedIn, même e-mail, sinon même prénom + nom.
+function findExistingContact(c) {
+  const url = String(c.linkedIn || "").replace(/\/$/, "").toLowerCase(), em = String(c.email || "").toLowerCase(), nm = normName(`${c.firstName} ${c.lastName}`);
+  return state.contacts.find((x) => (url && String(x.linkedIn || "").replace(/\/$/, "").toLowerCase() === url) || (em && String(x.email || "").toLowerCase() === em) || (nm && normName(`${x.firstName} ${x.lastName}`) === nm)) || null;
+}
+function importLinkedInConnections(list, opts) {
+  opts = opts || {};
+  let added = 0, completed = 0;
+  list.forEach((c) => {
+    const ex = findExistingContact(c);
+    if (ex) {
+      let ch = false;
+      ["linkedIn", "email", "organization", "jobTitle"].forEach((k) => { if (c[k] && !ex[k]) { ex[k] = c[k]; ch = true; } });
+      if (c.connectedOn && !ex.linkedInSince) { ex.linkedInSince = c.connectedOn; ch = true; }
+      if (ch) completed++;
+      return;
+    }
+    if (opts.skipEmpty && !c.organization && !c.jobTitle) return;
+    state.contacts.push({ id: uid(), firstName: c.firstName, lastName: c.lastName, organization: c.organization, jobTitle: c.jobTitle, email: c.email, phone: "", address: "", linkedIn: c.linkedIn, category: opts.category || "prospect", notes: "", companyId: null, source: "linkedin-export", linkedInSince: c.connectedOn || "", createdAt: Date.now() });
+    added++;
+  });
+  if (added || completed) save();
+  return { added, completed };
+}
+// Lecture d'un fichier de l'archive ZIP LinkedIn sans bibliothèque : répertoire central puis
+// décompression « deflate » native du navigateur (DecompressionStream).
+async function readZipEntry(buffer, nameRe) {
+  const u8 = new Uint8Array(buffer), dv = new DataView(buffer);
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 65557); i--) { if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; } }
+  if (eocd < 0) throw new Error("Archive ZIP non reconnue.");
+  const n = dv.getUint16(eocd + 10, true); let p = dv.getUint32(eocd + 16, true);
+  const td = new TextDecoder("utf-8");
+  for (let k = 0; k < n; k++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), nlen = dv.getUint16(p + 28, true), elen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true), off = dv.getUint32(p + 42, true);
+    const name = td.decode(u8.subarray(p + 46, p + 46 + nlen));
+    p += 46 + nlen + elen + clen;
+    if (!nameRe.test(name)) continue;
+    const lnlen = dv.getUint16(off + 26, true), lelen = dv.getUint16(off + 28, true), start = off + 30 + lnlen + lelen;
+    const data = u8.subarray(start, start + csize);
+    if (method === 0) return { name, text: td.decode(data) };
+    if (method !== 8) throw new Error("Compression ZIP non gérée (" + method + ").");
+    const ds = new DecompressionStream("deflate-raw");
+    const out = await new Response(new Blob([data]).stream().pipeThrough(ds)).arrayBuffer();
+    return { name, text: td.decode(new Uint8Array(out)) };
+  }
+  return null;
+}
+async function linkedInTextFromFile(file) {
+  const isZip = /\.zip$/i.test(file.name) || file.type === "application/zip";
+  if (!isZip) return await file.text();
+  const entry = await readZipEntry(await file.arrayBuffer(), /(^|\/)Connections\.csv$/i);
+  if (!entry) throw new Error("L'archive ne contient pas « Connections.csv ». Vérifie que tu as demandé l'export des relations à LinkedIn.");
+  return entry.text;
+}
+function linkedInImportDialog() {
+  showModal(`<div class="modal-head"><strong class="grow">Importer mes relations LinkedIn</strong><button class="btn ghost small" data-modal-close>${icon("x")}</button></div>
+    <p style="font-size:14px">LinkedIn → Préférences → Confidentialité des données → <strong>Obtenir une copie de vos données</strong> → cocher « Relations ». Le fichier arrive par mail sous 24 h. Dépose ici l'archive <strong>.zip</strong> reçue, ou le fichier <strong>Connections.csv</strong> qu'elle contient.</p>
+    <label class="field"><span>Fichier</span><input type="file" id="liFile" accept=".zip,.csv,application/zip,text/csv"/></label>
+    <label class="field"><span>Catégorie des nouveaux contacts</span><select id="liCat">${CONTACT_CATS.map((x) => `<option value="${x.code}" ${x.code === "prospect" ? "selected" : ""}>${x.label}</option>`).join("")}</select></label>
+    <label class="inline-check"><input type="checkbox" id="liSkipEmpty"/> Ignorer les relations sans entreprise ni fonction</label>
+    <div id="liPreview" class="muted" style="font-size:13px;margin-top:8px"></div>
+    <div class="inline" style="margin-top:12px;gap:8px"><span class="grow"></span><button class="btn" id="liGo" disabled>Importer</button></div>`);
+  document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
+  let list = null;
+  const prev = document.getElementById("liPreview"), go = document.getElementById("liGo"), skip = document.getElementById("liSkipEmpty");
+  const refresh = () => {
+    if (!list) return;
+    const kept = skip.checked ? list.filter((c) => c.organization || c.jobTitle) : list;
+    const ex = kept.filter((c) => findExistingContact(c)).length;
+    prev.textContent = `${list.length} relation(s) dans le fichier · ${kept.length - ex} nouvelle(s) à créer · ${ex} déjà dans tes contacts (complétées si des champs manquent)`;
+    go.disabled = !kept.length; go.textContent = `Importer ${kept.length - ex} contact(s)`;
+  };
+  document.getElementById("liFile").onchange = async (ev) => {
+    const f = ev.target.files && ev.target.files[0]; if (!f) return;
+    prev.textContent = "Lecture…";
+    try { list = parseLinkedInConnections(await linkedInTextFromFile(f)); refresh(); }
+    catch (e) { list = null; go.disabled = true; prev.textContent = "Lecture impossible : " + (e.message || e); }
+  };
+  skip.onchange = refresh;
+  go.onclick = () => {
+    if (!list) return;
+    const r = importLinkedInConnections(list, { category: document.getElementById("liCat").value, skipEmpty: skip.checked });
+    closeModal(); toast(`${r.added} contact(s) ajouté(s)${r.completed ? `, ${r.completed} complété(s)` : ""}`); render();
+  };
+}
 // ---- Historique de relation ----
 function contactMatchesEvent(c, e) {
   const addr = String((e.expediteur && e.expediteur.adresse) || "").toLowerCase();
@@ -3525,6 +3640,7 @@ function wireCRM(c) {
   c.querySelectorAll("[data-suggest-add]").forEach((b) => b.onclick = () => { const s = contactSuggestions().find((x) => x.addr === b.dataset.suggestAdd); if (!s) return; const ct = addContactFrom(s); toast("Contact ajouté"); openDetail("contacts", ct.id); });
   c.querySelectorAll("[data-suggest-ignore]").forEach((b) => b.onclick = () => { (state.contactIgnore = state.contactIgnore || {})[b.dataset.suggestIgnore] = 1; save(); render(); });
   const sAll = c.querySelector("[data-suggest-all]"); if (sAll) sAll.onclick = () => { const list = contactSuggestions(); list.forEach((s) => addContactFrom(s)); toast(`${list.length} contact(s) ajouté(s)`); render(); };
+  c.querySelectorAll("[data-linkedin-import]").forEach((b) => b.onclick = linkedInImportDialog);
   const lk = c.querySelector("[data-linkedin-help]"); if (lk) lk.onclick = () => {
     const url = linkedinBookmarklet();
     showModal(`<div class="modal-head"><strong class="grow">Ajouter un profil LinkedIn en un clic</strong><button class="btn ghost small" data-modal-close>${icon("x")}</button></div>
