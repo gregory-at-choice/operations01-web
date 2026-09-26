@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "choice — Importer le contact",
+  "version": "1.0.0",
+  "description": "Sur un profil LinkedIn, un bouton « Importer dans choice » crée le contact avec ses coordonnées (relations de niveau 1).",
+  "icons": { "64": "icon-64.png", "192": "icon-192.png" },
+  "action": { "default_title": "Importer ce profil LinkedIn dans choice", "default_icon": { "64": "icon-64.png", "192": "icon-192.png" } },
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": ["https://www.linkedin.com/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{ "matches": ["https://www.linkedin.com/in/*"], "js": ["content.js"], "css": ["content.css"], "run_at": "document_idle" }],
+  "options_ui": { "page": "options.html", "open_in_tab": false }
+}

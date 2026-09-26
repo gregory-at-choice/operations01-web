@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v110";
+const APP_VERSION = "v111";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3472,11 +3472,20 @@ function handleAddContactParam() {
   let jobTitle = String(p.titre || "").trim(), organization = "";
   const m = /^(.*?)\s+(?:chez|at|@)\s+(.+)$/i.exec(jobTitle); if (m) { jobTitle = m[1].trim(); organization = m[2].trim(); }
   if (!organization) { const me = /Exp[ée]rience\s*:\s*([^·\n]+)/i.exec(String(p.desc || "")); if (me) organization = me[1].trim(); }
-  const existing = state.contacts.find((c) => p.url && c.linkedIn && c.linkedIn.replace(/\/$/, "") === String(p.url).replace(/\/$/, ""));
-  const c = existing || { id: uid(), firstName, lastName, organization, jobTitle, email: "", phone: "", address: String(p.lieu || ""), linkedIn: String(p.url || ""), category: "prospect", notes: "", companyId: null, source: "linkedin", createdAt: Date.now() };
-  if (!existing) state.contacts.push(c); else { if (!c.jobTitle) c.jobTitle = jobTitle; if (!c.organization) c.organization = organization; }
+  if (!organization && p.org) organization = String(p.org).trim();
+  const email = String(p.email || "").trim().toLowerCase(), phone = String(p.telephone || "").trim();
+  const extras = [p.site ? "Site : " + p.site : "", p.twitter ? "X/Twitter : " + p.twitter : "", p.anniversaire ? "Anniversaire : " + p.anniversaire : "", p.degre ? "LinkedIn : " + p.degre : ""].filter(Boolean).join("\n");
+  const existing = state.contacts.find((c) => (p.url && c.linkedIn && c.linkedIn.replace(/\/$/, "") === String(p.url).replace(/\/$/, "")) || (email && String(c.email || "").toLowerCase() === email))
+    || findExistingContact({ firstName, lastName, linkedIn: p.url, email });
+  const c = existing || { id: uid(), firstName, lastName, organization, jobTitle, email, phone, address: String(p.lieu || ""), linkedIn: String(p.url || ""), category: "prospect", notes: extras, companyId: null, source: "linkedin", createdAt: Date.now() };
+  if (!existing) state.contacts.push(c);
+  else {
+    if (!c.jobTitle) c.jobTitle = jobTitle; if (!c.organization) c.organization = organization; if (!c.email) c.email = email; if (!c.phone) c.phone = phone;
+    if (!c.linkedIn) c.linkedIn = String(p.url || ""); if (!c.address) c.address = String(p.lieu || "");
+    if (extras && !(c.notes || "").includes(extras)) c.notes = (c.notes ? c.notes + "\n" : "") + extras;
+  }
   save(); view = { section: "contacts", detailId: c.id };
-  toast(existing ? "Contact déjà présent : fiche ouverte" : "Contact ajouté depuis LinkedIn");
+  toast(existing ? "Contact déjà présent : fiche complétée" : "Contact ajouté depuis LinkedIn" + (email || phone ? " avec ses coordonnées" : ""));
   return true;
 }
 
@@ -3644,7 +3653,8 @@ function wireCRM(c) {
   const lk = c.querySelector("[data-linkedin-help]"); if (lk) lk.onclick = () => {
     const url = linkedinBookmarklet();
     showModal(`<div class="modal-head"><strong class="grow">Ajouter un profil LinkedIn en un clic</strong><button class="btn ghost small" data-modal-close>${icon("x")}</button></div>
-      <p style="font-size:14px">Un <strong>signet</strong> dans ton navigateur lit le profil LinkedIn ouvert et crée le contact dans choice (nom, fonction, organisation, lien, lieu).</p>
+      <p style="font-size:14px"><strong>Sur Chrome (Mac)</strong> : l'extension « choice — Importer le contact » ajoute un bouton sur chaque profil et récupère aussi les <strong>coordonnées</strong> de tes relations de niveau 1 (e-mail, téléphone). Installation : <a href="https://github.com/gregory-at-choice/operations01-web/tree/main/extension" target="_blank" rel="noopener">dossier extension</a> → chrome://extensions → Mode développeur → Charger l'extension non empaquetée.</p>
+      <p style="font-size:14px"><strong>Ailleurs (Safari, iPhone)</strong> : un <strong>signet</strong> lit le profil LinkedIn ouvert et crée le contact (nom, fonction, organisation, lien, lieu), sans les coordonnées.</p>
       <ol style="font-size:14px;padding-left:18px">
         <li><strong>Sur Mac</strong> : glisse ce bouton dans la barre des favoris → <a class="btn small" href="${url}" onclick="return false" style="display:inline-block">+ choice ← LinkedIn</a></li>
         <li><strong>Sur iPhone</strong> : copie le code ci-dessous, ajoute n'importe quelle page aux favoris Safari, puis modifie ce favori et remplace son adresse par le code collé. <button class="btn secondary small" data-copy-bookmarklet>Copier le code</button></li>

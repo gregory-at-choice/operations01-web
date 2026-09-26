@@ -1,0 +1,4 @@
+#choice-import-btn { position: fixed; right: 18px; bottom: 22px; z-index: 2147483000; display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border: 0; border-radius: 999px; background: #18c1d8; color: #fff; font: 600 14px/1 -apple-system, "Segoe UI", Roboto, sans-serif; box-shadow: 0 6px 18px rgba(0,0,0,.18); cursor: pointer; }
+#choice-import-btn:hover { background: #12a9bd; }
+#choice-import-btn[disabled] { opacity: .7; cursor: default; }
+#choice-import-btn .c { display: inline-block; width: 18px; height: 18px; border-radius: 50%; background: #fff; color: #18c1d8; font-weight: 800; text-align: center; line-height: 18px; font-size: 12px; }
