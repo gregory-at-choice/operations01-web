@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v111";
+const APP_VERSION = "v112";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -404,6 +404,7 @@ function render() {
   if (view.section === "planning") { view.section = "rendezvous"; if (planningTab === "rdv") planningTab = "grille"; }   // ancienne rubrique « Planning »
   if (view.section === "dashboard") { view.section = "finances"; financeTab = "tableau"; }
   if (view.section === "actions") { view.section = "atraiter"; atTab = "actions"; if (view.detailId && String(view.detailId).indexOf("action:") !== 0) view.detailId = "action:" + view.detailId; }
+  if (tts.playing && !(view.section === "reader" && docTab === "lecteur" && ((tts.kind === "md" && reader.kind === "md" && state.readerCurrent === tts.docId) || (tts.kind === "pdf" && reader.kind === "pdf" && state.pdfCurrent === tts.docId)))) ttsStop(true);
   const sec = SECTIONS.find((s) => s.id === view.section) || SECTIONS.find((s) => s.id === HOME_SECTION);
   // Une erreur dans le dessin d'un écran ne doit jamais figer l'app : on l'affiche
   // (message + où), on la garde en mémoire (menu Plus → « Dernière erreur ») et
@@ -1095,6 +1096,7 @@ function renderPdfReader() {
           <span class="muted">/ ${pdfOpen.doc.numPages}</span>
           <button class="btn ghost small" data-pdf-page="1" title="Page suivante">›</button>
         </div></div>` : ""}
+      ${ttsControls(!!(cur && pdfOpen && pdfOpen.id === cur.id))}
       <span class="grow"></span>
     </div>
     <div class="md-layout">
@@ -1104,7 +1106,7 @@ function renderPdfReader() {
         ${docs.length ? '<div class="muted" style="font-size:12px;margin-top:8px">Enregistrés sur ton Google Drive</div>' : ""}
       </div>
       <div class="md-main">${body}</div>
-    </div>`;
+    </div>${ttsBarHtml()}`;
 }
 function readerTabs() {
   return `<div class="chip-row" style="margin-bottom:14px">${
@@ -1177,6 +1179,7 @@ function renderMdReader() {
       <label class="md-ctl"><span>Taille</span><input type="number" id="mdSize" min="12" max="28" step="1" value="${reader.size}"/></label>
       <div class="md-ctl"><span>Fond</span><div class="md-swatches">${bgChips}
         <input type="color" id="mdCustom" value="${esc(reader.customBg || bg)}" title="Couleur personnalisée"/></div></div>
+      ${ttsControls(!!(cur && curText != null))}
       <span class="grow"></span>
     </div>
     <div class="md-layout">
@@ -1186,7 +1189,195 @@ function renderMdReader() {
         ${docs.length ? `<div class="muted" style="font-size:12px;margin-top:8px">Enregistrés sur ton Google Drive</div>` : ""}
       </div>
       <div class="md-main">${body}</div>
-    </div>`;
+    </div>${ttsBarHtml()}`;
+}
+
+// ----------------------------- Lecture à voix haute (Documents) -----------------------------
+// Synthèse vocale du navigateur (Safari, Chrome), en français. Le texte est découpé en phrases
+// courtes : les navigateurs coupent les longues tirades, et cela permet pause / reprise précises.
+// Markdown : le document est lu en entier. PDF : page par page, à partir de la page affichée, la
+// vue suivant la lecture.
+const TTS_KEY = "op01_tts";
+let tts = { playing: false, paused: false, kind: null, docId: null, chunks: [], idx: 0, page: 0, pages: 0, rate: 1, voice: "", loading: false };
+try { const p = JSON.parse(localStorage.getItem(TTS_KEY) || "null"); if (p) { tts.rate = Number(p.rate) || 1; tts.voice = p.voice || ""; } } catch (e) {}
+const ttsSavePrefs = () => { try { localStorage.setItem(TTS_KEY, JSON.stringify({ rate: tts.rate, voice: tts.voice })); } catch (e) {} };
+const ttsAvailable = () => typeof speechSynthesis !== "undefined" && typeof SpeechSynthesisUtterance !== "undefined";
+function ttsVoices() {
+  if (!ttsAvailable() || !speechSynthesis.getVoices) return [];
+  const all = speechSynthesis.getVoices() || [];
+  const fr = all.filter((v) => /^fr/i.test(v.lang));
+  return (fr.length ? fr : all).sort((a, b) => (b.localService ? 1 : 0) - (a.localService ? 1 : 0) || a.name.localeCompare(b.name));
+}
+if (typeof speechSynthesis !== "undefined" && "onvoiceschanged" in speechSynthesis) speechSynthesis.onvoiceschanged = () => { if (view.section === "reader" && docTab === "lecteur") render(); };
+// Markdown → texte à lire : titres, listes, liens, code, tableaux ramenés à des phrases.
+function mdToPlain(src) {
+  return String(src || "").replace(/\r/g, "")
+    .replace(/```[\s\S]*?```/g, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}#{1,6}\s+(.*)$/gm, "$1.")
+    .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "").replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "")
+    .replace(/^\s*>\s?/gm, "").replace(/^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/gm, "")
+    .replace(/\|/g, ", ").replace(/`([^`]*)`/g, "$1").replace(/[*_~]{1,3}([^*_~\n]+)[*_~]{1,3}/g, "$1")
+    .replace(/^[-*_]{3,}\s*$/gm, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/[ \t]+/g, " ");
+}
+// Découpe en morceaux prononçables : paragraphes puis phrases, regroupées jusqu'à ~160 caractères
+// (assez court pour que pause et saut restent précis, assez long pour une diction fluide).
+function ttsChunks(text, max) {
+  max = max || 160;
+  const out = [];
+  String(text || "").split(/\n\s*\n|\n(?=\S)/).forEach((para) => {
+    const p = para.replace(/\s+/g, " ").trim(); if (!p || !/[A-Za-zÀ-ÿ0-9]/.test(p)) return;
+    const sentences = p.match(/[^.!?…]+[.!?…]+["»)]?\s*|[^.!?…]+$/g) || [p];
+    let cur = "";
+    sentences.forEach((s) => {
+      s = s.trim(); if (!s) return;
+      while (s.length > max) { let cut = s.lastIndexOf(", ", max); if (cut < max * 0.4) cut = s.lastIndexOf(" ", max); if (cut < 1) cut = max; if (cur) { out.push(cur); cur = ""; } out.push(s.slice(0, cut + 1).trim()); s = s.slice(cut + 1).trim(); }
+      if ((cur + " " + s).trim().length > max) { if (cur) out.push(cur); cur = s; } else cur = (cur + " " + s).trim();
+    });
+    if (cur) out.push(cur);
+  });
+  return out;
+}
+// Texte d'une page PDF : fragments regroupés par ligne, lignes d'un même paragraphe jointes.
+function pdfPageText(tc) {
+  const rows = [];
+  (tc.items || []).forEach((it) => {
+    if (!it.str || !it.str.trim()) return;
+    const y = Math.round(it.transform[5]), size = Math.abs(it.transform[0]) || 10;
+    let row = rows.find((r) => Math.abs(r.y - y) <= Math.max(2, size * 0.4));
+    if (!row) { row = { y, x: it.transform[4], size, parts: [] }; rows.push(row); }
+    row.parts.push({ x: it.transform[4], s: it.str });
+  });
+  rows.sort((a, b) => b.y - a.y);
+  const lines = rows.map((r) => ({ y: r.y, size: r.size, text: r.parts.sort((a, b) => a.x - b.x).map((p) => p.s).join(" ").replace(/\s+/g, " ").trim() }));
+  let out = "";
+  lines.forEach((l, i) => {
+    const prev = lines[i - 1];
+    const gap = prev ? prev.y - l.y : 0;
+    const newPara = !prev || gap > l.size * 1.8 || /^[•\-–]\s/.test(l.text);
+    out += (newPara ? "\n\n" : (prev && /-$/.test(prev.text) ? "" : " ")) + l.text;
+  });
+  return out.replace(/(\w)-\s+(\w)/g, "$1$2").trim();
+}
+async function ttsLoadPdfPage(p) {
+  const page = await pdfOpen.doc.getPage(p);
+  const tc = await page.getTextContent();
+  return ttsChunks(pdfPageText(tc)).map((t) => ({ t, page: p }));
+}
+function ttsStop(silent) {
+  const was = tts.playing || tts.paused;
+  tts.playing = false; tts.paused = false; tts.chunks = []; tts.idx = 0; tts.loading = false;
+  try { if (ttsAvailable()) speechSynthesis.cancel(); } catch (e) {}
+  if (was && !silent) ttsBar();
+}
+async function ttsStart() {
+  if (!ttsAvailable()) { alert("La lecture à voix haute n'est pas disponible dans ce navigateur."); return; }
+  ttsStop(true);
+  if (reader.kind === "pdf") {
+    const d = currentPdf(); if (!d || !pdfOpen || pdfOpen.id !== d.id) { toast("Ouvre d'abord un PDF."); return; }
+    tts.kind = "pdf"; tts.docId = d.id; tts.pages = pdfOpen.doc.numPages; tts.page = Math.max(1, Math.min(tts.pages, pdfPageNow || 1));
+    tts.playing = true; tts.loading = true; ttsBar();
+    try { tts.chunks = await ttsLoadPdfPage(tts.page); } catch (e) { tts.loading = false; ttsStop(); alert("Lecture du texte du PDF impossible : " + (e.message || e)); return; }
+    tts.loading = false;
+    // pages sans texte (scan) : on avance jusqu'à la première page lisible
+    while (!tts.chunks.length && tts.page < tts.pages) { tts.page++; try { tts.chunks = await ttsLoadPdfPage(tts.page); } catch (e) { break; } }
+    if (!tts.chunks.length) { ttsStop(); toast("Ce PDF ne contient pas de texte lisible (document numérisé ?)"); return; }
+  } else {
+    const d = currentDoc(); const txt = d ? readerLib.texts[d.id] : null;
+    if (!d || txt == null) { toast("Ouvre d'abord un document."); return; }
+    tts.kind = "md"; tts.docId = d.id; tts.pages = 0; tts.page = 0;
+    tts.chunks = ttsChunks(mdToPlain(txt)).map((t) => ({ t }));
+    if (!tts.chunks.length) { toast("Rien à lire dans ce document."); return; }
+    tts.playing = true;
+  }
+  tts.idx = 0; tts.paused = false;
+  ttsBar(); ttsSpeakCurrent();
+}
+function ttsUtterance(text) {
+  const u = new SpeechSynthesisUtterance(String(text).replace(/€/g, " euros").replace(/·/g, ","));
+  u.lang = "fr-FR"; u.rate = tts.rate || 1;
+  const voices = ttsVoices();
+  const pick = (tts.voice && voices.find((v) => v.name === tts.voice)) || voices.find((v) => /am[ée]lie|audrey|aur[ée]lie|thomas|marie|daniel/i.test(v.name) && /^fr/i.test(v.lang)) || voices[0];
+  if (pick) u.voice = pick;
+  return u;
+}
+function ttsSpeakCurrent() {
+  if (!tts.playing || tts.paused) return;
+  const c = tts.chunks[tts.idx];
+  if (!c) { ttsNextPage(); return; }
+  if (tts.kind === "pdf" && c.page && c.page !== pdfPageNow && document.getElementById("pdfpage-" + c.page)) goToPdfPage(c.page);
+  const u = ttsUtterance(c.t);
+  const my = ++ttsSeq;
+  u.onend = () => { if (my !== ttsSeq || !tts.playing || tts.paused) return; tts.idx++; ttsBar(); ttsSpeakCurrent(); };
+  u.onerror = (e) => { if (my !== ttsSeq) return; if (e && (e.error === "interrupted" || e.error === "canceled")) return; tts.idx++; ttsSpeakCurrent(); };
+  try { speechSynthesis.speak(u); } catch (e) { ttsStop(); }
+}
+let ttsSeq = 0;
+async function ttsNextPage() {
+  if (tts.kind !== "pdf" || !pdfOpen || tts.page >= tts.pages) { ttsStop(); toast("Lecture terminée"); return; }
+  tts.loading = true; ttsBar();
+  try {
+    let chunks = [];
+    while (!chunks.length && tts.page < tts.pages) { tts.page++; chunks = await ttsLoadPdfPage(tts.page); }
+    tts.loading = false;
+    if (!chunks.length) { ttsStop(); toast("Lecture terminée"); return; }
+    tts.chunks = chunks; tts.idx = 0; ttsBar(); ttsSpeakCurrent();
+  } catch (e) { tts.loading = false; ttsStop(); }
+}
+function ttsPause() { if (!tts.playing || tts.paused) return; tts.paused = true; ttsSeq++; try { speechSynthesis.cancel(); } catch (e) {} ttsBar(); }
+function ttsResume() { if (!tts.playing || !tts.paused) return; tts.paused = false; ttsBar(); ttsSpeakCurrent(); }
+function ttsSkip(n) {
+  if (!tts.playing) return;
+  ttsSeq++; try { speechSynthesis.cancel(); } catch (e) {}
+  tts.idx = Math.max(0, Math.min(tts.chunks.length, tts.idx + n));
+  if (tts.paused) { ttsBar(); return; }
+  ttsSpeakCurrent(); ttsBar();
+}
+function ttsSetRate(r) { tts.rate = Math.max(0.5, Math.min(2, Number(r) || 1)); ttsSavePrefs(); if (tts.playing && !tts.paused) { ttsSeq++; try { speechSynthesis.cancel(); } catch (e) {} ttsSpeakCurrent(); } }
+function ttsSetVoice(name) { tts.voice = name || ""; ttsSavePrefs(); if (tts.playing && !tts.paused) { ttsSeq++; try { speechSynthesis.cancel(); } catch (e) {} ttsSpeakCurrent(); } }
+// Commandes dans la barre du lecteur (avant lecture) et barre flottante pendant la lecture.
+function ttsControls(canRead) {
+  if (!ttsAvailable()) return "";
+  const voices = ttsVoices();
+  const vOpts = voices.length ? `<select data-tts-voice style="width:auto;max-width:170px"><option value="">Voix automatique</option>${voices.map((v) => `<option value="${esc(v.name)}" ${v.name === tts.voice ? "selected" : ""}>${esc(v.name.replace(/\s*\(.*\)$/, ""))}${/^fr/i.test(v.lang) ? "" : " · " + esc(v.lang)}</option>`).join("")}</select>` : "";
+  const rOpts = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2].map((r) => `<option value="${r}" ${Math.abs(tts.rate - r) < 0.01 ? "selected" : ""}>×${r}</option>`).join("");
+  return `<div class="md-ctl"><span>Lecture à voix haute</span><div class="inline" style="gap:6px;flex-wrap:wrap">
+      ${tts.playing ? `<button class="btn small" data-tts-stop>■ Arrêter</button>` : `<button class="btn small" data-tts-play ${canRead ? "" : "disabled"}>🔊 Lire${reader.kind === "pdf" && pdfOpen ? ` (page ${Math.min(pdfPageNow || 1, pdfOpen.doc.numPages)})` : ""}</button>`}
+      <select data-tts-rate style="width:auto" title="Vitesse">${rOpts}</select>${vOpts}</div></div>`;
+}
+function ttsBarHtml() {
+  if (!tts.playing) return "";
+  const c = tts.chunks[tts.idx];
+  const where = tts.kind === "pdf" ? `page ${tts.page} / ${tts.pages}` : `${Math.min(tts.idx + 1, tts.chunks.length)} / ${tts.chunks.length}`;
+  return `<div class="tts-bar" id="ttsBar">
+      <button class="btn ghost small" data-tts-skip="-1" title="Phrase précédente">⏮</button>
+      ${tts.paused ? `<button class="btn small" data-tts-resume>▶ Reprendre</button>` : `<button class="btn small" data-tts-pause>⏸ Pause</button>`}
+      <button class="btn ghost small" data-tts-skip="1" title="Phrase suivante">⏭</button>
+      <button class="btn ghost small" data-tts-stop title="Arrêter">■</button>
+      <div class="grow" style="min-width:0"><div class="muted" style="font-size:11px">${tts.loading ? "Lecture du texte…" : esc(where)}</div><div class="tts-now">${c ? esc(c.t.slice(0, 140)) : ""}</div></div></div>`;
+}
+function ttsBar() {
+  const host = document.getElementById("content"); if (!host) return;
+  let el = document.getElementById("ttsBar");
+  const html = ttsBarHtml();
+  if (!html) { if (el) el.remove(); const b = host.querySelector("[data-tts-play],[data-tts-stop]"); if (b && !tts.playing) render(); return; }
+  try {
+    if (!el) { const tmp = document.createElement("div"); tmp.innerHTML = html; host.appendChild(tmp.firstElementChild || tmp); el = document.getElementById("ttsBar"); }
+    else el.outerHTML = html;
+    wireTts(host);
+  } catch (e) { render(); }
+}
+function wireTts(c) {
+  const q = (sel) => c.querySelectorAll(sel);
+  q("[data-tts-play]").forEach((b) => b.onclick = () => ttsStart());
+  q("[data-tts-stop]").forEach((b) => b.onclick = () => { ttsStop(true); render(); });
+  q("[data-tts-pause]").forEach((b) => b.onclick = ttsPause);
+  q("[data-tts-resume]").forEach((b) => b.onclick = ttsResume);
+  q("[data-tts-skip]").forEach((b) => b.onclick = () => ttsSkip(Number(b.dataset.ttsSkip)));
+  q("[data-tts-rate]").forEach((s) => s.onchange = () => ttsSetRate(s.value));
+  q("[data-tts-voice]").forEach((s) => s.onchange = () => ttsSetVoice(s.value));
 }
 
 // ----------------------------- Outils PDF -----------------------------
@@ -6631,6 +6822,7 @@ function wire() {
 
   // lecteur Markdown — les documents sont des fichiers sur le Drive
   if (view.section === "reader" && docTab === "lecteur" && !readerBusy && !readerFetched && !readerLib.docs.length && window.DriveSync && DriveSync.isConnected()) refreshDocs();
+  wireTts(c);
   const mdRef = c.querySelector("[data-md-refresh]"); if (mdRef) mdRef.onclick = () => refreshDocs(true);
   const mdPrint = c.querySelector("[data-md-print]"); if (mdPrint) mdPrint.onclick = printCurrentDoc;
   const mdImp = c.querySelector("[data-md-import]");

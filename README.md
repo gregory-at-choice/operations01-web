@@ -171,6 +171,14 @@ dans le navigateur pour y vérifier le montant.
   liste des contacts), notes datées, et l'historique fusionné des mails et messages reçus (À traiter),
   rendez-vous, factures, fiches pipeline et éléments de projet liés, du plus récent au plus ancien.
 
+## Documents : lecture à voix haute
+
+Dans Documents → Lecteur, « 🔊 Lire » lit le document ouvert avec la synthèse vocale du navigateur
+(voix françaises de l'appareil, vitesse réglable, réglages mémorisés). Markdown : texte nettoyé (titres,
+listes, liens, code, tableaux) et lu en entier. PDF : texte extrait page par page à partir de la page
+affichée, la vue suit la lecture ; les pages sans texte (scans) sont sautées. Une barre flottante offre
+pause / reprise, phrase précédente / suivante et arrêt ; changer de document ou d'écran arrête la lecture.
+
 ## Lire les mails dans l'app (Gmail, lecture seule)
 
 Sur la page d'un message « À traiter », la carte **Message complet** affiche le mail lui-même
