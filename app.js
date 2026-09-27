@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v114";
+const APP_VERSION = "v115";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1209,6 +1209,8 @@ const ttsVoiceId = (v) => v.voiceURI || v.name;
 function ttsQuality(v) { const id = (v.voiceURI || "") + " " + (v.name || ""); return /premium/i.test(id) ? 2 : /enhanced|am[ée]lior|super-compact/i.test(id) && !/compact/i.test(v.voiceURI || "") ? 1 : /enhanced|am[ée]lior/i.test(id) ? 1 : 0; }
 const ttsQualityLabel = (v) => ["", "Améliorée", "Premium"][ttsQuality(v)];
 const TTS_REGIONS = { "fr-FR": "France", "fr-CA": "Canada", "fr-BE": "Belgique", "fr-CH": "Suisse" };
+const TTS_SYSTEM = "__system__";
+const ttsIsApple = () => typeof navigator !== "undefined" && (/iPad|iPhone|iPod/.test(navigator.platform || "") || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) || /Macintosh/.test(navigator.userAgent || ""));
 function ttsVoices() {
   if (!ttsAvailable() || !speechSynthesis.getVoices) return [];
   const all = speechSynthesis.getVoices() || [], seen = {};
@@ -1324,6 +1326,11 @@ function ttsUtterance(text) {
   const u = new SpeechSynthesisUtterance(String(text).replace(/€/g, " euros").replace(/·/g, ","));
   u.lang = "fr-FR"; u.rate = tts.rate || 1;
   const voices = ttsVoices();   // déjà triées : premium, puis améliorée, puis compacte
+  // « Voix par défaut de l'appareil » : aucune voix imposée → Safari utilise celle réglée dans
+  // Réglages → Accessibilité → Contenu énoncé (c'est ainsi qu'une voix Premium téléchargée sur iPhone /
+  // iPad est utilisée, Safari ne la listant pas toujours). Sur iOS c'est le choix automatique.
+  const useSystem = tts.voice === TTS_SYSTEM || (!tts.voice && ttsIsApple() && !voices.some((v) => ttsQuality(v) > 0));
+  if (useSystem) { u.lang = "fr-FR"; return u; }
   const pick = (tts.voice && (voices.find((v) => ttsVoiceId(v) === tts.voice) || voices.find((v) => v.name === tts.voice)))
     || voices.find((v) => /^fr/i.test(v.lang) && /am[ée]lie|audrey|aur[ée]lie|thomas|marie|daniel/i.test(v.name)) || voices[0];
   if (pick) { u.voice = pick; u.lang = pick.lang || "fr-FR"; }
@@ -1367,7 +1374,9 @@ function ttsSetVoice(name) { tts.voice = name || ""; ttsSavePrefs(); if (tts.pla
 function ttsControls(canRead) {
   if (!ttsAvailable()) return "";
   const voices = ttsVoices();
-  const vOpts = voices.length ? `<select data-tts-voice style="width:auto;max-width:220px"><option value="">Voix automatique (${esc(ttsVoiceLabel(voices[0], voices))})</option>${voices.map((v) => `<option value="${esc(ttsVoiceId(v))}" ${ttsVoiceId(v) === tts.voice || v.name === tts.voice ? "selected" : ""}>${esc(ttsVoiceLabel(v, voices))}</option>`).join("")}</select><button class="btn ghost small" data-tts-preview title="Écouter un extrait avec cette voix">▶ Essayer</button>` : "";
+  const autoSystem = !tts.voice && ttsIsApple() && !voices.some((v) => ttsQuality(v) > 0);
+  const vOpts = `<select data-tts-voice style="width:auto;max-width:230px"><option value="">Voix automatique (${autoSystem ? "celle de l'appareil" : voices.length ? esc(ttsVoiceLabel(voices[0], voices)) : "—"})</option><option value="${TTS_SYSTEM}" ${tts.voice === TTS_SYSTEM ? "selected" : ""}>Voix de l'appareil (Réglages → Accessibilité)</option>${voices.map((v) => `<option value="${esc(ttsVoiceId(v))}" ${ttsVoiceId(v) === tts.voice || v.name === tts.voice ? "selected" : ""}>${esc(ttsVoiceLabel(v, voices))}</option>`).join("")}</select><button class="btn ghost small" data-tts-preview title="Écouter un extrait avec cette voix">▶ Essayer</button>
+      <span class="muted" style="font-size:11px">${voices.length} voix française(s) proposée(s) par le navigateur${ttsIsApple() ? " · les voix Premium téléchargées se choisissent dans Réglages → Accessibilité → Contenu énoncé → Voix, puis « Voix de l'appareil » ici" : ""}</span>`;
   const rOpts = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2].map((r) => `<option value="${r}" ${Math.abs(tts.rate - r) < 0.01 ? "selected" : ""}>×${r}</option>`).join("");
   return `<div class="md-ctl"><span>Lecture à voix haute</span><div class="inline" style="gap:6px;flex-wrap:wrap">
       ${tts.playing ? `<button class="btn small" data-tts-stop>■ Arrêter</button>` : `<button class="btn small" data-tts-play ${canRead ? "" : "disabled"}>🔊 Lire${reader.kind === "pdf" && pdfOpen ? ` (page ${Math.min(pdfPageNow || 1, pdfOpen.doc.numPages)})` : ""}</button>`}
