@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v115";
+const APP_VERSION = "v116";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1368,8 +1368,46 @@ function ttsSkip(n) {
   if (tts.paused) { ttsBar(); return; }
   ttsSpeakCurrent(); ttsBar();
 }
-function ttsSetRate(r) { tts.rate = Math.max(0.5, Math.min(2, Number(r) || 1)); ttsSavePrefs(); if (tts.playing && !tts.paused) { ttsSeq++; try { speechSynthesis.cancel(); } catch (e) {} ttsSpeakCurrent(); } }
+function ttsSetRate(r) { tts.rate = Math.max(0.5, Math.min(2, Number(r) || 1)); ttsSavePrefs(); if (tts.playing && !tts.paused) { ttsSeq++; try { speechSynthesis.cancel(); } catch (e) {} ttsSpeakCurrent(); } if (!tts.playing) render(); else ttsBar(); }
 function ttsSetVoice(name) { tts.voice = name || ""; ttsSavePrefs(); if (tts.playing && !tts.paused) { ttsSeq++; try { speechSynthesis.cancel(); } catch (e) {} ttsSpeakCurrent(); } }
+// Nombre de mots et durée estimée (≈ 150 mots par minute à la vitesse ×1, en français).
+const TTS_WPM = 150;
+const countWords = (t) => (String(t || "").match(/[A-Za-zÀ-ÿ0-9]+(?:['’\-][A-Za-zÀ-ÿ0-9]+)*/g) || []).length;
+function ttsDuration(words, rate) { const min = words / (TTS_WPM * (rate || tts.rate || 1)); return min < 1 ? "moins d'une minute" : min < 60 ? `${Math.round(min)} min` : `${Math.floor(min / 60)} h ${String(Math.round(min % 60)).padStart(2, "0")}`; }
+const ttsStats = {};   // id de PDF → { pages: [mots par page], done, total }
+function ttsPdfStats(d) {
+  if (!d || !pdfOpen || pdfOpen.id !== d.id) return null;
+  let st = ttsStats[d.id];
+  if (!st) {
+    st = ttsStats[d.id] = { pages: [], done: false, total: 0 };
+    (async () => {
+      try {
+        for (let p = 1; p <= pdfOpen.doc.numPages; p++) {
+          if (!pdfOpen || pdfOpen.id !== d.id) return;
+          const tc = await (await pdfOpen.doc.getPage(p)).getTextContent();
+          st.pages[p] = countWords(pdfPageText(tc)); st.total += st.pages[p];
+        }
+        st.done = true;
+      } catch (e) { st.done = true; }
+      if (view.section === "reader" && docTab === "lecteur" && reader.kind === "pdf") render();
+    })();
+  }
+  return st;
+}
+function ttsStatsLine() {
+  if (reader.kind === "pdf") {
+    const d = currentPdf(), st = ttsPdfStats(d);
+    if (!st) return "";
+    if (!st.done) return `<span class="muted" style="font-size:12px">Comptage des mots…</span>`;
+    const from = Math.max(1, Math.min(pdfOpen.doc.numPages, pdfPageNow || 1));
+    let rest = 0; for (let p = from; p <= pdfOpen.doc.numPages; p++) rest += st.pages[p] || 0;
+    return `<span class="muted" style="font-size:12px">${rest.toLocaleString("fr-FR")} mots à lire depuis la page ${from} · ${ttsDuration(rest)} à ×${tts.rate}${from > 1 ? ` · document entier : ${st.total.toLocaleString("fr-FR")} mots, ${ttsDuration(st.total)}` : ""}</span>`;
+  }
+  const d = currentDoc(), txt = d ? readerLib.texts[d.id] : null;
+  if (txt == null) return "";
+  const w = countWords(mdToPlain(txt));
+  return `<span class="muted" style="font-size:12px">${w.toLocaleString("fr-FR")} mots · ${ttsDuration(w)} à ×${tts.rate}</span>`;
+}
 // Commandes dans la barre du lecteur (avant lecture) et barre flottante pendant la lecture.
 function ttsControls(canRead) {
   if (!ttsAvailable()) return "";
@@ -1380,12 +1418,14 @@ function ttsControls(canRead) {
   const rOpts = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2].map((r) => `<option value="${r}" ${Math.abs(tts.rate - r) < 0.01 ? "selected" : ""}>×${r}</option>`).join("");
   return `<div class="md-ctl"><span>Lecture à voix haute</span><div class="inline" style="gap:6px;flex-wrap:wrap">
       ${tts.playing ? `<button class="btn small" data-tts-stop>■ Arrêter</button>` : `<button class="btn small" data-tts-play ${canRead ? "" : "disabled"}>🔊 Lire${reader.kind === "pdf" && pdfOpen ? ` (page ${Math.min(pdfPageNow || 1, pdfOpen.doc.numPages)})` : ""}</button>`}
-      <select data-tts-rate style="width:auto" title="Vitesse">${rOpts}</select>${vOpts}</div></div>`;
+      <select data-tts-rate style="width:auto" title="Vitesse">${rOpts}</select>${vOpts}</div>${canRead ? `<div style="margin-top:4px">${ttsStatsLine()}</div>` : ""}</div>`;
 }
 function ttsBarHtml() {
   if (!tts.playing) return "";
   const c = tts.chunks[tts.idx];
-  const where = tts.kind === "pdf" ? `page ${tts.page} / ${tts.pages}` : `${Math.min(tts.idx + 1, tts.chunks.length)} / ${tts.chunks.length}`;
+  let restWords = tts.chunks.slice(tts.idx).reduce((t, x) => t + countWords(x.t), 0);
+  if (tts.kind === "pdf" && ttsStats[tts.docId] && ttsStats[tts.docId].done) for (let p = tts.page + 1; p <= tts.pages; p++) restWords += ttsStats[tts.docId].pages[p] || 0;
+  const where = (tts.kind === "pdf" ? `page ${tts.page} / ${tts.pages}` : `${Math.min(tts.idx + 1, tts.chunks.length)} / ${tts.chunks.length}`) + ` · reste ${ttsDuration(restWords)}`;
   return `<div class="tts-bar" id="ttsBar">
       <button class="btn ghost small" data-tts-skip="-1" title="Phrase précédente">⏮</button>
       ${tts.paused ? `<button class="btn small" data-tts-resume>▶ Reprendre</button>` : `<button class="btn small" data-tts-pause>⏸ Pause</button>`}
