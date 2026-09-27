@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v113";
+const APP_VERSION = "v114";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1208,11 +1208,30 @@ const ttsAvailable = () => typeof speechSynthesis !== "undefined" && typeof Spee
 const ttsVoiceId = (v) => v.voiceURI || v.name;
 function ttsQuality(v) { const id = (v.voiceURI || "") + " " + (v.name || ""); return /premium/i.test(id) ? 2 : /enhanced|am[ée]lior|super-compact/i.test(id) && !/compact/i.test(v.voiceURI || "") ? 1 : /enhanced|am[ée]lior/i.test(id) ? 1 : 0; }
 const ttsQualityLabel = (v) => ["", "Améliorée", "Premium"][ttsQuality(v)];
+const TTS_REGIONS = { "fr-FR": "France", "fr-CA": "Canada", "fr-BE": "Belgique", "fr-CH": "Suisse" };
 function ttsVoices() {
   if (!ttsAvailable() || !speechSynthesis.getVoices) return [];
-  const all = speechSynthesis.getVoices() || [];
-  const fr = all.filter((v) => /^fr/i.test(v.lang));
-  return (fr.length ? fr : all).sort((a, b) => ttsQuality(b) - ttsQuality(a) || (b.localService ? 1 : 0) - (a.localService ? 1 : 0) || a.name.localeCompare(b.name));
+  const all = speechSynthesis.getVoices() || [], seen = {};
+  const uniq = all.filter((v) => { const k = ttsVoiceId(v) + "|" + v.lang; if (seen[k]) return false; seen[k] = 1; return true; });
+  const fr = uniq.filter((v) => /^fr/i.test(v.lang));
+  return (fr.length ? fr : uniq).sort((a, b) => (/^fr-FR/i.test(b.lang) ? 1 : 0) - (/^fr-FR/i.test(a.lang) ? 1 : 0) || ttsQuality(b) - ttsQuality(a) || (b.localService ? 1 : 0) - (a.localService ? 1 : 0) || a.name.localeCompare(b.name));
+}
+// Libellé d'une voix : nom, qualité, et la région quand plusieurs voix portent le même nom.
+function ttsVoiceLabel(v, all) {
+  const base = String(v.name || "").replace(/\s*\(.*\)$/, "");
+  const dup = (all || []).filter((x) => String(x.name || "").replace(/\s*\(.*\)$/, "") === base);
+  const parts = [base];
+  const q = ttsQualityLabel(v); if (q) parts.push(q);
+  if (dup.length > 1 || !/^fr/i.test(v.lang)) { const reg = TTS_REGIONS[v.lang] || (String(v.lang || "").replace("_", "-")); if (reg) parts.push(reg); }
+  if (dup.length > 1 && !q && dup.some((x) => ttsQuality(x) > 0)) parts.push("compacte");
+  if (!v.localService) parts.push("en ligne");
+  return parts.join(" · ");
+}
+function ttsPreview() {
+  if (!ttsAvailable()) return;
+  ttsSeq++; try { speechSynthesis.cancel(); } catch (e) {}
+  const u = ttsUtterance("Bonjour Grégory. Voici comment je lis vos documents, à la vitesse choisie.");
+  try { speechSynthesis.speak(u); } catch (e) {}
 }
 if (typeof speechSynthesis !== "undefined" && "onvoiceschanged" in speechSynthesis) speechSynthesis.onvoiceschanged = () => { if (view.section === "reader" && docTab === "lecteur") render(); };
 // Markdown → texte à lire : titres, listes, liens, code, tableaux ramenés à des phrases.
@@ -1348,7 +1367,7 @@ function ttsSetVoice(name) { tts.voice = name || ""; ttsSavePrefs(); if (tts.pla
 function ttsControls(canRead) {
   if (!ttsAvailable()) return "";
   const voices = ttsVoices();
-  const vOpts = voices.length ? `<select data-tts-voice style="width:auto;max-width:190px"><option value="">Voix automatique (${esc(voices[0].name)}${ttsQualityLabel(voices[0]) ? " " + ttsQualityLabel(voices[0]) : ""})</option>${voices.map((v) => `<option value="${esc(ttsVoiceId(v))}" ${ttsVoiceId(v) === tts.voice || v.name === tts.voice ? "selected" : ""}>${esc(v.name.replace(/\s*\(.*\)$/, ""))}${ttsQualityLabel(v) ? " · " + ttsQualityLabel(v) : ""}${/^fr/i.test(v.lang) ? "" : " · " + esc(v.lang)}</option>`).join("")}</select>` : "";
+  const vOpts = voices.length ? `<select data-tts-voice style="width:auto;max-width:220px"><option value="">Voix automatique (${esc(ttsVoiceLabel(voices[0], voices))})</option>${voices.map((v) => `<option value="${esc(ttsVoiceId(v))}" ${ttsVoiceId(v) === tts.voice || v.name === tts.voice ? "selected" : ""}>${esc(ttsVoiceLabel(v, voices))}</option>`).join("")}</select><button class="btn ghost small" data-tts-preview title="Écouter un extrait avec cette voix">▶ Essayer</button>` : "";
   const rOpts = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2].map((r) => `<option value="${r}" ${Math.abs(tts.rate - r) < 0.01 ? "selected" : ""}>×${r}</option>`).join("");
   return `<div class="md-ctl"><span>Lecture à voix haute</span><div class="inline" style="gap:6px;flex-wrap:wrap">
       ${tts.playing ? `<button class="btn small" data-tts-stop>■ Arrêter</button>` : `<button class="btn small" data-tts-play ${canRead ? "" : "disabled"}>🔊 Lire${reader.kind === "pdf" && pdfOpen ? ` (page ${Math.min(pdfPageNow || 1, pdfOpen.doc.numPages)})` : ""}</button>`}
@@ -1385,6 +1404,7 @@ function wireTts(c) {
   q("[data-tts-skip]").forEach((b) => b.onclick = () => ttsSkip(Number(b.dataset.ttsSkip)));
   q("[data-tts-rate]").forEach((s) => s.onchange = () => ttsSetRate(s.value));
   q("[data-tts-voice]").forEach((s) => s.onchange = () => ttsSetVoice(s.value));
+  q("[data-tts-preview]").forEach((b) => b.onclick = ttsPreview);
 }
 
 // ----------------------------- Outils PDF -----------------------------
