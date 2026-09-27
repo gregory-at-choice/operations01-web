@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v112";
+const APP_VERSION = "v113";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1202,11 +1202,17 @@ let tts = { playing: false, paused: false, kind: null, docId: null, chunks: [], 
 try { const p = JSON.parse(localStorage.getItem(TTS_KEY) || "null"); if (p) { tts.rate = Number(p.rate) || 1; tts.voice = p.voice || ""; } } catch (e) {}
 const ttsSavePrefs = () => { try { localStorage.setItem(TTS_KEY, JSON.stringify({ rate: tts.rate, voice: tts.voice })); } catch (e) {} };
 const ttsAvailable = () => typeof speechSynthesis !== "undefined" && typeof SpeechSynthesisUtterance !== "undefined";
+// Sur iPhone / iPad / Mac, une même voix existe en plusieurs qualités sous le même nom (« Aurélie »
+// compacte, améliorée, premium) : on distingue par l'identifiant, on affiche la qualité, et on
+// préfère la meilleure.
+const ttsVoiceId = (v) => v.voiceURI || v.name;
+function ttsQuality(v) { const id = (v.voiceURI || "") + " " + (v.name || ""); return /premium/i.test(id) ? 2 : /enhanced|am[ée]lior|super-compact/i.test(id) && !/compact/i.test(v.voiceURI || "") ? 1 : /enhanced|am[ée]lior/i.test(id) ? 1 : 0; }
+const ttsQualityLabel = (v) => ["", "Améliorée", "Premium"][ttsQuality(v)];
 function ttsVoices() {
   if (!ttsAvailable() || !speechSynthesis.getVoices) return [];
   const all = speechSynthesis.getVoices() || [];
   const fr = all.filter((v) => /^fr/i.test(v.lang));
-  return (fr.length ? fr : all).sort((a, b) => (b.localService ? 1 : 0) - (a.localService ? 1 : 0) || a.name.localeCompare(b.name));
+  return (fr.length ? fr : all).sort((a, b) => ttsQuality(b) - ttsQuality(a) || (b.localService ? 1 : 0) - (a.localService ? 1 : 0) || a.name.localeCompare(b.name));
 }
 if (typeof speechSynthesis !== "undefined" && "onvoiceschanged" in speechSynthesis) speechSynthesis.onvoiceschanged = () => { if (view.section === "reader" && docTab === "lecteur") render(); };
 // Markdown → texte à lire : titres, listes, liens, code, tableaux ramenés à des phrases.
@@ -1298,9 +1304,10 @@ async function ttsStart() {
 function ttsUtterance(text) {
   const u = new SpeechSynthesisUtterance(String(text).replace(/€/g, " euros").replace(/·/g, ","));
   u.lang = "fr-FR"; u.rate = tts.rate || 1;
-  const voices = ttsVoices();
-  const pick = (tts.voice && voices.find((v) => v.name === tts.voice)) || voices.find((v) => /am[ée]lie|audrey|aur[ée]lie|thomas|marie|daniel/i.test(v.name) && /^fr/i.test(v.lang)) || voices[0];
-  if (pick) u.voice = pick;
+  const voices = ttsVoices();   // déjà triées : premium, puis améliorée, puis compacte
+  const pick = (tts.voice && (voices.find((v) => ttsVoiceId(v) === tts.voice) || voices.find((v) => v.name === tts.voice)))
+    || voices.find((v) => /^fr/i.test(v.lang) && /am[ée]lie|audrey|aur[ée]lie|thomas|marie|daniel/i.test(v.name)) || voices[0];
+  if (pick) { u.voice = pick; u.lang = pick.lang || "fr-FR"; }
   return u;
 }
 function ttsSpeakCurrent() {
@@ -1341,7 +1348,7 @@ function ttsSetVoice(name) { tts.voice = name || ""; ttsSavePrefs(); if (tts.pla
 function ttsControls(canRead) {
   if (!ttsAvailable()) return "";
   const voices = ttsVoices();
-  const vOpts = voices.length ? `<select data-tts-voice style="width:auto;max-width:170px"><option value="">Voix automatique</option>${voices.map((v) => `<option value="${esc(v.name)}" ${v.name === tts.voice ? "selected" : ""}>${esc(v.name.replace(/\s*\(.*\)$/, ""))}${/^fr/i.test(v.lang) ? "" : " · " + esc(v.lang)}</option>`).join("")}</select>` : "";
+  const vOpts = voices.length ? `<select data-tts-voice style="width:auto;max-width:190px"><option value="">Voix automatique (${esc(voices[0].name)}${ttsQualityLabel(voices[0]) ? " " + ttsQualityLabel(voices[0]) : ""})</option>${voices.map((v) => `<option value="${esc(ttsVoiceId(v))}" ${ttsVoiceId(v) === tts.voice || v.name === tts.voice ? "selected" : ""}>${esc(v.name.replace(/\s*\(.*\)$/, ""))}${ttsQualityLabel(v) ? " · " + ttsQualityLabel(v) : ""}${/^fr/i.test(v.lang) ? "" : " · " + esc(v.lang)}</option>`).join("")}</select>` : "";
   const rOpts = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2].map((r) => `<option value="${r}" ${Math.abs(tts.rate - r) < 0.01 ? "selected" : ""}>×${r}</option>`).join("");
   return `<div class="md-ctl"><span>Lecture à voix haute</span><div class="inline" style="gap:6px;flex-wrap:wrap">
       ${tts.playing ? `<button class="btn small" data-tts-stop>■ Arrêter</button>` : `<button class="btn small" data-tts-play ${canRead ? "" : "disabled"}>🔊 Lire${reader.kind === "pdf" && pdfOpen ? ` (page ${Math.min(pdfPageNow || 1, pdfOpen.doc.numPages)})` : ""}</button>`}
