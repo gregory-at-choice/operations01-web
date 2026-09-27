@@ -178,6 +178,10 @@ Dans Documents → Lecteur, « 🔊 Lire » lit le document ouvert avec la synth
 listes, liens, code, tableaux) et lu en entier. PDF : texte extrait page par page à partir de la page
 affichée, la vue suit la lecture ; les pages sans texte (scans) sont sautées. Une barre flottante offre
 pause / reprise, phrase précédente / suivante et arrêt ; changer de document ou d'écran arrête la lecture.
+Avant lecture : nombre de mots et durée estimée à la vitesse choisie. Documents longs : la position est
+mémorisée par document (« Reprendre (57 %) » / « Reprendre (page 12 / 40) »), les titres du Markdown
+servent de chapitres (« Lire à partir du chapitre… »), la barre affiche la progression, le chapitre et le
+temps restant, et l'écran est maintenu allumé pendant la lecture (le verrouillage coupe la voix).
 
 ## Lire les mails dans l'app (Gmail, lecture seule)
 

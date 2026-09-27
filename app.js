@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v116";
+const APP_VERSION = "v117";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1288,6 +1288,33 @@ function pdfPageText(tc) {
   });
   return out.replace(/(\w)-\s+(\w)/g, "$1$2").trim();
 }
+// Markdown long : découpe avec repérage des chapitres (titres), pour reprendre ou sauter à un chapitre.
+function ttsBuildMd(src) {
+  const chunks = [], chapters = [];
+  String(src || "").replace(/\r/g, "").split(/\n\s*\n/).forEach((block) => {
+    const hm = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(block.trim());
+    if (hm && hm[1].length <= 3) chapters.push({ title: hm[2].replace(/[*_`]/g, "").trim(), idx: chunks.length });
+    ttsChunks(mdToPlain(block)).forEach((t) => chunks.push({ t }));
+  });
+  return { chunks, chapters };
+}
+// Position de lecture mémorisée par document (reprise là où on s'était arrêté).
+const TTS_POS_KEY = "op01_ttsPos";
+function ttsPositions() { try { return JSON.parse(localStorage.getItem(TTS_POS_KEY) || "{}") || {}; } catch (e) { return {}; } }
+function ttsSavePos() {
+  if (!tts.docId) return;
+  const all = ttsPositions();
+  all[tts.docId] = { kind: tts.kind, idx: tts.idx, page: tts.page, total: tts.chunks.length, at: Date.now() };
+  const keys = Object.keys(all).sort((a, b) => (all[b].at || 0) - (all[a].at || 0)).slice(0, 50);   // les 50 derniers documents
+  const kept = {}; keys.forEach((k) => kept[k] = all[k]);
+  try { localStorage.setItem(TTS_POS_KEY, JSON.stringify(kept)); } catch (e) {}
+}
+function ttsClearPos(id) { const all = ttsPositions(); delete all[id]; try { localStorage.setItem(TTS_POS_KEY, JSON.stringify(all)); } catch (e) {} }
+const ttsPosOf = (id) => ttsPositions()[id] || null;
+// Écran maintenu allumé pendant la lecture (Safari et Chrome récents) : sinon le verrouillage coupe la voix.
+let ttsWake = null;
+async function ttsWakeOn() { try { if (!ttsWake && navigator.wakeLock) { ttsWake = await navigator.wakeLock.request("screen"); ttsWake.addEventListener("release", () => { ttsWake = null; }); } } catch (e) { ttsWake = null; } }
+function ttsWakeOff() { try { if (ttsWake) ttsWake.release(); } catch (e) {} ttsWake = null; }
 async function ttsLoadPdfPage(p) {
   const page = await pdfOpen.doc.getPage(p);
   const tc = await page.getTextContent();
@@ -1295,16 +1322,23 @@ async function ttsLoadPdfPage(p) {
 }
 function ttsStop(silent) {
   const was = tts.playing || tts.paused;
-  tts.playing = false; tts.paused = false; tts.chunks = []; tts.idx = 0; tts.loading = false;
+  if (was) ttsSavePos();
+  ttsWakeOff();
+  tts.playing = false; tts.paused = false; tts.chunks = []; tts.idx = 0; tts.loading = false; tts.chapters = [];
   try { if (ttsAvailable()) speechSynthesis.cancel(); } catch (e) {}
   if (was && !silent) ttsBar();
 }
-async function ttsStart() {
+async function ttsStart(opts) {
+  opts = opts || {};
   if (!ttsAvailable()) { alert("La lecture à voix haute n'est pas disponible dans ce navigateur."); return; }
   ttsStop(true);
+  let startIdx = 0;
   if (reader.kind === "pdf") {
     const d = currentPdf(); if (!d || !pdfOpen || pdfOpen.id !== d.id) { toast("Ouvre d'abord un PDF."); return; }
-    tts.kind = "pdf"; tts.docId = d.id; tts.pages = pdfOpen.doc.numPages; tts.page = Math.max(1, Math.min(tts.pages, pdfPageNow || 1));
+    const pos = opts.resume ? ttsPosOf(d.id) : null;
+    tts.kind = "pdf"; tts.docId = d.id; tts.pages = pdfOpen.doc.numPages;
+    tts.page = Math.max(1, Math.min(tts.pages, pos ? pos.page : (opts.page || pdfPageNow || 1)));
+    if (pos) startIdx = pos.idx || 0;
     tts.playing = true; tts.loading = true; ttsBar();
     try { tts.chunks = await ttsLoadPdfPage(tts.page); } catch (e) { tts.loading = false; ttsStop(); alert("Lecture du texte du PDF impossible : " + (e.message || e)); return; }
     tts.loading = false;
@@ -1315,11 +1349,15 @@ async function ttsStart() {
     const d = currentDoc(); const txt = d ? readerLib.texts[d.id] : null;
     if (!d || txt == null) { toast("Ouvre d'abord un document."); return; }
     tts.kind = "md"; tts.docId = d.id; tts.pages = 0; tts.page = 0;
-    tts.chunks = ttsChunks(mdToPlain(txt)).map((t) => ({ t }));
+    const built = ttsBuildMd(txt);
+    tts.chunks = built.chunks; tts.chapters = built.chapters;
     if (!tts.chunks.length) { toast("Rien à lire dans ce document."); return; }
+    const pos = opts.resume ? ttsPosOf(d.id) : null;
+    startIdx = pos ? pos.idx : (opts.chunkIdx || 0);
     tts.playing = true;
   }
-  tts.idx = 0; tts.paused = false;
+  tts.idx = Math.max(0, Math.min(tts.chunks.length - 1, startIdx)); tts.paused = false;
+  ttsWakeOn();
   ttsBar(); ttsSpeakCurrent();
 }
 function ttsUtterance(text) {
@@ -1343,20 +1381,20 @@ function ttsSpeakCurrent() {
   if (tts.kind === "pdf" && c.page && c.page !== pdfPageNow && document.getElementById("pdfpage-" + c.page)) goToPdfPage(c.page);
   const u = ttsUtterance(c.t);
   const my = ++ttsSeq;
-  u.onend = () => { if (my !== ttsSeq || !tts.playing || tts.paused) return; tts.idx++; ttsBar(); ttsSpeakCurrent(); };
+  u.onend = () => { if (my !== ttsSeq || !tts.playing || tts.paused) return; tts.idx++; if (tts.idx % 5 === 0) ttsSavePos(); ttsBar(); ttsSpeakCurrent(); };
   u.onerror = (e) => { if (my !== ttsSeq) return; if (e && (e.error === "interrupted" || e.error === "canceled")) return; tts.idx++; ttsSpeakCurrent(); };
   try { speechSynthesis.speak(u); } catch (e) { ttsStop(); }
 }
 let ttsSeq = 0;
 async function ttsNextPage() {
-  if (tts.kind !== "pdf" || !pdfOpen || tts.page >= tts.pages) { ttsStop(); toast("Lecture terminée"); return; }
+  if (tts.kind !== "pdf" || !pdfOpen || tts.page >= tts.pages) { const id = tts.docId; ttsStop(); ttsClearPos(id); toast("Lecture terminée"); return; }
   tts.loading = true; ttsBar();
   try {
     let chunks = [];
     while (!chunks.length && tts.page < tts.pages) { tts.page++; chunks = await ttsLoadPdfPage(tts.page); }
     tts.loading = false;
-    if (!chunks.length) { ttsStop(); toast("Lecture terminée"); return; }
-    tts.chunks = chunks; tts.idx = 0; ttsBar(); ttsSpeakCurrent();
+    if (!chunks.length) { const id = tts.docId; ttsStop(); ttsClearPos(id); toast("Lecture terminée"); return; }
+    tts.chunks = chunks; tts.idx = 0; ttsSavePos(); ttsBar(); ttsSpeakCurrent();
   } catch (e) { tts.loading = false; ttsStop(); }
 }
 function ttsPause() { if (!tts.playing || tts.paused) return; tts.paused = true; ttsSeq++; try { speechSynthesis.cancel(); } catch (e) {} ttsBar(); }
@@ -1417,15 +1455,32 @@ function ttsControls(canRead) {
       <span class="muted" style="font-size:11px">${voices.length} voix française(s) proposée(s) par le navigateur${ttsIsApple() ? " · les voix Premium téléchargées se choisissent dans Réglages → Accessibilité → Contenu énoncé → Voix, puis « Voix de l'appareil » ici" : ""}</span>`;
   const rOpts = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2].map((r) => `<option value="${r}" ${Math.abs(tts.rate - r) < 0.01 ? "selected" : ""}>×${r}</option>`).join("");
   return `<div class="md-ctl"><span>Lecture à voix haute</span><div class="inline" style="gap:6px;flex-wrap:wrap">
-      ${tts.playing ? `<button class="btn small" data-tts-stop>■ Arrêter</button>` : `<button class="btn small" data-tts-play ${canRead ? "" : "disabled"}>🔊 Lire${reader.kind === "pdf" && pdfOpen ? ` (page ${Math.min(pdfPageNow || 1, pdfOpen.doc.numPages)})` : ""}</button>`}
+      ${tts.playing ? `<button class="btn small" data-tts-stop>■ Arrêter</button>` : ttsStartButtons(canRead)}
       <select data-tts-rate style="width:auto" title="Vitesse">${rOpts}</select>${vOpts}</div>${canRead ? `<div style="margin-top:4px">${ttsStatsLine()}</div>` : ""}</div>`;
+}
+// Boutons de départ : reprendre là où on s'était arrêté, lire depuis le début / la page affichée, ou depuis un chapitre.
+function ttsStartButtons(canRead) {
+  const d = reader.kind === "pdf" ? currentPdf() : currentDoc();
+  const pos = d && canRead ? ttsPosOf(d.id) : null;
+  let html = "";
+  if (pos && pos.kind === reader.kind && (pos.idx > 0 || pos.page > 1)) {
+    const pct = pos.kind === "pdf" ? `page ${pos.page}${tts.pages || (pdfOpen && pdfOpen.doc) ? " / " + (pdfOpen ? pdfOpen.doc.numPages : "") : ""}` : `${Math.round(100 * pos.idx / Math.max(1, pos.total))} %`;
+    html += `<button class="btn small" data-tts-resume-doc title="Reprendre là où tu t'étais arrêté">▶ Reprendre (${esc(pct)})</button>`;
+  }
+  html += `<button class="btn ${pos ? "secondary" : ""} small" data-tts-play ${canRead ? "" : "disabled"}>🔊 ${pos ? "Depuis le début" : "Lire"}${reader.kind === "pdf" && pdfOpen ? ` (page ${Math.min(pdfPageNow || 1, pdfOpen.doc.numPages)})` : ""}</button>`;
+  if (reader.kind === "md" && canRead && d) {
+    const built = ttsBuildMd(readerLib.texts[d.id] || "");
+    if (built.chapters.length > 1) html += `<select data-tts-chapter style="width:auto;max-width:220px"><option value="">Lire à partir du chapitre…</option>${built.chapters.map((c) => `<option value="${c.idx}">${esc(c.title.slice(0, 60))}</option>`).join("")}</select>`;
+  }
+  return html;
 }
 function ttsBarHtml() {
   if (!tts.playing) return "";
   const c = tts.chunks[tts.idx];
   let restWords = tts.chunks.slice(tts.idx).reduce((t, x) => t + countWords(x.t), 0);
   if (tts.kind === "pdf" && ttsStats[tts.docId] && ttsStats[tts.docId].done) for (let p = tts.page + 1; p <= tts.pages; p++) restWords += ttsStats[tts.docId].pages[p] || 0;
-  const where = (tts.kind === "pdf" ? `page ${tts.page} / ${tts.pages}` : `${Math.min(tts.idx + 1, tts.chunks.length)} / ${tts.chunks.length}`) + ` · reste ${ttsDuration(restWords)}`;
+  const chap = tts.kind === "md" && tts.chapters && tts.chapters.length ? (tts.chapters.filter((c) => c.idx <= tts.idx).slice(-1)[0] || null) : null;
+  const where = (tts.kind === "pdf" ? `page ${tts.page} / ${tts.pages}` : `${Math.round(100 * tts.idx / Math.max(1, tts.chunks.length))} %${chap ? " · " + chap.title.slice(0, 40) : ""}`) + ` · reste ${ttsDuration(restWords)}${ttsWake ? " · écran maintenu allumé" : ""}`;
   return `<div class="tts-bar" id="ttsBar">
       <button class="btn ghost small" data-tts-skip="-1" title="Phrase précédente">⏮</button>
       ${tts.paused ? `<button class="btn small" data-tts-resume>▶ Reprendre</button>` : `<button class="btn small" data-tts-pause>⏸ Pause</button>`}
@@ -1447,6 +1502,8 @@ function ttsBar() {
 function wireTts(c) {
   const q = (sel) => c.querySelectorAll(sel);
   q("[data-tts-play]").forEach((b) => b.onclick = () => ttsStart());
+  q("[data-tts-resume-doc]").forEach((b) => b.onclick = () => ttsStart({ resume: true }));
+  q("[data-tts-chapter]").forEach((s) => s.onchange = () => { if (s.value !== "") ttsStart({ chunkIdx: Number(s.value) }); });
   q("[data-tts-stop]").forEach((b) => b.onclick = () => { ttsStop(true); render(); });
   q("[data-tts-pause]").forEach((b) => b.onclick = ttsPause);
   q("[data-tts-resume]").forEach((b) => b.onclick = ttsResume);
