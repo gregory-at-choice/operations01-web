@@ -183,6 +183,11 @@ mémorisée par document (« Reprendre (57 %) » / « Reprendre (page 12 / 40) �
 servent de chapitres (« Lire à partir du chapitre… »), la barre affiche la progression, le chapitre et le
 temps restant, et l'écran est maintenu allumé pendant la lecture (le verrouillage coupe la voix).
 
+Dans Planning, « 🔊 Lire la synthèse » (Synthèse agenda) et « 🔊 Lire l'agenda » (Agenda) lisent un texte
+parlé (interlocuteurs, invités à trouver, réponses en attente, à préparer ; retards puis jour par jour)
+avec les mêmes réglages de voix et de vitesse que Documents, réglables sur place ; changer d'onglet du
+Planning ne coupe pas la lecture, changer de section l'arrête.
+
 ## Lire les mails dans l'app (Gmail, lecture seule)
 
 Sur la page d'un message « À traiter », la carte **Message complet** affiche le mail lui-même

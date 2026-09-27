@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v117";
+const APP_VERSION = "v118";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -404,7 +404,7 @@ function render() {
   if (view.section === "planning") { view.section = "rendezvous"; if (planningTab === "rdv") planningTab = "grille"; }   // ancienne rubrique « Planning »
   if (view.section === "dashboard") { view.section = "finances"; financeTab = "tableau"; }
   if (view.section === "actions") { view.section = "atraiter"; atTab = "actions"; if (view.detailId && String(view.detailId).indexOf("action:") !== 0) view.detailId = "action:" + view.detailId; }
-  if (tts.playing && !(view.section === "reader" && docTab === "lecteur" && ((tts.kind === "md" && reader.kind === "md" && state.readerCurrent === tts.docId) || (tts.kind === "pdf" && reader.kind === "pdf" && state.pdfCurrent === tts.docId)))) ttsStop(true);
+  if (tts.playing && tts.kind === "text" ? view.section !== tts.section : tts.playing && !(view.section === "reader" && docTab === "lecteur" && ((tts.kind === "md" && reader.kind === "md" && state.readerCurrent === tts.docId) || (tts.kind === "pdf" && reader.kind === "pdf" && state.pdfCurrent === tts.docId)))) ttsStop(true);
   const sec = SECTIONS.find((s) => s.id === view.section) || SECTIONS.find((s) => s.id === HOME_SECTION);
   // Une erreur dans le dessin d'un écran ne doit jamais figer l'app : on l'affiche
   // (message + où), on la garde en mémoire (menu Plus → « Dernière erreur ») et
@@ -1302,7 +1302,7 @@ function ttsBuildMd(src) {
 const TTS_POS_KEY = "op01_ttsPos";
 function ttsPositions() { try { return JSON.parse(localStorage.getItem(TTS_POS_KEY) || "{}") || {}; } catch (e) { return {}; } }
 function ttsSavePos() {
-  if (!tts.docId) return;
+  if (!tts.docId || tts.kind === "text") return;
   const all = ttsPositions();
   all[tts.docId] = { kind: tts.kind, idx: tts.idx, page: tts.page, total: tts.chunks.length, at: Date.now() };
   const keys = Object.keys(all).sort((a, b) => (all[b].at || 0) - (all[a].at || 0)).slice(0, 50);   // les 50 derniers documents
@@ -1446,6 +1446,31 @@ function ttsStatsLine() {
   const w = countWords(mdToPlain(txt));
   return `<span class="muted" style="font-size:12px">${w.toLocaleString("fr-FR")} mots · ${ttsDuration(w)} à ×${tts.rate}</span>`;
 }
+// Lecture d'un texte quelconque (synthèse d'agenda, agenda du jour…), avec les mêmes réglages de
+// voix et de vitesse que les documents. `key` identifie ce qui est lu, `section` l'écran qui l'accueille.
+async function ttsStartText(text, key, section) {
+  if (!ttsAvailable()) { alert("La lecture à voix haute n'est pas disponible dans ce navigateur."); return; }
+  ttsStop(true);
+  const chunks = ttsChunks(text).map((t) => ({ t }));
+  if (!chunks.length) { toast("Rien à lire."); return; }
+  tts.kind = "text"; tts.docId = key; tts.section = section || view.section; tts.pages = 0; tts.page = 0; tts.chapters = [];
+  tts.chunks = chunks; tts.idx = 0; tts.paused = false; tts.playing = true;
+  ttsWakeOn(); render(); ttsSpeakCurrent();   // render() : le bouton devient « Arrêter » et la barre de lecture apparaît
+}
+// Bloc « Lire à voix haute » pour un texte : bouton, mots et durée, vitesse, voix, essai.
+function ttsTextControls(text, key, label) {
+  if (!ttsAvailable()) return "";
+  const w = countWords(text);
+  const rOpts = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2].map((r) => `<option value="${r}" ${Math.abs(tts.rate - r) < 0.01 ? "selected" : ""}>×${r}</option>`).join("");
+  const voices = ttsVoices(), autoSystem = !tts.voice && ttsIsApple() && !voices.some((v) => ttsQuality(v) > 0);
+  const vOpts = `<select data-tts-voice style="width:auto;max-width:230px"><option value="">Voix automatique (${autoSystem ? "celle de l'appareil" : voices.length ? esc(ttsVoiceLabel(voices[0], voices)) : "—"})</option><option value="${TTS_SYSTEM}" ${tts.voice === TTS_SYSTEM ? "selected" : ""}>Voix de l'appareil (Réglages → Accessibilité)</option>${voices.map((v) => `<option value="${esc(ttsVoiceId(v))}" ${ttsVoiceId(v) === tts.voice || v.name === tts.voice ? "selected" : ""}>${esc(ttsVoiceLabel(v, voices))}</option>`).join("")}</select>`;
+  const playing = tts.playing && tts.kind === "text" && tts.docId === key;
+  return `<div class="card tts-inline"><div class="inline" style="gap:8px;flex-wrap:wrap">
+      ${playing ? `<button class="btn small" data-tts-stop>■ Arrêter</button>` : `<button class="btn small" data-tts-text="${esc(key)}" ${w ? "" : "disabled"}>🔊 ${esc(label || "Lire à voix haute")}</button>`}
+      <span class="muted" style="font-size:12px">${w.toLocaleString("fr-FR")} mots · ${ttsDuration(w)} à ×${tts.rate}</span><span class="grow"></span>
+      <select data-tts-rate style="width:auto" title="Vitesse">${rOpts}</select>${vOpts}<button class="btn ghost small" data-tts-preview title="Écouter un extrait avec cette voix">▶ Essayer</button></div></div>`;
+}
+const ttsTexts = {};   // clé → texte à lire, fourni par l'écran qui l'affiche
 // Commandes dans la barre du lecteur (avant lecture) et barre flottante pendant la lecture.
 function ttsControls(canRead) {
   if (!ttsAvailable()) return "";
@@ -1480,7 +1505,7 @@ function ttsBarHtml() {
   let restWords = tts.chunks.slice(tts.idx).reduce((t, x) => t + countWords(x.t), 0);
   if (tts.kind === "pdf" && ttsStats[tts.docId] && ttsStats[tts.docId].done) for (let p = tts.page + 1; p <= tts.pages; p++) restWords += ttsStats[tts.docId].pages[p] || 0;
   const chap = tts.kind === "md" && tts.chapters && tts.chapters.length ? (tts.chapters.filter((c) => c.idx <= tts.idx).slice(-1)[0] || null) : null;
-  const where = (tts.kind === "pdf" ? `page ${tts.page} / ${tts.pages}` : `${Math.round(100 * tts.idx / Math.max(1, tts.chunks.length))} %${chap ? " · " + chap.title.slice(0, 40) : ""}`) + ` · reste ${ttsDuration(restWords)}${ttsWake ? " · écran maintenu allumé" : ""}`;
+  const where = (tts.kind === "pdf" ? `page ${tts.page} / ${tts.pages}` : `${Math.round(100 * tts.idx / Math.max(1, tts.chunks.length))} %${chap ? " · " + chap.title.slice(0, 40) : ""}`) + ` · reste ${ttsDuration(restWords)}${ttsWake && tts.kind !== "text" ? " · écran maintenu allumé" : ""}`;
   return `<div class="tts-bar" id="ttsBar">
       <button class="btn ghost small" data-tts-skip="-1" title="Phrase précédente">⏮</button>
       ${tts.paused ? `<button class="btn small" data-tts-resume>▶ Reprendre</button>` : `<button class="btn small" data-tts-pause>⏸ Pause</button>`}
@@ -1502,6 +1527,7 @@ function ttsBar() {
 function wireTts(c) {
   const q = (sel) => c.querySelectorAll(sel);
   q("[data-tts-play]").forEach((b) => b.onclick = () => ttsStart());
+  q("[data-tts-text]").forEach((b) => b.onclick = () => { const k = b.dataset.ttsText; if (ttsTexts[k]) ttsStartText(ttsTexts[k], k, view.section); });
   q("[data-tts-resume-doc]").forEach((b) => b.onclick = () => ttsStart({ resume: true }));
   q("[data-tts-chapter]").forEach((s) => s.onchange = () => { if (s.value !== "") ttsStart({ chunkIdx: Number(s.value) }); });
   q("[data-tts-stop]").forEach((b) => b.onclick = () => { ttsStop(true); render(); });
@@ -6372,7 +6398,9 @@ function renderCalSummary() {
     ? s.prep.map((x) => evRow(x.e, calWhen(x.e) + " · " + x.reasons.join(" · "))).join("")
     : '<div class="muted" style="padding:4px 2px;font-size:14px">Rien qui demande une préparation particulière.</div>';
   const stat = (n, lbl) => `<div class="cal-stat"><div class="cal-stat-n">${n}</div><div class="cal-stat-l">${lbl}</div></div>`;
+  ttsTexts.synthese = calSummaryText(s);
   return `${notice}
+    ${ttsTextControls(ttsTexts.synthese, "synthese", "Lire la synthèse")}
     <div class="cal-stats">
       ${stat(s.up.length, "événements à venir")}
       ${stat(s.contacts.length, "interlocuteurs")}
@@ -6392,6 +6420,26 @@ function renderCalSummary() {
     ${calFooter()}`;
 }
 
+// Texte parlé de la synthèse d'agenda et de l'agenda (Planning → lecture à voix haute).
+const sayDate = (iso) => { const d = new Date(iso + "T12:00:00"), t = todayISO(); if (iso === t) return "aujourd'hui"; const tm = new Date(); tm.setDate(tm.getDate() + 1); if (iso === localISO(tm)) return "demain"; return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" }); };
+const sayTime = (t) => t ? " à " + String(t).replace(/^0/, "").replace(":", " heures ").replace(/ 00$/, "") : "";
+const sayFullDate = (iso) => new Date(iso + "T12:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });   // « 5 janvier 2020 » (fmtDate abrège : « 05 janv. »)
+function calSummaryText(s) {
+  const parts = [`Synthèse de l'agenda jusqu'au ${sayFullDate(calHorizonISO())}. ${s.up.length} événement${s.up.length > 1 ? "s" : ""} à venir, ${s.contacts.length} interlocuteur${s.contacts.length > 1 ? "s" : ""}.`];
+  if (s.contacts.length) parts.push("Avec qui : " + s.contacts.slice(0, 12).map((p) => `${p.name}, ${p.n} rendez-vous${p.next ? ", le prochain " + sayDate(p.next.date) : ""}`).join(". ") + ".");
+  parts.push(s.noGuests.length ? `Invités à trouver, ${s.noGuests.length} : ` + s.noGuests.slice(0, 10).map((e) => `${e.title}, ${calWhen(e)}`).join(". ") + "." : "Tous les rendez-vous à venir ont au moins un invité.");
+  if (s.waiting.length) parts.push(`Réponses en attente : ` + s.waiting.slice(0, 10).map((e) => e.title).join(", ") + ".");
+  parts.push(s.prep.length ? `À préparer, ${s.prep.length} : ` + s.prep.slice(0, 10).map((x) => `${x.e.title}, ${calWhen(x.e)} : ${x.reasons.join(", ")}`).join(". ") + "." : "Rien qui demande une préparation particulière.");
+  return parts.join("\n\n");
+}
+function agendaText(upcoming, overdue) {
+  const parts = [];
+  if (overdue.length) parts.push(`En retard, ${overdue.length} : ` + overdue.slice(0, 10).map((e) => `${e.title}, prévu le ${sayFullDate(e.date)}`).join(". ") + ".");
+  const byDay = {};
+  upcoming.slice(0, 40).forEach((e) => (byDay[e.date] = byDay[e.date] || []).push(e));
+  Object.keys(byDay).sort().forEach((d) => parts.push(`${sayDate(d).charAt(0).toUpperCase() + sayDate(d).slice(1)} : ` + byDay[d].map((e) => `${e.kind ? e.kind + ", " : ""}${e.title}${sayTime(e.time)}`).join(". ") + "."));
+  return parts.length ? parts.join("\n\n") : "Rien de planifié.";
+}
 // ----------------------------- Rendez-vous -----------------------------
 function rdvWhen(r) {
   if (!r.date) return "Date à définir";
@@ -6492,7 +6540,7 @@ function renderPlanningHub() {
   const tabs = PLANNING_TABS.map(([id, lbl]) => `<button class="chip ${planningTab === id ? "active" : ""}" data-ptab="${id}">${lbl}</button>`).join("");
   const body = planningTab === "rdv" ? renderRendezvous().replace('<div class="page-title grow" style="margin:0">Rendez-vous</div>', '<span class="grow"></span>')
     : planningTab === "grille" ? renderTimetable() : planningTab === "synthese" ? renderCalSummary() : renderAgenda();
-  return `<div class="page-title">Planning</div><div class="chip-row" style="margin-bottom:14px">${tabs}</div>${body}${planningTab === "grille" ? calHint() : ""}`;
+  return `<div class="page-title">Planning</div><div class="chip-row" style="margin-bottom:14px">${tabs}</div>${body}${planningTab === "grille" ? calHint() : ""}${tts.kind === "text" ? ttsBarHtml() : ""}`;
 }
 function renderPlanning() { return renderPlanningHub(); }
 function renderAgenda() {
@@ -6516,8 +6564,10 @@ function renderAgenda() {
     ? `<div class="section-h" style="color:#d23c3c">En retard <span class="muted">(${overdue.length})</span></div><div class="list">${overdue.map(evRow).join("")}</div>`
     : "";
   const empty = !all.length ? '<div class="center-empty">Rien de planifié.<br>Ajoute des échéances aux tâches/actions ou crée des rendez-vous.</div>' : "";
+  ttsTexts.agenda = agendaText(upcoming, overdue);
   return `<div class="toolbar"><span class="grow"></span>
       <button class="btn" data-add-rdv>+ Rendez-vous</button></div>
+    ${all.length ? ttsTextControls(ttsTexts.agenda, "agenda", "Lire l'agenda") : ""}
     <div class="muted" style="font-size:13px;margin-bottom:12px">Échéances des tâches et des actions ouvertes, rendez-vous et événements de l'agenda Google — par ordre chronologique.</div>
     ${calNotice()}
     ${empty}${overdueHtml}
