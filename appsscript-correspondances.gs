@@ -46,7 +46,7 @@ var DOSSIER_CORRESPONDANCES_ID = "";   // vide = boîte principale (dossier cré
 var DOSSIER_NOM = "Correspondances";
 var DATA_FILE = "operations01-data.json";
 var FREQUENCE_MINUTES = 15;            // 1, 5, 10, 15, 30 ; 60 = toutes les heures
-var ARCHIVE_DEPUIS = "2023-01-01";     // remonter l'historique jusqu'à cette date
+var ARCHIVE_DEPUIS = "2026-01-01";     // remonter l'historique jusqu'à cette date (les messages plus anciens ne sont pas archivés)
 var MAX_FILS_PAR_PASSAGE = 60;         // historique : fils relus par passage (quota Gmail)
 var MAX_FILS_RECENTS = 150;            // fils ayant bougé depuis le dernier passage
 var MAX_CARACTERES = 4000;             // longueur maximale conservée par message

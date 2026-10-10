@@ -198,7 +198,7 @@ envoyée** (ou « pas de réponse envoyée »). Les fichiers sont régénérés 
 - **Gmail** : `appsscript-correspondances.gs`, installé dans chaque compte Google (boîte principale :
   `DOSSIER_CORRESPONDANCES_ID` vide, le dossier est créé et partagé en écriture avec les boîtes
   secondaires déclarées dans l'app ; boîte secondaire : coller l'identifiant du dossier). Toutes les
-  15 minutes : fils ayant bougé, puis l'historique par tranches de 60 fils jusqu'à `ARCHIVE_DEPUIS`.
+  15 minutes : fils ayant bougé, puis l'historique par tranches de 60 fils jusqu'à `ARCHIVE_DEPUIS` (1er janvier 2026).
   Newsletters, notifications et messages entre mes propres adresses sont ignorés ; citations et
   signatures sont retirées ; 4 000 caractères au plus par message.
 - **SMS, iMessage, WhatsApp, Google Chat** : le Mac mini envoie les entrées au relais
