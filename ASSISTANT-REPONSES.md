@@ -148,6 +148,11 @@ cd /Users/choice/assistants/claude-vide && env -u ANTHROPIC_API_KEY CLAUDE_CODE_
 - `--effort medium` suffit pour une réponse ; `high` pour les urgences 1 et 2 si le résultat semble
   court.
 
+Forfait : **Max 20x**. Consommation attendue de la génération : 1 700 messages par mois, environ
+4 millions de jetons par semaine (un quart en cache), soit l'équivalent de 2 à 4 heures d'Opus par
+semaine, **5 à 12 % du plafond hebdomadaire**. À mesurer après deux nuits de lots avec `/usage` dans
+Claude Code (part de la fenêtre de 5 heures et de la semaine), et à reporter dans le brief du matin.
+
 Limites du forfait et repli :
 
 - Le forfait a une **fenêtre de 5 heures** et un **plafond hebdomadaire**, partagés avec mes
