@@ -209,7 +209,8 @@ envoyée** (ou « pas de réponse envoyée »). Les fichiers sont régénérés 
   principale).
 - **Réponses étayées** : pour chaque message, le Mac mini écrit `proposition.reponse` et
   `proposition.contexte[]` (source, titre, date, extrait, lien) après recherche dans l'archive de
-  l'interlocuteur, les archives du projet et les tâches. L'app affiche la réponse, la mention
+  l'interlocuteur, les archives du projet et les tâches, rédigée par Claude Opus 5.5 via le forfait
+  Claude (Claude Code en mode headless), le modèle local servant de repli. L'app affiche la réponse, la mention
   « étayée », les éléments de contexte, et ouvre Gmail, Messages ou WhatsApp pré-rempli selon le
   canal. Le contrat complet est dans `ASSISTANT-REPONSES.md`.
 

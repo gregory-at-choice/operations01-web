@@ -71,7 +71,7 @@ que ce champ sur un événement existant) devient, **pour toutes les urgences** 
 ```json
 "proposition": {
   "reponse": "Bonjour Éric, oui, 14 h sur place demain me convient. J'apporte la v2.2 …",
-  "genereePar": "qwen2.5:14b", "genereeLe": "2026-10-10T07:05:00Z",
+  "genereePar": "claude-opus-5-5", "genereeLe": "2026-10-10T07:05:00Z",
   "contexte": [
     { "source": "correspondance", "titre": "Éric Chenneveau · 28/09 · Point d'étape chantier",
       "date": "2026-09-28", "extrait": "« Première réunion de chantier le 28, visite SDIS dans la semaine. »",
@@ -108,14 +108,67 @@ que ce champ sur un événement existant) devient, **pour toutes les urgences** 
    (`https://drive.google.com/file/d/<id>/view` si l'identifiant est connu).
 4. **Événements précédents du même expéditeur** et leurs propositions acceptées (`statut: traite`).
 
-### Budget et cadence
+### Modèle : Claude Opus 5.5 via mon forfait Claude (Claude Code en mode headless)
 
-- Génération locale (Ollama), coût nul. Urgences 1 et 2 : à la réception, comme aujourd'hui (W6).
-  Urgences 3 et 4 : par lots, en heures creuses, 50 par passage, les plus récents d'abord.
+La rédaction des réponses se fait avec **Claude Opus 5.5**, facturé sur **mon abonnement Claude**
+(pas de clé API, pas de facturation au jeton), en appelant Claude Code sans interface depuis le
+pipeline. Le modèle local (Ollama) reste chargé du **classement**, des **vecteurs** et de la
+**présélection du contexte** ; il sert aussi de **repli** quand le forfait est épuisé.
+
+Mise en place (une fois, sur le Mac mini, avec le compte Claude Code déjà connecté) :
+
+1. `claude setup-token` → jeton OAuth valable un an, lié à l'abonnement. Le stocker dans le
+   trousseau ou un fichier `chmod 600`, et le fournir au pipeline par la variable
+   `CLAUDE_CODE_OAUTH_TOKEN`. Ne **jamais** définir `ANTHROPIC_API_KEY` dans l'environnement du
+   pipeline : en mode `-p`, une clé API présente l'emporte toujours sur le forfait.
+2. Claude Code ≥ 2.1.280 (Opus 5.5). Vérifier avec `claude --version`.
+3. Lancer chaque génération depuis un dossier **sans** `CLAUDE.md`, hooks ni serveurs MCP (par
+   exemple `/Users/choice/assistants/claude-vide/`), pour que rien du contexte de développement ne
+   s'invite dans le prompt.
+
+Appel type (un message = un appel, prompt et contexte sur l'entrée standard) :
+
+```bash
+cd /Users/choice/assistants/claude-vide && env -u ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN="$(cat ~/.assistants/claude-token)" \
+  claude -p "$(cat /tmp/prompt-$ID.md)" \
+    --model claude-opus-5-5 --effort medium \
+    --tools "" --disallowedTools "mcp__*" \
+    --system-prompt-file /Users/choice/assistants/prompts/reponse-etayee.md \
+    --output-format json --json-schema "$(cat /Users/choice/assistants/prompts/proposition.schema.json)" \
+    --no-session-persistence
+```
+
+- `proposition.schema.json` décrit exactement l'objet `proposition` de la section 2 (`reponse`,
+  `contexte[]`). Le résultat validé est dans `structured_output` de la sortie JSON ; `result` et
+  `session_id` peuvent être ignorés.
+- Le prompt contient : le message reçu, les 30 dernières entrées de la correspondance, les extraits
+  du projet et des tâches présélectionnés localement, et trois de mes réponses réelles au même
+  interlocuteur (pour le ton). Viser 6 000 à 10 000 jetons, pas plus : le forfait se compte en
+  volume.
+- `--effort medium` suffit pour une réponse ; `high` pour les urgences 1 et 2 si le résultat semble
+  court.
+
+Limites du forfait et repli :
+
+- Le forfait a une **fenêtre de 5 heures** et un **plafond hebdomadaire**, partagés avec mes
+  propres sessions Claude et Claude Code. Réserver la génération immédiate aux **urgences 1 et 2**
+  (à la réception) et traiter les **urgences 3 et 4 par lots de 20, la nuit** (02 h à 06 h), les
+  plus récents d'abord, pour ne pas vider la fenêtre pendant que je travaille.
+- Quand Claude Code répond par une erreur de limite d'usage (sortie JSON avec `is_error: true` ou
+  code de retour non nul mentionnant « usage limit » / « rate limit »), **ne pas réessayer** avant
+  la fin de la fenêtre : basculer sur le modèle local pour ce message, avec
+  `genereePar: "qwen2.5:14b (repli, forfait épuisé)"`, et remettre l'événement dans la file pour
+  régénération par Opus au passage suivant.
+- Renouveler le jeton avant son échéance (un an) : noter la date dans le brief du matin un mois
+  avant.
+
+Cadence et journal :
+
 - Une proposition peut être **régénérée** (nouvel élément de contexte, réponse de ma part arrivée
   entre-temps) : renvoyer l'événement avec un `genereeLe` plus récent, le relais remplace.
 - Journaliser dans `~/Library/Logs/assistants/reponses.log` : id, urgence, sources consultées,
-  durée, modèle.
+  durée, modèle (`claude-opus-5-5` ou repli), et le `total_cost_usd` renvoyé (indicatif : avec le
+  forfait il n'est pas facturé).
 
 ## 3. Ce que l'app fait déjà (v119)
 
