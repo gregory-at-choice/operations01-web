@@ -11,7 +11,10 @@
  *   3. dresse un INDEX des fils de discussion récents (expéditeur, destinataires,
  *      objet, date, court extrait, lien) : la web app s'en sert pour afficher la
  *      correspondance de chaque projet ;
- *   4. écrit le résultat dans le fichier d'analyse (Drive), que la web app lit.
+ *   4. écrit le résultat dans le fichier d'analyse (Drive), que la web app lit ;
+ *   5. (boîte principale) y joint l'index du dossier « Correspondances » (un .md par
+ *      interlocuteur, voir appsscript-correspondances.gs) : la web app affiche alors
+ *      « Correspondance archivée (n) » sur les messages et les contacts.
  *
  * ── Boîte PRINCIPALE (le compte relié à la web app) ─────────────────────────
  *   Laissez FICHIER_MAILS_ID vide. Ouvrez une fois l'onglet « Relances » dans la
@@ -163,6 +166,7 @@ function analyserMails() {
 
   var out = { updatedAt: Date.now(), generatedAt: new Date().toISOString(), mailbox: moi,
     unread: unread, relance: relance, nouveau: nouveau, rdvPrep: rdvPrep, threads: threads };
+  if (!FICHIER_MAILS_ID) { try { out.correspondances = indexCorrespondances(); } catch (e) { Logger.log("Index des correspondances illisible : " + e); } }
   cible.setContent(JSON.stringify(out));
   Logger.log(unread.length + " non lus, " + relance.length + " à relancer, " + nouveau.length + " nouveaux, " + rdvPrep.length + " RDV, " + threads.length + " fils indexés (" + relus + " relus" + (complet ? ", index complet" : "") + ").");
   try { rangerFichiersJson(); } catch (e) { Logger.log("Rangement des JSON impossible : " + e); }
@@ -195,6 +199,17 @@ function dossierParChemin(chemin) {
     cur = it.hasNext() ? it.next() : cur.createFolder(nom);
   });
   return cur;
+}
+
+// Index du dossier « Correspondances » (racine du Drive) : clé → { nom, url, n, dernier, canaux }.
+function indexCorrespondances() {
+  var it = DriveApp.getRootFolder().getFoldersByName("Correspondances"); if (!it.hasNext()) return null;
+  var sd = it.next().getFoldersByName("_données"); if (!sd.hasNext()) return null;
+  var f = sd.next().getFilesByName("index.json"); if (!f.hasNext()) return null;
+  var j = JSON.parse(f.next().getBlob().getDataAsString("UTF-8")) || {};
+  var cles = j.cles || {}, out = {};
+  Object.keys(cles).forEach(function (k) { var c = cles[k]; out[k] = { nom: c.nom || "", url: c.url || "", n: c.n || 0, dernier: c.dernier || "", canaux: c.canaux || [] }; });
+  return out;
 }
 
 // ---- Utilitaires ----

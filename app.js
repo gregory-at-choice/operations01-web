@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v118";
+const APP_VERSION = "v119";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -1751,7 +1751,9 @@ let mailStore = {};
 let mailData = null, mailLoading = false, mailLoadedAt = 0;
 const MAIL_RETRY = 5 * 60000;    // après un échec ou un fichier absent
 const MAIL_FRESH = 15 * 60000;   // relecture automatique quand les analyses datent (script toutes les 15 min)
-const mailVisible = () => view.section === "relances" || (view.section === "missions" && view.detailId);
+// Écrans qui montrent les analyses de mails : Relances, la page d'un projet, et (lien « Correspondance »)
+// la page d'un message ou d'un contact.
+const mailVisible = () => view.section === "relances" || (["missions", "atraiter", "contacts"].indexOf(view.section) > -1 && !!view.detailId);
 async function loadMails() {
   if (!(window.DriveSync && DriveSync.isConnected())) return;
   if (mailLoading) return;
@@ -2348,6 +2350,7 @@ const EVENT_FRESH = 5 * 60000;   // le Mac mini pousse toutes les 5 minutes
 const EVENT_RETRY = 5 * 60000;
 let eventFilter = { statut: "nouveau", source: "", compte: "", expediteur: "" };
 const EVENT_SOURCES = { mail: "Mail", sms: "SMS", imessage: "iMessage", whatsapp: "WhatsApp", googlechat: "Google Chat", bluesky: "Bluesky", linkedin: "LinkedIn", x: "X" };
+const CTX_SOURCES = { correspondance: "Correspondance", projet: "Projet", evenement: "Message", tache: "Tâche", document: "Document", agenda: "Agenda", contact: "Contact" };
 const EVENT_SOURCE_ICONS = { mail: "mail", sms: "smartphone", imessage: "message", whatsapp: "message", googlechat: "message-square", bluesky: "feather", linkedin: "briefcase", x: "message-square" };
 const EVENT_COMPTES = { choicefinance: "Choice Finance", majandco: "Majandco", icarus: "Icarus Swarms", gmail: "Gmail", outlook: "Outlook", "messages-mac-mini": "Messages", "whatsapp-mac-mini": "WhatsApp" };
 const EVENT_ACTIONS = { repondre: "Répondre", deleguer: "Déléguer", planifier: "Planifier", lire: "Lire", archiver: "Archiver" };
@@ -2435,12 +2438,24 @@ function eventAccountAddress(compte) {
 function eventComposeLink(ev) {
   const p = ev.proposition || {};
   if (!p.reponse) return "";
+  const num = eventPhone(ev);
+  // SMS / iMessage : l'app Messages s'ouvre avec le texte ; WhatsApp : la conversation avec le texte.
+  if (ev.source === "sms" || ev.source === "imessage") return num ? `sms:${num}${/iPhone|iPad|Macintosh/.test(navigator.userAgent) ? "&" : "?"}body=${encodeURIComponent(p.reponse)}` : "";
+  if (ev.source === "whatsapp") return num ? `https://wa.me/${num.replace(/\D/g, "")}?text=${encodeURIComponent(p.reponse)}` : "";
+  if (ev.source && ev.source !== "mail") return "";
   const addr = eventAccountAddress(ev.compte);
   const to = (ev.expediteur && ev.expediteur.adresse) || "";
   const q = [addr ? "authuser=" + encodeURIComponent(addr) : "", "view=cm", to ? "to=" + encodeURIComponent(to) : "",
     "su=" + encodeURIComponent(/^re\s*:/i.test(ev.sujet || "") ? ev.sujet : "Re: " + (ev.sujet || "")), "body=" + encodeURIComponent(p.reponse)].filter(Boolean).join("&");
   return "https://mail.google.com/mail/?" + q;
 }
+// Numéro de l'expéditeur d'un SMS / WhatsApp (adresse ou téléphone de l'événement), au format +33….
+function eventPhone(ev) {
+  const f = eventFrom(ev);
+  const k = corrKey(f.telephone || f.adresse || "");
+  return /^\+\d{8,15}$/.test(k) ? k : "";
+}
+const COMPOSE_LABELS = { sms: "Répondre dans Messages", imessage: "Répondre dans Messages", whatsapp: "Répondre dans WhatsApp" };
 // Durées estimées : en minutes dans les données, « 1 h 30 » à l'écran.
 function fmtEstim(min) {
   min = Math.round(Number(min) || 0);
@@ -2618,6 +2633,37 @@ function eventDueDate(ev) {
 }
 const eventTitle = (ev) => ev.sujet || ev.resume || "Événement";
 const eventFrom = (ev) => ev.expediteur || {};
+// ---- Correspondance archivée (dossier Drive « Correspondances », un .md par interlocuteur) ----
+// L'index est livré par le script mails de la boîte principale ; les clés sont des adresses
+// ou des téléphones au format +33…. Un contact de l'app relie son téléphone à son adresse.
+function corrKey(v) {
+  v = String(v || "").trim().toLowerCase();
+  if (!v) return "";
+  if (v.indexOf("@") > -1) return v;
+  let d = v.replace(/[^\d+]/g, "");
+  if (/^0\d{9}$/.test(d)) d = "+33" + d.slice(1);
+  if (/^33\d{9}$/.test(d)) d = "+" + d;
+  return d || v;
+}
+function corrIndex() { const m = mailStore.main; return (m && m.correspondances) || null; }
+// Fiche d'archive pour une adresse / un téléphone / un contact : { nom, url, n, dernier } ou null.
+function correspondanceOf(keys) {
+  const idx = corrIndex(); if (!idx) return null;
+  const list = (Array.isArray(keys) ? keys : [keys]).map(corrKey).filter(Boolean);
+  const tried = {};
+  for (const k of list) {
+    if (idx[k]) return idx[k];
+    // par le contact de l'app : téléphone → adresse, adresse → téléphone
+    const c = state.contacts.find((x) => corrKey(x.email) === k || corrKey(x.phone) === k);
+    if (c) for (const alt of [corrKey(c.email), corrKey(c.phone)]) { if (alt && !tried[alt] && idx[alt]) return idx[alt]; tried[alt] = 1; }
+  }
+  return null;
+}
+function correspondanceLink(keys, small) {
+  const r = correspondanceOf(keys); if (!r || !r.url) return "";
+  const t = `${r.n || 0} message${r.n > 1 ? "s" : ""} archivé${r.n > 1 ? "s" : ""}${r.dernier ? " · dernier le " + fmtDate(String(r.dernier).slice(0, 10)) : ""}`;
+  return `<a class="btn ghost ${small ? "small" : ""}" href="${esc(r.url)}" target="_blank" rel="noopener" title="Ouvrir le fichier de correspondance sur le Drive">${icon("folder")} Correspondance <span class="muted">(${esc(t)})</span></a>`;
+}
 // Crée une action (document ou réponse à obtenir) préremplie depuis l'événement.
 function eventToAction(ev) {
   const from = eventFrom(ev), adresse = String(from.adresse || "").toLowerCase();
@@ -2694,11 +2740,15 @@ function eventProposal(ev, open) {
       <input type="checkbox" data-ev-step="${ev.id}" data-i="${i}" ${done.indexOf(i) > -1 ? "checked" : ""}/>
       <span class="grow">${i + 1}. ${esc(s.etape)}</span>${s.estimationMin ? `<span class="muted">${esc(fmtEstim(s.estimationMin))}</span>` : ""}</label>`).join("")}
     <div class="muted" style="font-size:12px;margin-top:4px">${done.length}/${steps.length} étapes faites${stepsTotal ? ` · ${esc(fmtEstim(stepsTotal))} au total` : ""}</div></div>` : "";
-  return `<details class="ev-prop" ${open ? "open" : ""}><summary>${icon("lightbulb")} Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}</summary>
+  const ctx = Array.isArray(p.contexte) ? p.contexte.filter((x) => x && (x.titre || x.extrait)) : [];
+  const ctxHtml = ctx.length ? `<details class="ev-ctx"><summary class="muted">${icon("search")} Éléments de contexte pris en compte (${ctx.length})</summary>
+      ${ctx.map((x) => `<div class="ev-ctx-item"><span class="pm-tag">${esc(CTX_SOURCES[x.source] || x.source || "source")}</span><div class="grow"><div><strong>${esc(x.titre || "")}</strong>${x.date ? ` <span class="muted">· ${esc(fmtDate(String(x.date).slice(0, 10)))}</span>` : ""}</div>${x.extrait ? `<div class="muted ev-ctx-x">${esc(x.extrait)}</div>` : ""}</div>${x.lien ? `<a class="btn ghost small" href="${esc(x.lien)}" target="_blank" rel="noopener">Ouvrir</a>` : ""}</div>`).join("")}</details>` : "";
+  return `<details class="ev-prop" ${open ? "open" : ""}><summary>${icon("lightbulb")} Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}${ctx.length ? ` <span class="muted" title="Réponse étayée par ${ctx.length} élément(s) d'archives">· étayée</span>` : ""}</summary>
     ${p.reponse ? `<div class="ev-draft">${esc(p.reponse)}</div>
       <div class="ev-actions"><button class="btn ghost small" data-ev-copy="${ev.id}">Copier</button>
-        ${compose ? `<a class="btn secondary small" href="${esc(compose)}" target="_blank" rel="noopener">${icon("mail")} Répondre dans Gmail</a>` : ""}
-        <span class="muted" style="font-size:12px">Rien n'est envoyé sans toi : Gmail s'ouvre pré-rempli, tu relis puis tu envoies.</span></div>` : ""}
+        ${compose ? `<a class="btn secondary small" href="${esc(compose)}" target="_blank" rel="noopener">${icon(EVENT_SOURCE_ICONS[ev.source] || "mail")} ${COMPOSE_LABELS[ev.source] || "Répondre dans Gmail"}</a>` : ""}
+        <span class="muted" style="font-size:12px">Rien n'est envoyé sans toi : ${COMPOSE_LABELS[ev.source] ? COMPOSE_LABELS[ev.source].replace("Répondre dans ", "") : "Gmail"} s'ouvre pré-rempli, tu relis puis tu envoies.</span></div>` : ""}
+    ${ctxHtml}
     ${t && t.titre ? `<div class="ev-ptask"><span class="grow">${complex ? '<span class="badge u2" title="Action complexe : un processus en plusieurs étapes est proposé">Complexe</span> ' : ""}Action proposée : <strong>${esc(t.titre)}</strong>${t.echeance ? ` · pour le ${esc(fmtDate(String(t.echeance).slice(0, 10)))}` : ""}${t.estimationMin ? ` · ${esc(fmtEstim(t.estimationMin))}` : ""}</span>
         <button class="btn secondary small" data-ev-ptask="${ev.id}" title="${steps.length ? "Une seule tâche, les étapes en description" : "Créer la tâche"}">✅ Créer la tâche</button>
         ${steps.length ? `<button class="btn ghost small" data-ev-psteps="${ev.id}" title="Une tâche par étape, avec son estimation">⋮ Une tâche par étape</button>` : ""}</div>
@@ -2946,7 +2996,8 @@ function renderEventDetail(id) {
         <span class="badge ev-urg u${u}">${EVENT_URGENCES[u]}</span>
         <span class="pm-tag ev-act">→ ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")}</span>
         ${link ? `<a class="btn ghost small" href="${esc(link)}" target="_blank" rel="noopener">${icon("external")} Ouvrir le message</a>` : ""}
-        <button class="btn ghost small${isVip(ev) ? " vip-on" : ""}" data-vip-toggle title="${isVip(ev) ? "Retirer cet expéditeur des prioritaires" : "Ses messages passeront en Immédiat"}">${icon("star")} ${isVip(ev) ? "Prioritaire" : "Rendre prioritaire"}</button></div>
+        <button class="btn ghost small${isVip(ev) ? " vip-on" : ""}" data-vip-toggle title="${isVip(ev) ? "Retirer cet expéditeur des prioritaires" : "Ses messages passeront en Immédiat"}">${icon("star")} ${isVip(ev) ? "Prioritaire" : "Rendre prioritaire"}</button>
+        ${correspondanceLink([from.adresse, from.telephone, from.nom && from.nom.indexOf("@") > -1 ? from.nom : ""], true)}</div>
       <div class="card"><div class="ev-meta">${meta}</div></div>
       ${ev.resume ? `<div class="card"><div class="section-h" style="margin-top:0">Résumé</div><div class="ev-resume" style="margin-top:0">${esc(ev.resume)}</div></div>` : ""}
       <div class="card"><div class="section-h" style="margin-top:0">Recommandation</div>${reco}</div>
@@ -3599,6 +3650,7 @@ function renderContactDetail(id) {
       ${F("IBAN (virements fournisseur)", "iban")}${F("BIC", "bic")}
       ${c.linkedInSince ? `<div class="muted" style="font-size:12px">Relation LinkedIn depuis le ${esc(fmtDate(c.linkedInSince))}${c.source ? " · source : " + esc(c.source) : ""}</div>` : ""}
       <label class="field"><span>Notes</span><textarea data-bind="contacts|${c.id}|notes">${esc(c.notes)}</textarea></label>
+      ${correspondanceLink([c.email, c.phone], true) ? `<div style="margin-top:8px">${correspondanceLink([c.email, c.phone], true)}</div>` : ""}
     </div>
     ${contactRelationHtml(c)}
     ${state.deals.some((d) => d.contactId === c.id) ? `<div class="section-h">Fiches pipeline</div><div class="card" style="padding:4px 12px">${state.deals.filter((d) => d.contactId === c.id).map((d) => { const p = pipelineOf(d.pipelineId); return `<div class="inline" style="padding:5px 0;gap:10px"><a href="#" data-tl-open="pipelines|${d.id}" class="grow">${esc(d.title || "Fiche")}</a><span class="muted" style="font-size:12px">${p ? esc(p.name) + " · " + esc(stageOf(p, d.stageId).name) : ""}</span>${d.amount ? `<strong>${euros(d.amount)}</strong>` : ""}</div>`; }).join("")}</div>` : ""}

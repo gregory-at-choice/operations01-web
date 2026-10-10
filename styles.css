@@ -678,3 +678,10 @@ label.field.inline-check > span { margin-bottom: 0; }
 @media (max-width: 640px) { .tts-bar { bottom: 74px; } }
 
 .tts-inline { padding: 8px 12px; margin-bottom: 12px; }
+
+/* Proposition étayée : éléments de contexte */
+.ev-ctx { margin-top: 8px; font-size: 13px; }
+.ev-ctx summary { cursor: pointer; }
+.ev-ctx-item { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-top: 1px solid var(--line); }
+.ev-ctx-item .pm-tag { flex: none; }
+.ev-ctx-x { font-size: 12px; white-space: pre-wrap; margin-top: 2px; }

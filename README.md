@@ -188,6 +188,31 @@ parlé (interlocuteurs, invités à trouver, réponses en attente, à préparer 
 avec les mêmes réglages de voix et de vitesse que Documents, réglables sur place ; changer d'onglet du
 Planning ne coupe pas la lecture, changer de section l'arrête.
 
+## Correspondances : un fichier par interlocuteur sur le Drive, réponses étayées
+
+Le dossier **Correspondances/** du Drive (racine de « Mon Drive ») contient **un `.md` par
+interlocuteur** : pour chaque message, la date, le sujet, le texte reçu, puis **ma réponse réellement
+envoyée** (ou « pas de réponse envoyée »). Les fichiers sont régénérés à chaque passage à partir de
+`Correspondances/_données/<clé>.json` ; `_données/index.json` liste les interlocuteurs.
+
+- **Gmail** : `appsscript-correspondances.gs`, installé dans chaque compte Google (boîte principale :
+  `DOSSIER_CORRESPONDANCES_ID` vide, le dossier est créé et partagé en écriture avec les boîtes
+  secondaires déclarées dans l'app ; boîte secondaire : coller l'identifiant du dossier). Toutes les
+  15 minutes : fils ayant bougé, puis l'historique par tranches de 60 fils jusqu'à `ARCHIVE_DEPUIS`.
+  Newsletters, notifications et messages entre mes propres adresses sont ignorés ; citations et
+  signatures sont retirées ; 4 000 caractères au plus par message.
+- **SMS, iMessage, WhatsApp, Google Chat** : le Mac mini envoie les entrées au relais
+  (`appsscript-relais-evenements.gs` v3, `action: "correspondance"`), qui écrit dans les mêmes
+  fichiers. Un contact de l'app connu par son téléphone **et** son adresse n'a qu'un fichier.
+- **Dans l'app** : « Correspondance (n messages archivés · dernier le …) » sur la page d'un message
+  et la fiche d'un contact ouvre le `.md` sur le Drive (index relayé par le script mails de la boîte
+  principale).
+- **Réponses étayées** : pour chaque message, le Mac mini écrit `proposition.reponse` et
+  `proposition.contexte[]` (source, titre, date, extrait, lien) après recherche dans l'archive de
+  l'interlocuteur, les archives du projet et les tâches. L'app affiche la réponse, la mention
+  « étayée », les éléments de contexte, et ouvre Gmail, Messages ou WhatsApp pré-rempli selon le
+  canal. Le contrat complet est dans `ASSISTANT-REPONSES.md`.
+
 ## Lire les mails dans l'app (Gmail, lecture seule)
 
 Sur la page d'un message « À traiter », la carte **Message complet** affiche le mail lui-même
