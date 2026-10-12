@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v124";
+const APP_VERSION = "v125";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2633,7 +2633,20 @@ function eventDueDate(ev) {
   if (u === 3) d.setDate(d.getDate() + 3); else if (u === 4) d.setDate(d.getDate() + 7);
   return localISO(d);
 }
-const eventTitle = (ev) => ev.sujet || ev.resume || "Événement";
+// Titre d'un événement : le sujet ; pour un SMS / WhatsApp dont le sujet est le texte entier, ses
+// premiers mots (le texte complet est affiché dessous et sur la page du message).
+function eventTitle(ev) {
+  const t = String(ev.sujet || ev.resume || "Événement").replace(/\s+/g, " ").trim();
+  if (ev.source === "mail" || t.length <= 90) return t;
+  const cut = t.slice(0, 90); const i = cut.lastIndexOf(" ");
+  return (i > 40 ? cut.slice(0, i) : cut) + "…";
+}
+const eventSnippet = (ev) => {
+  // Extrait du texte sous le titre, seulement s'il apporte plus que le titre.
+  const body = String(ev.contenu || "").replace(/\s+/g, " ").trim(), sujet = String(ev.sujet || "").replace(/\s+/g, " ").trim();
+  if (!body || body === sujet || (sujet.length <= 90 && body.startsWith(sujet) && body.length - sujet.length < 20)) return "";
+  return body.slice(0, 220) + (body.length > 220 ? "…" : "");
+};
 // Pastille de canal : icône et couleur selon la source et le compte (WhatsApp vert, SMS/iMessage bulle
 // Messages, mail Choice Finance vert, Icarus bleu, Majandco violet, autre gris).
 function channelOf(ev) {
@@ -2896,7 +2909,7 @@ function eventRow(ev) {
     <div class="grow">
       <div class="r-head">${channelBadge(ev)}<span class="r-title ev-title" data-ev-open="${ev.id}" title="Ouvrir la page de ce message">${esc(eventTitle(ev))}</span>${isVip(ev) ? `<span class="badge u1 vip-star" title="Expéditeur prioritaire">${icon("star")}</span>` : ""}<span class="badge ev-urg u${u}" title="Urgence ${u}">${EVENT_URGENCES[u]}</span></div>
       <div class="r-sub">${sub}</div>
-      ${ev.source !== "mail" && ev.contenu ? `<div class="ev-resume ev-snippet">${esc(String(ev.contenu).replace(/\s+/g, " ").slice(0, 220))}${String(ev.contenu).length > 220 ? "…" : ""}</div>` : (ev.resume && ev.resume !== ev.sujet ? `<div class="ev-resume">${esc(ev.resume)}</div>` : "")}
+      ${ev.source !== "mail" && ev.contenu ? (eventSnippet(ev) ? `<div class="ev-resume ev-snippet">${esc(eventSnippet(ev))}</div>` : "") : (ev.resume && ev.resume !== ev.sujet ? `<div class="ev-resume">${esc(ev.resume)}</div>` : "")}
       ${eventProposal(ev)}
       <div class="ev-actions">
         <span class="pm-tag ev-act" title="Action proposée${ev.classifieur ? " (" + esc(ev.classifieur) + ")" : ""}">→ ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")}</span>
