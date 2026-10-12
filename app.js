@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v122";
+const APP_VERSION = "v123";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2746,6 +2746,9 @@ function parseStepsText(txt) {
 function guessMissionFor(ev) {
   const k = eventSenderKey(ev), learn = state.evLearn || {};
   if (k && learn.senderMission && learn.senderMission[k] && findMission(learn.senderMission[k])) return { id: learn.senderMission[k], learned: true };
+  // Projet suggéré par l'assistant dans la proposition (identifiant ou titre exact).
+  const p = ev.proposition || {}, pid = p.projetId || p.projet;
+  if (pid) { const m = findMission(pid) || state.missions.find((x) => x.title === pid); if (m && m.statusCode !== "terminee") return { id: m.id, assistant: true }; }
   const from = eventFrom(ev), domain = String(from.adresse || "").split("@")[1] || "";
   const dom = noAccents(domain.split(".")[0]).replace(/[^a-z0-9]/g, "");
   const hay = noAccents([ev.sujet, ev.resume, from.nom, dom].join(" "));
@@ -2773,7 +2776,7 @@ function openTaskDialog(ev, mode) {
   showModal(`<div class="modal-head"><strong class="grow">Créer la tâche</strong><button class="btn ghost small" data-modal-close>✕</button></div>
     <label class="field"><span>Intitulé</span><input data-td-title value="${esc(title)}"/></label>
     <label class="field"><span>Projet</span><select data-td-mission>${opts}</select></label>
-    <div class="muted" style="font-size:12px;margin:-4px 0 8px">${guess ? (guess.learned ? "Projet repris de ton dernier choix pour cet expéditeur." : "Projet proposé d'après le sujet et l'expéditeur.") : "Aucun projet reconnu : choisis-le, l'app s'en souviendra pour cet expéditeur."}</div>
+    <div class="muted" style="font-size:12px;margin:-4px 0 8px">${guess ? (guess.learned ? "Projet repris de ton dernier choix pour cet expéditeur." : guess.assistant ? "Projet proposé par l'assistant." : "Projet proposé d'après le sujet et l'expéditeur.") : "Aucun projet reconnu : choisis-le, l'app s'en souviendra pour cet expéditeur."}</div>
     <div class="inline" style="gap:10px;align-items:flex-start"><label class="field grow"><span>Échéance</span><input type="date" data-td-due value="${esc(due)}"/></label><label class="field grow"><span>Temps alloué (minutes)</span><input type="number" min="0" step="5" data-td-est value="${est || ""}"/></label></div>
     <label class="field"><span>Étapes (une par ligne, « | 30 » pour la durée en minutes)</span><textarea data-td-steps rows="${Math.min(8, Math.max(3, steps.length + 1))}">${esc(stepsTxt)}</textarea></label>
     <label class="inline-check"><input type="checkbox" data-td-per-step ${mode === "steps" ? "checked" : ""}/> <span>Une tâche par étape, chacune avec sa durée</span></label>
