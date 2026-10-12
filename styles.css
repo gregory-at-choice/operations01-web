@@ -689,3 +689,16 @@ label.field.inline-check > span { margin-bottom: 0; }
 /* Réponse de l'assistant modifiable */
 .ev-draft-edit { width: 100%; min-height: 180px; font: inherit; line-height: 1.45; padding: 10px 12px; border: 1px solid var(--primary); border-radius: 10px; background: var(--bg); color: var(--text); resize: vertical; box-sizing: border-box; }
 .modal .field { margin-bottom: 8px; }
+
+/* Pastille de canal (À traiter) */
+.ch { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 8px; color: #fff; flex: none; margin-right: 2px; }
+.ch .i { width: 15px; height: 15px; }
+.ch-whatsapp { background: #25d366; }
+.ch-sms { background: #34c759; }
+.ch-imessage { background: #0a84ff; }
+.ch-choice { background: #16a34a; }
+.ch-icarus { background: #2563eb; }
+.ch-majandco { background: #7c3aed; }
+.ch-mail { background: #f59e0b; }
+.ch-autre { background: #8e8e93; }
+.ev-meta .ch { vertical-align: middle; width: 20px; height: 20px; }

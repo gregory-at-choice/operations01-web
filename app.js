@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v121";
+const APP_VERSION = "v122";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -246,6 +246,7 @@ const ICONS = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m4.93-15.07 1.41-1.41M4.93 19.07l1.41-1.41M2 12h2M20 12h2m-3.66 5.66 1.41 1.41M4.93 4.93l1.41 1.41"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/>',
   message: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+  whatsapp: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M9 8.6c.2 1.6.9 3.1 2 4.3 1.2 1.1 2.7 1.8 4.3 2l1.2-1.3-1.9-1.1-1 .7a5.3 5.3 0 0 1-1.9-1.9l.7-1-1.1-1.9z" fill="currentColor" stroke="none"/>',
   "message-square": '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   smartphone: '<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/>',
   feather: '<path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><path d="M16 8 2 22M17.5 15H9"/>',
@@ -2633,6 +2634,22 @@ function eventDueDate(ev) {
   return localISO(d);
 }
 const eventTitle = (ev) => ev.sujet || ev.resume || "Événement";
+// Pastille de canal : icône et couleur selon la source et le compte (WhatsApp vert, SMS/iMessage bulle
+// Messages, mail Choice Finance vert, Icarus bleu, Majandco violet, autre gris).
+function channelOf(ev) {
+  const src = ev.source || "", acc = ev.compte || "";
+  if (src === "whatsapp") return { cls: "ch-whatsapp", ic: "whatsapp", label: "WhatsApp" };
+  if (src === "sms") return { cls: "ch-sms", ic: "message", label: "SMS" };
+  if (src === "imessage") return { cls: "ch-imessage", ic: "message", label: "iMessage" };
+  if (src === "mail") {
+    if (acc === "choicefinance") return { cls: "ch-choice", ic: "mail", label: "Mail · Choice Finance" };
+    if (acc === "icarus") return { cls: "ch-icarus", ic: "mail", label: "Mail · Icarus Swarms" };
+    if (acc === "majandco") return { cls: "ch-majandco", ic: "mail", label: "Mail · Majandco" };
+    return { cls: "ch-mail", ic: "mail", label: "Mail" + (EVENT_COMPTES[acc] ? " · " + EVENT_COMPTES[acc] : "") };
+  }
+  return { cls: "ch-autre", ic: EVENT_SOURCE_ICONS[src] || "message", label: EVENT_SOURCES[src] || src || "Autre" };
+}
+const channelBadge = (ev) => { const c = channelOf(ev); return `<span class="ch ${c.cls}" title="${esc(c.label)}">${icon(c.ic)}</span>`; };
 const eventFrom = (ev) => ev.expediteur || {};
 // ---- Correspondance archivée (dossier Drive « Correspondances », un .md par interlocuteur) ----
 // L'index est livré par le script mails de la boîte principale ; les clés sont des adresses
@@ -2863,7 +2880,7 @@ function eventRow(ev) {
     esc(EVENT_COMPTES[ev.compte] || ev.compte || ""), esc(fmtDateTimeISO(ev.recu_le))].filter(Boolean).join(" · ");
   return `<div class="row ev-row ev-u${u}${st !== "nouveau" ? " ev-done" : ""}" data-ev="${ev.id}">
     <div class="grow">
-      <div class="r-head"><span class="r-title ev-title" data-ev-open="${ev.id}" title="Ouvrir la page de ce message">${esc(eventTitle(ev))}</span>${isVip(ev) ? `<span class="badge u1 vip-star" title="Expéditeur prioritaire">${icon("star")}</span>` : ""}<span class="badge ev-urg u${u}" title="Urgence ${u}">${EVENT_URGENCES[u]}</span></div>
+      <div class="r-head">${channelBadge(ev)}<span class="r-title ev-title" data-ev-open="${ev.id}" title="Ouvrir la page de ce message">${esc(eventTitle(ev))}</span>${isVip(ev) ? `<span class="badge u1 vip-star" title="Expéditeur prioritaire">${icon("star")}</span>` : ""}<span class="badge ev-urg u${u}" title="Urgence ${u}">${EVENT_URGENCES[u]}</span></div>
       <div class="r-sub">${sub}</div>
       ${ev.resume && ev.resume !== ev.sujet ? `<div class="ev-resume">${esc(ev.resume)}</div>` : ""}
       ${eventProposal(ev)}
@@ -2897,9 +2914,9 @@ function filteredEvents(ignoreSender) {
 // 47 lignes. Les expéditeurs qui ont au moins EV_CLUSTER_MIN messages dans la
 // liste forment un bloc repliable, placé là où serait leur message le plus urgent,
 // avec « Tout traité » / « Ignorer tout ». Préférence mémorisée sur l'appareil.
-const EV_GROUP_KEY = "op01_ev_group";
+const EV_GROUP_KEY = "op01_ev_group2";   // v122 : regroupement désactivé par défaut
 const EV_CLUSTER_MIN = 3;
-let eventGroup = (() => { try { return localStorage.getItem(EV_GROUP_KEY) !== "0"; } catch (e) { return true; } })();
+let eventGroup = (() => { try { return localStorage.getItem(EV_GROUP_KEY) === "1"; } catch (e) { return false; } })();
 const evClusterOpen = {};   // expéditeur → bloc déplié (le temps de la session)
 const eventSenderLabel = (ev) => { const f = eventFrom(ev); return f.nom || f.adresse || "?"; };
 function clusterEvents(items) {
@@ -2922,7 +2939,7 @@ function eventClusterHtml(c) {
   const first = c.items[c.items.length - 1].recu_le, last = c.items[0].recu_le;
   return `<details class="ev-cluster" data-ev-cluster="${esc(c.sender)}" ${evClusterOpen[c.sender] ? "open" : ""}>
     <summary class="row ev-row ev-u${u}"><span class="ev-caret">${icon("chevron")}</span><div class="grow">
-      <div class="r-head"><span class="r-title">${esc(c.label)} <span class="nav-count">${c.items.length}</span></span><span class="badge ev-urg u${u}" title="Urgence la plus haute du groupe">${EVENT_URGENCES[u]}</span></div>
+      <div class="r-head">${channelBadge(c.items[0])}<span class="r-title">${esc(c.label)} <span class="nav-count">${c.items.length}</span></span><span class="badge ev-urg u${u}" title="Urgence la plus haute du groupe">${EVENT_URGENCES[u]}</span></div>
       <div class="r-sub">${adr && adr !== c.label ? esc(adr) + " · " : ""}${c.items.length} messages${news.length !== c.items.length ? ` · ${news.length} nouveau${news.length > 1 ? "x" : ""}` : ""} · du ${esc(fmtDateTimeISO(first))} au ${esc(fmtDateTimeISO(last))}</div>
       ${news.length ? `<div class="ev-actions"><button class="btn ghost small" data-ev-filter-sender="${esc(c.sender)}">Voir seulement cet expéditeur</button><span class="grow"></span>
         <button class="btn ghost small" data-ev-bulk="ignore" data-ids="${ids}">Ignorer tout (${news.length})</button>
@@ -3080,7 +3097,7 @@ function renderEventDetail(id) {
   const conf = ev.confiance != null && ev.confiance !== "" ? Math.round(Number(ev.confiance) * 100) + " %" : "";
   const meta = [
     ["Expéditeur", (from.nom || from.adresse) ? `${esc(from.nom || "")}${from.adresse ? ` <span class="muted">${esc(from.adresse)}</span>` : ""}` : ""],
-    ["Canal", `${icon(EVENT_SOURCE_ICONS[ev.source] || "message")} ${esc(EVENT_SOURCES[ev.source] || ev.source || "")}${ev.compte ? ` · ${esc(EVENT_COMPTES[ev.compte] || ev.compte)}` : ""}`],
+    ["Canal", `${channelBadge(ev)} ${esc(EVENT_SOURCES[ev.source] || ev.source || "")}${ev.compte ? ` · ${esc(EVENT_COMPTES[ev.compte] || ev.compte)}` : ""}`],
     ["Reçu", esc(fmtDateTimeISO(ev.recu_le))],
     ["Statut", st === "nouveau" ? "Nouveau" : (st === "traite" ? "Traité" : "Ignoré") + (ev.traiteLe ? " le " + esc(fmtDateTimeISO(ev.traiteLe)) : "")],
     ["Classé par", ev.classifieur ? `${esc(ev.classifieur)}${conf ? ` <span class="muted">(confiance ${conf})</span>` : ""}` : ""]
