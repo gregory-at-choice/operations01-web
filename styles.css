@@ -702,3 +702,7 @@ label.field.inline-check > span { margin-bottom: 0; }
 .ch-mail { background: #f59e0b; }
 .ch-autre { background: #8e8e93; }
 .ev-meta .ch { vertical-align: middle; width: 20px; height: 20px; }
+
+/* Texte d'un SMS / iMessage / WhatsApp */
+.ev-body { white-space: pre-wrap; line-height: 1.5; font-size: 15px; }
+.ev-snippet { color: var(--text); }

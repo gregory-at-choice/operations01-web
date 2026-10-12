@@ -1,5 +1,5 @@
 /**
- * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 5.
+ * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 6.
  * Trois fichiers, tous CRÉÉS PAR LA WEB APP (portée drive.file) ; ce script écrit dedans.
  *   operations01-evenements.json : événements classés + propositions de l'assistant
  *   operations01-assistant.json  : brief du matin, estimations de durée par tâche
@@ -18,7 +18,8 @@
  *   GET  ?secret=…&action=correspondances         → { ok, cles:{ cle:{nom,url,n,dernier,canaux} } }   (index)
  *   GET  ?secret=…&action=correspondance&cle=…    → { ok, nom, cle, entrees:[…], markdown }           (un interlocuteur ;
  *        cle = adresse e-mail ou téléphone ; &depuis=AAAA-MM-JJ et &max=N limitent les entrées)
- *   POST { secret, evenements:[…] }               → fusion par id ; existant : seul « proposition » peut être mis à jour
+ *   POST { secret, evenements:[…] }               → fusion par id ; existant : « proposition » peut être mise à jour, et
+ *        « contenu » ajouté s'il manquait. Le texte (contenu) est conservé pour les canaux hors mail (3000 car.).
  *   POST { secret, action:"assistant", brief:{…}, estimations:{ id:{…} } } → brief remplacé, estimations fusionnées
  *   POST { secret, action:"correspondance", entrees:[…] } → archive des messages hors Gmail (voir posterCorrespondance)
  *
@@ -33,7 +34,7 @@
  *     tache: {…}, processus: [...] }   ← inchangés
  */
 var SECRET = "";
-var VERSION = 5;
+var VERSION = 6;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -43,6 +44,7 @@ var CONSERVER_JOURS = 30;
 var MAX_EVENEMENTS = 3000;   // ~95 événements par jour : 1000 ne couvrait que dix jours
 var DOSSIER_CORRESPONDANCES = "Correspondances";   // dossier à la racine du Drive (créé par appsscript-correspondances.gs)
 var MAX_CARACTERES = 4000;
+var MAX_CONTENU = 3000;        // texte conservé pour un SMS / iMessage / WhatsApp
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
@@ -86,13 +88,16 @@ function posterEvenements(corps) {
     var ajoutes = 0, existants = 0, propositions = 0, maintenant = new Date().toISOString();
     entrants.forEach(function (ev) {
       if (!ev || !ev.id) return;
-      delete ev.contenu;
+      // Le texte est conservé pour les SMS, iMessage, WhatsApp, Chat… (l'app l'affiche) ; pas pour les
+      // mails, que l'app lit dans Gmail.
+      if (ev.source === "mail" || !ev.contenu) delete ev.contenu; else ev.contenu = String(ev.contenu).slice(0, MAX_CONTENU);
       var deja = parId[ev.id];
       if (deja) {
         existants++;
         if (ev.proposition && (!deja.proposition || (ev.proposition.genereeLe || "") > (deja.proposition.genereeLe || ""))) {
           deja.proposition = ev.proposition; propositions++;
         }
+        if (ev.contenu && !deja.contenu) deja.contenu = ev.contenu;   // rattrapage du texte des messages déjà reçus
         return;
       }
       ev.statut = "nouveau"; ev.recuParRelaisLe = maintenant;

@@ -95,6 +95,15 @@ que ce champ sur un événement existant) devient, **pour toutes les urgences** 
 - Si rien ne justifie une réponse (newsletter, notification, information pure), ne pas écrire de
   `reponse` : l'app affiche alors seulement l'action suggérée.
 
+### Texte des messages hors mail
+
+Pour les événements `sms`, `imessage`, `whatsapp` et `chat`, envoyer le **texte intégral** dans
+`ev.contenu` (le relais v6 le conserve, tronqué à 3 000 caractères, et l'app l'affiche dans une carte
+« Message » ; pour les mails il reste supprimé, l'app les lit dans Gmail). `ev.sujet` = les premiers
+mots (≤ 60 caractères), `ev.expediteur.nom` = le nom du carnet d'adresses macOS quand il existe, sinon
+vide (jamais le numéro répété). Renvoyer une fois tous les événements hors mail des 30 derniers jours
+avec leur `contenu` : le relais complète ceux qui n'en ont pas.
+
 ### Périmètre par compte
 
 | Compte (`ev.compte`) | Classement par urgence | Réponse étayée | Archive des correspondances |

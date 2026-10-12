@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v123";
+const APP_VERSION = "v124";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2649,6 +2649,15 @@ function channelOf(ev) {
   }
   return { cls: "ch-autre", ic: EVENT_SOURCE_ICONS[src] || "message", label: EVENT_SOURCES[src] || src || "Autre" };
 }
+// Nom à afficher pour l'expéditeur : celui de l'événement, sinon le contact de l'app qui porte ce numéro ou cette adresse.
+function eventSenderName(ev) {
+  const f = eventFrom(ev), nom = String(f.nom || "").trim(), adr = String(f.adresse || "").trim();
+  const isNum = (v) => /^\+?[\d\s().-]{6,}$/.test(v);
+  if (nom && !isNum(nom) && nom !== adr) return nom;
+  const k = corrKey(adr || nom);
+  const c = k ? state.contacts.find((x) => corrKey(x.phone) === k || corrKey(x.email) === k) : null;
+  return c ? contactName(c) : (nom || adr);
+}
 const channelBadge = (ev) => { const c = channelOf(ev); return `<span class="ch ${c.cls}" title="${esc(c.label)}">${icon(c.ic)}</span>`; };
 const eventFrom = (ev) => ev.expediteur || {};
 // ---- Correspondance archivée (dossier Drive « Correspondances », un .md par interlocuteur) ----
@@ -2668,14 +2677,16 @@ function corrIndex() { const m = mailStore.main; return (m && m.correspondances)
 function correspondanceOf(keys) {
   const idx = corrIndex(); if (!idx) return null;
   const list = (Array.isArray(keys) ? keys : [keys]).map(corrKey).filter(Boolean);
-  const tried = {};
-  for (const k of list) {
-    if (idx[k]) return idx[k];
+  const cands = {};
+  list.forEach((k) => {
+    if (idx[k]) cands[k] = idx[k];
     // par le contact de l'app : téléphone → adresse, adresse → téléphone
     const c = state.contacts.find((x) => corrKey(x.email) === k || corrKey(x.phone) === k);
-    if (c) for (const alt of [corrKey(c.email), corrKey(c.phone)]) { if (alt && !tried[alt] && idx[alt]) return idx[alt]; tried[alt] = 1; }
-  }
-  return null;
+    if (c) [corrKey(c.email), corrKey(c.phone)].forEach((alt) => { if (alt && idx[alt]) cands[alt] = idx[alt]; });
+  });
+  // Le même interlocuteur peut avoir deux fiches (numéro, adresse) : on montre la plus récente.
+  const all = Object.values(cands); if (!all.length) return null;
+  return all.sort((a, b) => String(b.dernier || "").localeCompare(String(a.dernier || "")))[0];
 }
 function correspondanceLink(keys, small) {
   const r = correspondanceOf(keys); if (!r || !r.url) return "";
@@ -2878,14 +2889,14 @@ function eventProposal(ev, open) {
 }
 function eventRow(ev) {
   const u = eventUrgence(ev), st = eventStatut(ev), from = eventFrom(ev), link = eventLink(ev);
-  const who = from.nom || from.adresse || "?";
+  const who = eventSenderName(ev) || "?";
   const sub = [esc(who), from.nom && from.adresse ? esc(from.adresse) : "", icon(EVENT_SOURCE_ICONS[ev.source] || "message") + " " + esc(EVENT_SOURCES[ev.source] || ev.source || ""),
     esc(EVENT_COMPTES[ev.compte] || ev.compte || ""), esc(fmtDateTimeISO(ev.recu_le))].filter(Boolean).join(" · ");
   return `<div class="row ev-row ev-u${u}${st !== "nouveau" ? " ev-done" : ""}" data-ev="${ev.id}">
     <div class="grow">
       <div class="r-head">${channelBadge(ev)}<span class="r-title ev-title" data-ev-open="${ev.id}" title="Ouvrir la page de ce message">${esc(eventTitle(ev))}</span>${isVip(ev) ? `<span class="badge u1 vip-star" title="Expéditeur prioritaire">${icon("star")}</span>` : ""}<span class="badge ev-urg u${u}" title="Urgence ${u}">${EVENT_URGENCES[u]}</span></div>
       <div class="r-sub">${sub}</div>
-      ${ev.resume && ev.resume !== ev.sujet ? `<div class="ev-resume">${esc(ev.resume)}</div>` : ""}
+      ${ev.source !== "mail" && ev.contenu ? `<div class="ev-resume ev-snippet">${esc(String(ev.contenu).replace(/\s+/g, " ").slice(0, 220))}${String(ev.contenu).length > 220 ? "…" : ""}</div>` : (ev.resume && ev.resume !== ev.sujet ? `<div class="ev-resume">${esc(ev.resume)}</div>` : "")}
       ${eventProposal(ev)}
       <div class="ev-actions">
         <span class="pm-tag ev-act" title="Action proposée${ev.classifieur ? " (" + esc(ev.classifieur) + ")" : ""}">→ ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")}</span>
@@ -3099,7 +3110,7 @@ function renderEventDetail(id) {
     : "";
   const conf = ev.confiance != null && ev.confiance !== "" ? Math.round(Number(ev.confiance) * 100) + " %" : "";
   const meta = [
-    ["Expéditeur", (from.nom || from.adresse) ? `${esc(from.nom || "")}${from.adresse ? ` <span class="muted">${esc(from.adresse)}</span>` : ""}` : ""],
+    ["Expéditeur", (from.nom || from.adresse) ? `${esc(eventSenderName(ev))}${from.adresse && from.adresse !== eventSenderName(ev) ? ` <span class="muted">${esc(from.adresse)}</span>` : ""}` : ""],
     ["Canal", `${channelBadge(ev)} ${esc(EVENT_SOURCES[ev.source] || ev.source || "")}${ev.compte ? ` · ${esc(EVENT_COMPTES[ev.compte] || ev.compte)}` : ""}`],
     ["Reçu", esc(fmtDateTimeISO(ev.recu_le))],
     ["Statut", st === "nouveau" ? "Nouveau" : (st === "traite" ? "Traité" : "Ignoré") + (ev.traiteLe ? " le " + esc(fmtDateTimeISO(ev.traiteLe)) : "")],
@@ -3122,7 +3133,7 @@ function renderEventDetail(id) {
       <div class="card"><div class="ev-meta">${meta}</div></div>
       ${ev.resume ? `<div class="card"><div class="section-h" style="margin-top:0">Résumé</div><div class="ev-resume" style="margin-top:0">${esc(ev.resume)}</div></div>` : ""}
       <div class="card"><div class="section-h" style="margin-top:0">Recommandation</div>${reco}</div>
-      ${renderMailCard(ev)}
+      ${ev.source !== "mail" ? (ev.contenu ? `<div class="card"><div class="section-h" style="margin-top:0">Message</div><div class="ev-body">${esc(ev.contenu)}</div></div>` : `<div class="card muted" style="font-size:13px">Le texte de ce message n'a pas été transmis par le Mac mini (les messages reçus avant la mise à jour du relais n'en ont pas). Le fil complet est dans le fichier de correspondance ci-dessus${link ? "" : ", ou dans l'application Messages / WhatsApp"}.</div>`) : renderMailCard(ev)}
       ${tasks.length ? `<div class="card"><div class="section-h" style="margin-top:0">Tâches créées depuis ce message</div>${tasks.map((t) => `<div class="brief-row" data-open-task="${t.id}"><span class="brief-main">${taskDone(t) ? "✓ " : ""}${esc(t.title)}</span>${t.dueDate ? `<span class="muted" style="font-size:13px">${esc(fmtDate(t.dueDate))}</span>` : ""}</div>`).join("")}</div>` : ""}
       ${same.length ? `<div class="card"><div class="section-h" style="margin-top:0">Du même expéditeur, à traiter (${same.length})</div>${same.map((e) => `<div class="brief-row" data-ev-open="${e.id}"><span class="badge ev-urg u${eventUrgence(e)}">${EVENT_URGENCES[eventUrgence(e)]}</span><span class="brief-main">${esc(eventTitle(e))}</span><span class="muted" style="font-size:13px">${esc(fmtDateTimeISO(e.recu_le))}</span></div>`).join("")}</div>` : ""}
       <div class="card"><div class="section-h" style="margin-top:0">Décision</div><div class="ev-actions" style="margin-top:0">${eventButtons(ev)}</div></div>
