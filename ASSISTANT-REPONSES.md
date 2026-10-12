@@ -196,7 +196,29 @@ Cadence et journal :
   fiche d'un contact, vers le `.md` de l'interlocuteur sur le Drive (index fourni par le script
   mails de la boîte principale, rafraîchi toutes les 15 minutes).
 
-## 4. Vérifier de bout en bout
+## 4. Apprendre des échanges et des décisions
+
+L'app enregistre ce que Grégory fait réellement de chaque proposition, et le relais l'expose dans
+`GET ?action=export` (clés `data.evEdits`, `data.evDecisions`, `data.evLearn`, `data.evSteps`), en
+plus de `data.tasks` (avec `eventId`, `estimationMin`, `missionId`, `dueDate`) et des temps réellement
+passés (`missions[].entries`). À exploiter à chaque génération et dans un recalibrage nocturne :
+
+| Signal | Où | Usage |
+|---|---|---|
+| **Réponse corrigée** : `evEdits[id] = { reponse, original, genereePar, expediteur, source, compte, sujet, at }` | export | Les 20 dernières corrections (original → version de Grégory) pour le même expéditeur, sinon le même compte, entrent dans le prompt comme exemples « voici comment je corrige tes brouillons ». Mesurer la distance original/corrigé par semaine : elle doit baisser. |
+| **Réponses réellement envoyées** | archive `Correspondances` (section 1) | La vérité terrain du ton et de la longueur : trois réponses réelles au même interlocuteur dans chaque prompt. |
+| **Projet choisi** : `evLearn.senderMission[expediteur] = missionId` et `evDecisions[id].missionId` | export | Proposer directement ce projet pour cet expéditeur (champ `projetId` dans la proposition : l'app le présélectionnera). Après trois décisions concordantes pour un domaine d'adresse, l'étendre à tout le domaine. |
+| **Échéance et temps alloué** : `evDecisions[id].dueDate` / `estimationMin` contre `evDecisions[id].proposed` | export | Calibrer par type d'action et par expéditeur : si Grégory alloue en moyenne 0,7 fois le temps proposé, proposer 0,7 fois. Même chose pour le délai entre réception et échéance choisie. |
+| **Étapes retenues** : `evDecisions[id].steps` contre `proposed.steps`, `evSteps` (étapes cochées) | export | Étapes supprimées systématiquement → ne plus les proposer ; étapes ajoutées → les proposer pour les messages semblables. |
+| **Temps réellement passé** : `missions[].entries` (chronos) et `tasks[].estimationMin` | export | Ratio réel / alloué par projet et par type de tâche, repris dans les estimations (`assistant.estimations`). |
+| **Décisions sans suite** : événement `traite` sans tâche créée, ou `ignore` | export + événements | Un expéditeur ignoré trois fois d'affilée → urgence 4 par défaut ; un expéditeur dont les messages deviennent toujours des tâches → urgence relevée d'un cran. |
+
+Règles : l'apprentissage ne modifie jamais les données de l'app (lecture seule de l'export) ; il
+s'exprime dans les propositions suivantes. Journaliser chaque nuit dans `apprentissage.log` : nombre
+de corrections lues, distance moyenne, ratios de temps, projets appris. Mettre dans le brief du matin
+une ligne « L'assistant a appris : … » quand quelque chose a changé.
+
+## 5. Vérifier de bout en bout
 
 1. Envoyer une entrée de test au relais (`action: "correspondance"`) → le fichier
    `Correspondances/<Nom>.md` apparaît sur le Drive avec la section du jour.

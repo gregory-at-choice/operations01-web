@@ -213,6 +213,13 @@ envoyée** (ou « pas de réponse envoyée »). Les fichiers sont régénérés 
   Claude (Claude Code en mode headless), le modèle local servant de repli. L'app affiche la réponse, la mention
   « étayée », les éléments de contexte, et ouvre Gmail, Messages ou WhatsApp pré-rempli selon le
   canal. Le contrat complet est dans `ASSISTANT-REPONSES.md`.
+- **Corriger et décider** : « ✏️ Modifier » ouvre la réponse en édition ; la version de Grégory est
+  mémorisée (synchronisée), c'est elle qui est copiée ou envoyée, et un bouton rétablit la proposition.
+  « Créer la tâche », « Une tâche par étape » et « Tâche » ouvrent une boîte : intitulé, **projet**
+  (proposé d'après le dernier choix pour cet expéditeur, sinon le sujet et le domaine), **échéance**,
+  **temps alloué**, étapes modifiables (« | 30 » pour la durée). Chaque décision (projet, échéance,
+  temps, étapes, contre ce qui était proposé) et chaque correction de réponse sont exportées par le
+  relais (v5) au Mac mini, qui s'en sert pour apprendre (section 4 du contrat).
 
 ## Lire les mails dans l'app (Gmail, lecture seule)
 

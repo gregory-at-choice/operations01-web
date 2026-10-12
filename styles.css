@@ -685,3 +685,7 @@ label.field.inline-check > span { margin-bottom: 0; }
 .ev-ctx-item { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-top: 1px solid var(--line); }
 .ev-ctx-item .pm-tag { flex: none; }
 .ev-ctx-x { font-size: 12px; white-space: pre-wrap; margin-top: 2px; }
+
+/* Réponse de l'assistant modifiable */
+.ev-draft-edit { width: 100%; min-height: 180px; font: inherit; line-height: 1.45; padding: 10px 12px; border: 1px solid var(--primary); border-radius: 10px; background: var(--bg); color: var(--text); resize: vertical; box-sizing: border-box; }
+.modal .field { margin-bottom: 8px; }

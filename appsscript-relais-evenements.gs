@@ -1,5 +1,5 @@
 /**
- * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 4.
+ * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 5.
  * Trois fichiers, tous CRÉÉS PAR LA WEB APP (portée drive.file) ; ce script écrit dedans.
  *   operations01-evenements.json : événements classés + propositions de l'assistant
  *   operations01-assistant.json  : brief du matin, estimations de durée par tâche
@@ -12,6 +12,9 @@
  * API (toujours HTTP 200, tester "ok") :
  *   GET  ?secret=…                                → { ok, service, version }
  *   GET  ?secret=…&action=export                  → { ok, data:{…}, evenements:[{id,statut,traiteLe}], assistant:{estimations} }
+ *        data contient aussi evEdits (réponses corrigées par Grégory : { idEvt: {reponse, original, at…} }),
+ *        evDecisions (tâches créées depuis un message : projet, échéance, temps alloué, étapes, et ce qui
+ *        était proposé) et evLearn.senderMission (expéditeur → projet) : matière à apprentissage.
  *   GET  ?secret=…&action=correspondances         → { ok, cles:{ cle:{nom,url,n,dernier,canaux} } }   (index)
  *   GET  ?secret=…&action=correspondance&cle=…    → { ok, nom, cle, entrees:[…], markdown }           (un interlocuteur ;
  *        cle = adresse e-mail ou téléphone ; &depuis=AAAA-MM-JJ et &max=N limitent les entrées)
@@ -30,11 +33,12 @@
  *     tache: {…}, processus: [...] }   ← inchangés
  */
 var SECRET = "";
-var VERSION = 4;
+var VERSION = 5;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
 var EXPORT_CLES = ["missions", "tasks", "actions", "rendezvous", "recurrences", "slots"];
+var EXPORT_OBJETS = ["evEdits", "evDecisions", "evLearn", "evSteps"];   // corrections et décisions de Grégory (apprentissage)
 var CONSERVER_JOURS = 30;
 var MAX_EVENEMENTS = 3000;   // ~95 événements par jour : 1000 ne couvrait que dix jours
 var DOSSIER_CORRESPONDANCES = "Correspondances";   // dossier à la racine du Drive (créé par appsscript-correspondances.gs)
@@ -49,6 +53,7 @@ function doGet(e) {
   var data = lireJson(FICHIER_DATA) || {};
   var exporte = {};
   EXPORT_CLES.forEach(function (k) { if (Array.isArray(data[k])) exporte[k] = data[k]; });
+  EXPORT_OBJETS.forEach(function (k) { if (data[k] && typeof data[k] === "object") exporte[k] = data[k]; });
   var ev = (lireJson(FICHIER_EVENEMENTS) || {}).evenements || [];
   var assistant = lireJson(FICHIER_ASSISTANT) || {};
   return reponse({

@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v120";
+const APP_VERSION = "v121";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -99,7 +99,7 @@ function adoptRemote(remote, why) {
 const BASE_KEY = "operations01_base";
 const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals"];
 const SYNC_NESTED = { missions: "entries" };
-const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "bankMap", "bankSkip", "contactIgnore"];
+const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "bankMap", "bankSkip", "contactIgnore"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
 let syncBase = (() => { try { const r = localStorage.getItem(BASE_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } })();
 function setSyncBase(obj) {
@@ -2436,17 +2436,17 @@ function eventAccountAddress(compte) {
 // Fenêtre de rédaction Gmail pré-remplie avec le brouillon proposé : rien n'est
 // envoyé tant que Grégory ne clique pas lui-même sur « Envoyer ».
 function eventComposeLink(ev) {
-  const p = ev.proposition || {};
-  if (!p.reponse) return "";
+  const reply = eventReply(ev);
+  if (!reply) return "";
   const num = eventPhone(ev);
   // SMS / iMessage : l'app Messages s'ouvre avec le texte ; WhatsApp : la conversation avec le texte.
-  if (ev.source === "sms" || ev.source === "imessage") return num ? `sms:${num}${/iPhone|iPad|Macintosh/.test(navigator.userAgent) ? "&" : "?"}body=${encodeURIComponent(p.reponse)}` : "";
-  if (ev.source === "whatsapp") return num ? `https://wa.me/${num.replace(/\D/g, "")}?text=${encodeURIComponent(p.reponse)}` : "";
+  if (ev.source === "sms" || ev.source === "imessage") return num ? `sms:${num}${/iPhone|iPad|Macintosh/.test(navigator.userAgent) ? "&" : "?"}body=${encodeURIComponent(reply)}` : "";
+  if (ev.source === "whatsapp") return num ? `https://wa.me/${num.replace(/\D/g, "")}?text=${encodeURIComponent(reply)}` : "";
   if (ev.source && ev.source !== "mail") return "";
   const addr = eventAccountAddress(ev.compte);
   const to = (ev.expediteur && ev.expediteur.adresse) || "";
   const q = [addr ? "authuser=" + encodeURIComponent(addr) : "", "view=cm", to ? "to=" + encodeURIComponent(to) : "",
-    "su=" + encodeURIComponent(/^re\s*:/i.test(ev.sujet || "") ? ev.sujet : "Re: " + (ev.sujet || "")), "body=" + encodeURIComponent(p.reponse)].filter(Boolean).join("&");
+    "su=" + encodeURIComponent(/^re\s*:/i.test(ev.sujet || "") ? ev.sujet : "Re: " + (ev.sujet || "")), "body=" + encodeURIComponent(reply)].filter(Boolean).join("&");
   return "https://mail.google.com/mail/?" + q;
 }
 // Numéro de l'expéditeur d'un SMS / WhatsApp (adresse ou téléphone de l'événement), au format +33….
@@ -2700,6 +2700,103 @@ function toggleStep(evId, i) {
   state.evSteps[evId] = cur.sort((a, b) => a - b);
   save();
 }
+// ---- Réponse modifiée par Grégory : mémorisée par événement, synchronisée entre appareils, et exportée
+//      au Mac mini (relais) pour qu'il apprenne de la correction. ----
+const evEditOf = (id) => ((state.evEdits || {})[id] || null);
+function eventReply(ev) { const e = evEditOf(ev.id); return e && e.reponse != null ? e.reponse : ((ev.proposition && ev.proposition.reponse) || ""); }
+function saveEventReply(ev, text) {
+  state.evEdits = state.evEdits || {};
+  const p = ev.proposition || {};
+  if (String(text || "").trim() === String(p.reponse || "").trim()) delete state.evEdits[ev.id];
+  else state.evEdits[ev.id] = { reponse: text, original: p.reponse || "", genereePar: p.genereePar || "", at: new Date().toISOString(), sujet: ev.sujet || "", expediteur: eventSenderKey(ev), source: ev.source || "", compte: ev.compte || "" };
+  save();
+}
+let evEditing = null;      // événement dont la réponse est en cours de modification
+const evDraft = {};        // texte en cours de frappe (survit aux rafraîchissements de l'écran)
+// Étapes saisies dans la boîte « Créer la tâche » : une par ligne, « | 30 » ou « (30 min) » pour la durée.
+function parseStepsText(txt) {
+  return String(txt || "").split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
+    let min = 0;
+    l = l.replace(/^\d+[.)]\s*/, "");
+    const m1 = l.match(/\|\s*(\d+)\s*(min)?\s*$/i); if (m1) { min = Number(m1[1]); l = l.slice(0, m1.index).trim(); }
+    const m2 = !m1 && l.match(/\((\d+)\s*min\)\s*$/i); if (m2) { min = Number(m2[1]); l = l.slice(0, m2.index).trim(); }
+    return { etape: l, estimationMin: min || 0 };
+  }).filter((s) => s.etape);
+}
+// Projet le plus probable pour un événement : d'abord ce que j'ai choisi la dernière fois pour cet
+// expéditeur (appris), sinon les mots du titre du projet retrouvés dans le sujet, le résumé, le nom
+// ou le domaine de l'expéditeur.
+function guessMissionFor(ev) {
+  const k = eventSenderKey(ev), learn = state.evLearn || {};
+  if (k && learn.senderMission && learn.senderMission[k] && findMission(learn.senderMission[k])) return { id: learn.senderMission[k], learned: true };
+  const from = eventFrom(ev), domain = String(from.adresse || "").split("@")[1] || "";
+  const dom = noAccents(domain.split(".")[0]).replace(/[^a-z0-9]/g, "");
+  const hay = noAccents([ev.sujet, ev.resume, from.nom, dom].join(" "));
+  let best = null, bestScore = 0;
+  sortedMissions().filter((m) => m.statusCode !== "terminee").forEach((m) => {
+    const title = noAccents(m.title || "");
+    const words = title.split(/[^a-z0-9]+/).filter((w) => w.length >= 4);
+    let score = 0; words.forEach((w) => { if (hay.indexOf(w) > -1) score += w.length; });
+    if (dom.length >= 4 && title.replace(/[^a-z0-9]/g, "").indexOf(dom) > -1) score += 10;
+    if (score > bestScore) { bestScore = score; best = m.id; }
+  });
+  return bestScore >= 4 ? { id: best, learned: false } : null;
+}
+// Boîte « Créer la tâche » : intitulé, projet, échéance, temps alloué, étapes ; une tâche ou une par étape.
+function openTaskDialog(ev, mode) {
+  const p = (ev.proposition && ev.proposition.tache) || {}, steps = eventSteps(ev);
+  const proposed = mode !== "simple";
+  const title = proposed && p.titre ? p.titre : eventTitle(ev);
+  const due = proposed && p.echeance ? String(p.echeance).slice(0, 10) : eventDueDate(ev);
+  const stepsTotal = steps.reduce((a, x) => a + (Number(x.estimationMin) || 0), 0);
+  const est = proposed && p.estimationMin ? Math.round(Number(p.estimationMin)) : (stepsTotal || 0);
+  const guess = guessMissionFor(ev);
+  const opts = ['<option value="">Aucun projet</option>'].concat(sortedMissions().filter((m) => m.statusCode !== "terminee").map((m) => `<option value="${m.id}" ${guess && m.id === guess.id ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`)).join("");
+  const stepsTxt = steps.map((x) => `${x.etape}${x.estimationMin ? ` | ${Math.round(x.estimationMin)}` : ""}`).join("\n");
+  showModal(`<div class="modal-head"><strong class="grow">Créer la tâche</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <label class="field"><span>Intitulé</span><input data-td-title value="${esc(title)}"/></label>
+    <label class="field"><span>Projet</span><select data-td-mission>${opts}</select></label>
+    <div class="muted" style="font-size:12px;margin:-4px 0 8px">${guess ? (guess.learned ? "Projet repris de ton dernier choix pour cet expéditeur." : "Projet proposé d'après le sujet et l'expéditeur.") : "Aucun projet reconnu : choisis-le, l'app s'en souviendra pour cet expéditeur."}</div>
+    <div class="inline" style="gap:10px;align-items:flex-start"><label class="field grow"><span>Échéance</span><input type="date" data-td-due value="${esc(due)}"/></label><label class="field grow"><span>Temps alloué (minutes)</span><input type="number" min="0" step="5" data-td-est value="${est || ""}"/></label></div>
+    <label class="field"><span>Étapes (une par ligne, « | 30 » pour la durée en minutes)</span><textarea data-td-steps rows="${Math.min(8, Math.max(3, steps.length + 1))}">${esc(stepsTxt)}</textarea></label>
+    <label class="inline-check"><input type="checkbox" data-td-per-step ${mode === "steps" ? "checked" : ""}/> <span>Une tâche par étape, chacune avec sa durée</span></label>
+    <div class="inline" style="margin-top:12px"><span class="muted grow" style="font-size:12px">Le message sera marqué « Traité ».</span><button class="btn" data-td-create>Créer</button></div>`);
+  const q = (sel) => document.querySelector(sel);
+  q("[data-modal-close]").onclick = closeModal;
+  q("[data-td-title]").focus();
+  q("[data-td-create]").onclick = () => {
+    const f = { title: q("[data-td-title]").value.trim(), missionId: q("[data-td-mission]").value || null, due: q("[data-td-due]").value || "", est: Math.max(0, Math.round(Number(q("[data-td-est]").value) || 0)), steps: q("[data-td-steps]").value, perStep: q("[data-td-per-step]").checked };
+    if (!f.title) { alert("Donne un intitulé à la tâche."); return; }
+    const made = createTasksFromDialog(ev, f, p);
+    setEventStatut(ev.id, "traite"); closeModal();
+    const m = findMission(f.missionId);
+    toast(`${made.length} tâche${made.length > 1 ? "s" : ""} créée${made.length > 1 ? "s" : ""}${m ? ` dans « ${m.title} »` : ""}${f.due ? " · " + fmtDate(f.due) : ""} ✓`);
+    render();
+  };
+}
+function createTasksFromDialog(ev, f, p) {
+  p = p || {};
+  const steps = parseStepsText(f.steps);
+  const base = () => { const t = eventToTask(ev); t.missionId = f.missionId || null; t.dueDate = f.due || ""; return t; };
+  const made = [];
+  if (f.perStep && steps.length) {
+    steps.forEach((x, i) => { const t = base(); t.title = `${f.title} — ${i + 1}/${steps.length} : ${x.etape}`; t.estimationMin = x.estimationMin || null; t.notes = `Étape ${i + 1} sur ${steps.length} de « ${f.title} »`; made.push(t); });
+  } else {
+    const t = base(); t.title = f.title; t.estimationMin = f.est || null;
+    if (steps.length) t.notes = [t.notes, "Processus :\n" + stepsText(steps)].filter(Boolean).join("\n\n");
+    made.push(t);
+  }
+  // Décision mémorisée : projet par expéditeur (réutilisé à la prochaine tâche) et trace complète pour
+  // l'apprentissage du Mac mini (ce qui a été proposé, ce que j'ai décidé).
+  const k = eventSenderKey(ev);
+  state.evDecisions = state.evDecisions || {};
+  state.evDecisions[ev.id] = { at: new Date().toISOString(), expediteur: k, source: ev.source || "", compte: ev.compte || "", urgence: eventUrgence(ev), sujet: ev.sujet || "",
+    missionId: f.missionId || null, missionTitle: (findMission(f.missionId) || {}).title || "", dueDate: f.due || "", estimationMin: f.est || 0, perStep: !!(f.perStep && steps.length), title: f.title, steps: steps.map((x) => x.etape),
+    proposed: { title: p.titre || "", echeance: p.echeance ? String(p.echeance).slice(0, 10) : "", estimationMin: Math.round(Number(p.estimationMin) || 0), steps: eventSteps(ev).map((x) => x.etape) } };
+  if (k && f.missionId) { state.evLearn = state.evLearn || {}; state.evLearn.senderMission = state.evLearn.senderMission || {}; state.evLearn.senderMission[k] = f.missionId; }
+  save();
+  return made;
+}
 function stepsText(steps) {
   return steps.map((s, i) => `${i + 1}. ${s.etape}${s.estimationMin ? ` (${fmtEstim(s.estimationMin)})` : ""}`).join("\n");
 }
@@ -2733,7 +2830,7 @@ function eventToStepTasks(ev) {
 function eventProposal(ev, open) {
   const p = ev.proposition;
   if (!p || (!p.reponse && !p.tache)) return "";
-  const compose = eventComposeLink(ev);
+  const compose = eventComposeLink(ev), reply = eventReply(ev), edited = !!evEditOf(ev.id), editing = evEditing === ev.id;
   const t = p.tache, steps = eventSteps(ev), done = stepsDone(ev.id);
   const complex = !!(t && (t.complexe || steps.length));
   const stepsTotal = steps.reduce((a, s) => a + (Number(s.estimationMin) || 0), 0);
@@ -2745,14 +2842,17 @@ function eventProposal(ev, open) {
   const ctxHtml = ctx.length ? `<details class="ev-ctx"><summary class="muted">${icon("search")} Éléments de contexte pris en compte (${ctx.length})</summary>
       ${ctx.map((x) => `<div class="ev-ctx-item"><span class="pm-tag">${esc(CTX_SOURCES[x.source] || x.source || "source")}</span><div class="grow"><div><strong>${esc(x.titre || "")}</strong>${x.date ? ` <span class="muted">· ${esc(fmtDate(String(x.date).slice(0, 10)))}</span>` : ""}</div>${x.extrait ? `<div class="muted ev-ctx-x">${esc(x.extrait)}</div>` : ""}</div>${x.lien ? `<a class="btn ghost small" href="${esc(x.lien)}" target="_blank" rel="noopener">Ouvrir</a>` : ""}</div>`).join("")}</details>` : "";
   return `<details class="ev-prop" ${open ? "open" : ""}><summary>${icon("lightbulb")} Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}${ctx.length ? ` <span class="muted" title="Réponse étayée par ${ctx.length} élément(s) d'archives">· étayée</span>` : ""}</summary>
-    ${p.reponse ? `<div class="ev-draft">${esc(p.reponse)}</div>
-      <div class="ev-actions"><button class="btn ghost small" data-ev-copy="${ev.id}">Copier</button>
+    ${editing ? `<textarea class="ev-draft-edit" data-ev-reply-text="${ev.id}" rows="9">${esc(evDraft[ev.id] != null ? evDraft[ev.id] : reply)}</textarea>
+      <div class="ev-actions"><button class="btn small" data-ev-save="${ev.id}">Enregistrer</button><button class="btn ghost small" data-ev-cancel="${ev.id}">Annuler</button>${edited || (p.reponse && evDraft[ev.id] != null && evDraft[ev.id] !== p.reponse) ? `<button class="btn ghost small" data-ev-reset="${ev.id}" title="Reprendre le texte proposé par l'assistant">Revenir à la proposition</button>` : ""}</div>`
+    : reply ? `<div class="ev-draft">${esc(reply)}</div>
+      <div class="ev-actions"><button class="btn ghost small" data-ev-copy="${ev.id}">Copier</button><button class="btn ghost small" data-ev-edit="${ev.id}" title="Modifier la réponse avant de l'envoyer ; ta version est mémorisée et sert à l'assistant">✏️ Modifier</button>
         ${compose ? `<a class="btn secondary small" href="${esc(compose)}" target="_blank" rel="noopener">${icon(EVENT_SOURCE_ICONS[ev.source] || "mail")} ${COMPOSE_LABELS[ev.source] || "Répondre dans Gmail"}</a>` : ""}
+        ${edited ? `<span class="pm-tag" title="Tu as modifié la proposition de l'assistant ; c'est ta version qui est copiée et envoyée">modifiée par toi</span>` : ""}
         <span class="muted" style="font-size:12px">Rien n'est envoyé sans toi : ${COMPOSE_LABELS[ev.source] ? COMPOSE_LABELS[ev.source].replace("Répondre dans ", "") : "Gmail"} s'ouvre pré-rempli, tu relis puis tu envoies.</span></div>` : ""}
     ${ctxHtml}
     ${t && t.titre ? `<div class="ev-ptask"><span class="grow">${complex ? '<span class="badge u2" title="Action complexe : un processus en plusieurs étapes est proposé">Complexe</span> ' : ""}Action proposée : <strong>${esc(t.titre)}</strong>${t.echeance ? ` · pour le ${esc(fmtDate(String(t.echeance).slice(0, 10)))}` : ""}${t.estimationMin ? ` · ${esc(fmtEstim(t.estimationMin))}` : ""}</span>
-        <button class="btn secondary small" data-ev-ptask="${ev.id}" title="${steps.length ? "Une seule tâche, les étapes en description" : "Créer la tâche"}">✅ Créer la tâche</button>
-        ${steps.length ? `<button class="btn ghost small" data-ev-psteps="${ev.id}" title="Une tâche par étape, avec son estimation">⋮ Une tâche par étape</button>` : ""}</div>
+        <button class="btn secondary small" data-ev-ptask="${ev.id}" title="Choisir le projet, l'échéance, le temps alloué et les étapes avant de créer">✅ Créer la tâche</button>
+        ${steps.length ? `<button class="btn ghost small" data-ev-psteps="${ev.id}" title="Une tâche par étape, avec son estimation ; projet et échéance à confirmer">⋮ Une tâche par étape</button>` : ""}</div>
       ${stepList}` : ""}
   </details>`;
 }
@@ -7198,20 +7298,27 @@ function wire() {
     const x = eventToAction(ev); setEventStatut(ev.id, "traite"); openDetail("actions", x.id); toast("Action créée à partir de l'événement ✓");
   });
   c.querySelectorAll("[data-ev-task]").forEach((b) => b.onclick = () => {
-    const ev = eventsAll().find((e) => e.id === b.dataset.evTask); if (!ev) return;
-    eventToTask(ev); setEventStatut(ev.id, "traite"); toast("Tâche créée à partir de l'événement ✓");
+    const ev = eventsAll().find((e) => e.id === b.dataset.evTask); if (ev) openTaskDialog(ev, "simple");
   });
   c.querySelectorAll("[data-ev-copy]").forEach((b) => b.onclick = () => {
-    const ev = eventsAll().find((e) => e.id === b.dataset.evCopy); if (!ev || !ev.proposition || !ev.proposition.reponse) return;
-    try { navigator.clipboard.writeText(ev.proposition.reponse); toast("Brouillon copié"); } catch (e) { alert("Copie impossible sur cet appareil."); }
+    const ev = eventsAll().find((e) => e.id === b.dataset.evCopy); const txt = ev ? eventReply(ev) : ""; if (!txt) return;
+    try { navigator.clipboard.writeText(txt); toast("Brouillon copié"); } catch (e) { alert("Copie impossible sur cet appareil."); }
+  });
+  c.querySelectorAll("[data-ev-edit]").forEach((b) => b.onclick = () => { evEditing = b.dataset.evEdit; delete evDraft[evEditing]; render(); const ta = document.querySelector("[data-ev-reply-text]"); if (ta) ta.focus(); });
+  c.querySelectorAll("[data-ev-reply-text]").forEach((ta) => ta.oninput = () => { evDraft[ta.dataset.evReplyText] = ta.value; });
+  c.querySelectorAll("[data-ev-save]").forEach((b) => b.onclick = () => {
+    const ev = eventsAll().find((e) => e.id === b.dataset.evSave); const ta = document.querySelector("[data-ev-reply-text]"); if (!ev || !ta) return;
+    saveEventReply(ev, ta.value); delete evDraft[ev.id]; evEditing = null; render(); toast("Réponse enregistrée : c'est ta version qui sera copiée ou envoyée");
+  });
+  c.querySelectorAll("[data-ev-cancel]").forEach((b) => b.onclick = () => { delete evDraft[b.dataset.evCancel]; evEditing = null; render(); });
+  c.querySelectorAll("[data-ev-reset]").forEach((b) => b.onclick = () => {
+    const id = b.dataset.evReset; if (state.evEdits) { delete state.evEdits[id]; save(); } delete evDraft[id]; evEditing = null; render(); toast("Proposition de l'assistant rétablie");
   });
   c.querySelectorAll("[data-ev-ptask]").forEach((b) => b.onclick = () => {
-    const ev = eventsAll().find((e) => e.id === b.dataset.evPtask); if (!ev) return;
-    eventToProposedTask(ev); setEventStatut(ev.id, "traite"); toast("Tâche proposée créée ✓");
+    const ev = eventsAll().find((e) => e.id === b.dataset.evPtask); if (ev) openTaskDialog(ev, "proposed");
   });
   c.querySelectorAll("[data-ev-psteps]").forEach((b) => b.onclick = () => {
-    const ev = eventsAll().find((e) => e.id === b.dataset.evPsteps); if (!ev) return;
-    const n = eventToStepTasks(ev).length; setEventStatut(ev.id, "traite"); toast(`${n} tâche(s) créée(s), une par étape ✓`);
+    const ev = eventsAll().find((e) => e.id === b.dataset.evPsteps); if (ev) openTaskDialog(ev, "steps");
   });
   c.querySelectorAll("[data-ev-step]").forEach((cb) => cb.onchange = () => { toggleStep(cb.dataset.evStep, Number(cb.dataset.i)); render(); });
   if (eventsReady() && !eventLoading && Date.now() - eventLoadedAt > (eventStore ? EVENT_FRESH : EVENT_RETRY)) loadEvenements();
