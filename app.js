@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v119";
+const APP_VERSION = "v120";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2539,6 +2539,7 @@ function repairEvents(store) {
       if (p.reponse) p.reponse = fixMojibake(p.reponse);
       if (p.tache && p.tache.titre) p.tache.titre = fixMojibake(p.tache.titre);
       if (Array.isArray(p.processus)) p.processus.forEach((s) => { if (s && s.etape) s.etape = fixMojibake(s.etape); });
+      if (Array.isArray(p.contexte)) p.contexte.forEach((x) => { if (!x) return; if (x.titre) x.titre = fixMojibake(x.titre); if (x.extrait) x.extrait = fixMojibake(x.extrait); });
     }
   });
   return store;

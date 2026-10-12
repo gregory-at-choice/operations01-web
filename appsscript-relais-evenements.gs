@@ -1,5 +1,5 @@
 /**
- * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 3.
+ * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 4.
  * Trois fichiers, tous CRÉÉS PAR LA WEB APP (portée drive.file) ; ce script écrit dedans.
  *   operations01-evenements.json : événements classés + propositions de l'assistant
  *   operations01-assistant.json  : brief du matin, estimations de durée par tâche
@@ -30,13 +30,13 @@
  *     tache: {…}, processus: [...] }   ← inchangés
  */
 var SECRET = "";
-var VERSION = 3;
+var VERSION = 4;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
 var EXPORT_CLES = ["missions", "tasks", "actions", "rendezvous", "recurrences", "slots"];
 var CONSERVER_JOURS = 30;
-var MAX_EVENEMENTS = 1000;
+var MAX_EVENEMENTS = 3000;   // ~95 événements par jour : 1000 ne couvrait que dix jours
 var DOSSIER_CORRESPONDANCES = "Correspondances";   // dossier à la racine du Drive (créé par appsscript-correspondances.gs)
 var MAX_CARACTERES = 4000;
 
@@ -142,10 +142,12 @@ function posterCorrespondance(corps) {
   try {
     var donnees = sousDossier(dossier, "_données"), index = lireIndex(donnees), contacts = contactsParCle();
     var parCle = {}, ignorees = 0;
+    var moi = mesCles(contacts);
     entrees.forEach(function (e) {
       if (!e || !e.id || !e.cle) { ignorees++; return; }
       var brute = normaliserCle(e.cle), c = contacts[brute];
       var cle = c ? c.cle : brute;   // un contact de l'app avec e-mail ET téléphone : un seul fichier, sous son adresse
+      if (moi[cle] || moi[brute]) { ignorees++; return; }   // mes propres numéros et adresses ne sont pas des interlocuteurs
       var g = parCle[cle] || (parCle[cle] = { nom: "", entrees: [] });
       var nom = (c && c.nom) || String(e.nom || "").trim() || (index[cle] && index[cle].nom) || cle;
       if (!g.nom || (c && g.nom !== c.nom)) g.nom = nom;
@@ -200,6 +202,16 @@ function contactsParCle() {
     if (email) out[email] = { nom: n, cle: canon };
     if (tel) out[tel] = { nom: n, cle: canon };
   });
+  return out;
+}
+// Mes propres clés : le compte courant, les boîtes secondaires déclarées dans l'app, et le téléphone
+// ou l'adresse de ma propre fiche contact (celle qui porte l'adresse du compte).
+function mesCles(contacts) {
+  var out = {}, moi = String(Session.getActiveUser().getEmail() || "").toLowerCase();
+  if (moi) out[moi] = true;
+  var data = lireJson(FICHIER_DATA) || {};
+  (data.mailboxes || []).forEach(function (b) { if (b.email) out[String(b.email).toLowerCase()] = true; });
+  Object.keys(contacts || {}).forEach(function (k) { if (out[contacts[k].cle]) out[k] = true; });
   return out;
 }
 function dossierCorrespondances() { var it = DriveApp.getRootFolder().getFoldersByName(DOSSIER_CORRESPONDANCES); return it.hasNext() ? it.next() : null; }
