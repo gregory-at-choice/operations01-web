@@ -1,5 +1,5 @@
 /**
- * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 7.
+ * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 8.
  * Trois fichiers, tous CRÉÉS PAR LA WEB APP (portée drive.file) ; ce script écrit dedans.
  *   operations01-evenements.json : événements classés + propositions de l'assistant
  *   operations01-assistant.json  : brief du matin, estimations de durée par tâche
@@ -12,6 +12,7 @@
  * API (toujours HTTP 200, tester "ok") :
  *   GET  ?secret=…                                → { ok, service, version }
  *   GET  ?secret=…&action=export                  → { ok, data:{…}, evenements:[{id,statut,traiteLe}], assistant:{estimations} }
+ *        data.contacts : id, prénom, nom, organisation, fonction, e-mail, téléphone, catégorie (jamais IBAN ni notes).
  *        data contient aussi evEdits (réponses corrigées par Grégory : { idEvt: {reponse, original, at…} }),
  *        evDecisions (tâches créées depuis un message : projet, échéance, temps alloué, étapes, et ce qui
  *        était proposé) et evLearn.senderMission (expéditeur → projet) : matière à apprentissage.
@@ -19,8 +20,8 @@
  *   GET  ?secret=…&action=correspondance&cle=…    → { ok, nom, cle, entrees:[…], markdown }           (un interlocuteur ;
  *        cle = adresse e-mail ou téléphone ; &depuis=AAAA-MM-JJ et &max=N limitent les entrées)
  *   POST { secret, evenements:[…] }               → fusion par id ; existant : « proposition » peut être mise à jour,
- *        « contenu » ajouté s'il manquait, et pour les canaux hors mail « expediteur.nom » et « sujet » corrigés
- *        s'ils sont fournis. Le texte (contenu) est conservé pour les canaux hors mail (3000 car.).
+ *        « contenu » ajouté s'il manquait, et pour les canaux hors mail « expediteur.nom » (y compris "" pour
+ *        effacer) et « sujet » corrigés s'ils sont fournis. Le texte (contenu) est conservé pour les canaux hors mail (3000 car.).
  *   POST { secret, action:"retirer", ids:[…] }    → retire du fichier les événements listés, SEULEMENT s'ils sont
  *        encore « nouveau » (jamais ceux que Grégory a traités ou ignorés). Pour réparer un envoi par erreur.
  *   POST { secret, action:"assistant", brief:{…}, estimations:{ id:{…} } } → brief remplacé, estimations fusionnées
@@ -37,7 +38,7 @@
  *     tache: {…}, processus: [...] }   ← inchangés
  */
 var SECRET = "";
-var VERSION = 7;
+var VERSION = 8;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -58,6 +59,10 @@ function doGet(e) {
   var data = lireJson(FICHIER_DATA) || {};
   var exporte = {};
   EXPORT_CLES.forEach(function (k) { if (Array.isArray(data[k])) exporte[k] = data[k]; });
+  // Contacts : de quoi nommer un expéditeur (téléphone, adresse), sans coordonnées bancaires ni notes.
+  exporte.contacts = (data.contacts || []).map(function (c) {
+    return { id: c.id, firstName: c.firstName || "", lastName: c.lastName || "", organization: c.organization || "", jobTitle: c.jobTitle || "", email: c.email || "", phone: c.phone || "", category: c.category || "", companyId: c.companyId || null };
+  });
   EXPORT_OBJETS.forEach(function (k) { if (data[k] && typeof data[k] === "object") exporte[k] = data[k]; });
   var ev = (lireJson(FICHIER_EVENEMENTS) || {}).evenements || [];
   var assistant = lireJson(FICHIER_ASSISTANT) || {};
@@ -104,7 +109,7 @@ function posterEvenements(corps) {
         if (ev.contenu && !deja.contenu) deja.contenu = ev.contenu;   // rattrapage du texte des messages déjà reçus
         // Hors mail : nom du carnet d'adresses et sujet court corrigés après coup (les anciens portaient le numéro).
         if (ev.source !== "mail" && deja.source !== "mail") {
-          if (ev.expediteur && ev.expediteur.nom) { deja.expediteur = deja.expediteur || {}; deja.expediteur.nom = ev.expediteur.nom; }
+          if (ev.expediteur && Object.prototype.hasOwnProperty.call(ev.expediteur, "nom")) { deja.expediteur = deja.expediteur || {}; deja.expediteur.nom = ev.expediteur.nom || ""; }   // "" efface un numéro pris pour un nom
           if (ev.sujet) deja.sujet = ev.sujet;
         }
         return;
