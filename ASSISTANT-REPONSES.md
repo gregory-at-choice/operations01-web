@@ -95,6 +95,18 @@ que ce champ sur un événement existant) devient, **pour toutes les urgences** 
 - Si rien ne justifie une réponse (newsletter, notification, information pure), ne pas écrire de
   `reponse` : l'app affiche alors seulement l'action suggérée.
 
+### Périmètre par compte
+
+| Compte (`ev.compte`) | Classement par urgence | Réponse étayée | Archive des correspondances |
+|---|---|---|---|
+| `choicefinance`, `majandco`, `icarus` | oui | **oui** | oui (script Gmail dans chaque boîte) |
+| `gmail` (Gmail perso, reçoit la redirection Outlook) et `outlook` | **oui, c'est l'essentiel** | **non** : ne pas écrire `proposition.reponse`, l'action suggérée suffit, Grégory gère ces réponses lui-même | non |
+| `messages-mac-mini` (SMS, iMessage), `whatsapp-mac-mini`, Google Chat | oui | oui, courte | oui (via le relais, section 1) |
+
+Un mail du compte `gmail` ou `outlook` ne consomme donc rien sur le forfait : pas d'appel à Opus, le
+classement local suffit. Les volumes concernés sont faibles (environ 175 messages par mois à eux
+deux).
+
 ### Sources de contexte à interroger (dans cet ordre)
 
 1. **Correspondance avec l'interlocuteur** : les 30 dernières entrées de son fichier (relais ou
