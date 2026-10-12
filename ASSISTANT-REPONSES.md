@@ -102,7 +102,11 @@ Pour les événements `sms`, `imessage`, `whatsapp` et `chat`, envoyer le **text
 « Message » ; pour les mails il reste supprimé, l'app les lit dans Gmail). `ev.sujet` = les premiers
 mots (≤ 60 caractères), `ev.expediteur.nom` = le nom du carnet d'adresses macOS quand il existe, sinon
 vide (jamais le numéro répété). Renvoyer une fois tous les événements hors mail des 30 derniers jours
-avec leur `contenu` : le relais complète ceux qui n'en ont pas.
+avec leur `contenu` : le relais complète ceux qui n'en ont pas. Depuis le relais v7, renvoyer un
+événement hors mail déjà connu met aussi à jour `expediteur.nom` et `sujet` (pour corriger les anciens
+qui portaient le numéro). `POST { action: "retirer", ids: [...] }` retire des événements envoyés par
+erreur, seulement s'ils sont encore « nouveau » : ne jamais envoyer au relais un message absent de
+l'app sans vouloir qu'il y apparaisse (`GET ?action=export` donne la liste des identifiants connus).
 
 ### Périmètre par compte
 

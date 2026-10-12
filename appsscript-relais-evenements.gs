@@ -1,5 +1,5 @@
 /**
- * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 6.
+ * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 7.
  * Trois fichiers, tous CRÉÉS PAR LA WEB APP (portée drive.file) ; ce script écrit dedans.
  *   operations01-evenements.json : événements classés + propositions de l'assistant
  *   operations01-assistant.json  : brief du matin, estimations de durée par tâche
@@ -18,8 +18,11 @@
  *   GET  ?secret=…&action=correspondances         → { ok, cles:{ cle:{nom,url,n,dernier,canaux} } }   (index)
  *   GET  ?secret=…&action=correspondance&cle=…    → { ok, nom, cle, entrees:[…], markdown }           (un interlocuteur ;
  *        cle = adresse e-mail ou téléphone ; &depuis=AAAA-MM-JJ et &max=N limitent les entrées)
- *   POST { secret, evenements:[…] }               → fusion par id ; existant : « proposition » peut être mise à jour, et
- *        « contenu » ajouté s'il manquait. Le texte (contenu) est conservé pour les canaux hors mail (3000 car.).
+ *   POST { secret, evenements:[…] }               → fusion par id ; existant : « proposition » peut être mise à jour,
+ *        « contenu » ajouté s'il manquait, et pour les canaux hors mail « expediteur.nom » et « sujet » corrigés
+ *        s'ils sont fournis. Le texte (contenu) est conservé pour les canaux hors mail (3000 car.).
+ *   POST { secret, action:"retirer", ids:[…] }    → retire du fichier les événements listés, SEULEMENT s'ils sont
+ *        encore « nouveau » (jamais ceux que Grégory a traités ou ignorés). Pour réparer un envoi par erreur.
  *   POST { secret, action:"assistant", brief:{…}, estimations:{ id:{…} } } → brief remplacé, estimations fusionnées
  *   POST { secret, action:"correspondance", entrees:[…] } → archive des messages hors Gmail (voir posterCorrespondance)
  *
@@ -34,7 +37,7 @@
  *     tache: {…}, processus: [...] }   ← inchangés
  */
 var SECRET = "";
-var VERSION = 6;
+var VERSION = 7;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -73,6 +76,7 @@ function doPost(e) {
   if (!SECRET || secret !== SECRET) return reponse({ ok: false, erreur: "secret invalide" });
   if (corps.action === "assistant") return posterAssistant(corps);
   if (corps.action === "correspondance") return posterCorrespondance(corps);
+  if (corps.action === "retirer") return posterRetrait(corps);
   return posterEvenements(corps);
 }
 
@@ -98,6 +102,11 @@ function posterEvenements(corps) {
           deja.proposition = ev.proposition; propositions++;
         }
         if (ev.contenu && !deja.contenu) deja.contenu = ev.contenu;   // rattrapage du texte des messages déjà reçus
+        // Hors mail : nom du carnet d'adresses et sujet court corrigés après coup (les anciens portaient le numéro).
+        if (ev.source !== "mail" && deja.source !== "mail") {
+          if (ev.expediteur && ev.expediteur.nom) { deja.expediteur = deja.expediteur || {}; deja.expediteur.nom = ev.expediteur.nom; }
+          if (ev.sujet) deja.sujet = ev.sujet;
+        }
         return;
       }
       ev.statut = "nouveau"; ev.recuParRelaisLe = maintenant;
@@ -113,6 +122,27 @@ function posterEvenements(corps) {
   } finally { verrou.releaseLock(); }
 }
 
+// Retire des événements envoyés par erreur : uniquement ceux encore « nouveau ».
+function posterRetrait(corps) {
+  var ids = Array.isArray(corps.ids) ? corps.ids.map(String) : [];
+  var fichier = trouver(FICHIER_EVENEMENTS);
+  if (!fichier) return reponse({ ok: false, erreur: "fichier absent" });
+  var verrou = LockService.getScriptLock(); verrou.waitLock(20000);
+  try {
+    var data; try { data = JSON.parse(fichier.getBlob().getDataAsString() || "{}"); } catch (err) { data = {}; }
+    var liste = Array.isArray(data.evenements) ? data.evenements : [];
+    var cibles = {}; ids.forEach(function (id) { cibles[id] = true; });
+    var retires = 0, conserves = 0;
+    liste = liste.filter(function (x) {
+      if (!x || !cibles[x.id]) return true;
+      if (x.statut === "nouveau") { retires++; return false; }
+      conserves++; return true;   // traité ou ignoré par Grégory : on ne touche pas
+    });
+    data.evenements = liste; data.updatedAt = Date.now(); data.generatedAt = new Date().toISOString();
+    fichier.setContent(JSON.stringify(data));
+    return reponse({ ok: true, retires: retires, conserves: conserves, total: liste.length });
+  } finally { verrou.releaseLock(); }
+}
 function posterAssistant(corps) {
   var fichier = trouver(FICHIER_ASSISTANT);
   if (!fichier) return reponse({ ok: false, erreur: "fichier absent : ouvrir une fois le tableau de bord de l'assistant dans Operations01" });
