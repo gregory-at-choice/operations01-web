@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v128";
+const APP_VERSION = "v129";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -6267,7 +6267,7 @@ let calBusy = false;
 function loadCalCache() {
   try {
     const raw = JSON.parse(localStorage.getItem(CAL_CACHE) || "null");
-    if (raw && Array.isArray(raw.events)) return { events: raw.events, at: raw.at || 0, error: null };
+    if (raw && Array.isArray(raw.events)) return { events: raw.events.filter((e) => !isHiddenCalEvent(e)), at: raw.at || 0, error: null };
   } catch (e) {}
   return { events: [], at: 0, error: null };
 }
@@ -6281,6 +6281,8 @@ const calHHMM = (iso) => { const d = new Date(iso); return String(d.getHours()).
 const calDay = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 // Convertit un événement Google en fiche simple, indépendante de l'API.
+// Événements d'agenda à ne pas montrer dans le Planning : titre « NRP » (bloc personnel sans contenu).
+const isHiddenCalEvent = (e) => /^\s*nrp\s*$/i.test(String((e && e.title) || ""));
 function normEvent(e) {
   const st = e.start || {}, en = e.end || {};
   const allDay = !st.dateTime;
@@ -6330,7 +6332,7 @@ async function loadCalendar(force) {
   try {
     const from = new Date(); from.setDate(from.getDate() - CAL_PAST_DAYS);
     const raw = await DriveSync.listEvents(from.toISOString(), calHorizonDate().toISOString());
-    calendar = { events: raw.map(normEvent).filter((e) => e.date), at: Date.now(), error: null };
+    calendar = { events: raw.map(normEvent).filter((e) => e.date && !isHiddenCalEvent(e)), at: Date.now(), error: null };
     calNextTry = 0;
     saveCalCache();
   } catch (e) {
