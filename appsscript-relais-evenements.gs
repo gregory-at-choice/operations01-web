@@ -1,5 +1,5 @@
 /**
- * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 10.
+ * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 11.
  * Trois fichiers, tous CRÉÉS PAR LA WEB APP (portée drive.file) ; ce script écrit dedans.
  *   operations01-evenements.json : événements classés + propositions de l'assistant
  *   operations01-assistant.json  : brief du matin, estimations de durée par tâche
@@ -44,7 +44,7 @@
  *     tache: {…}, processus: [...] }   ← inchangés
  */
 var SECRET = "";
-var VERSION = 10;
+var VERSION = 11;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -182,7 +182,7 @@ function posterAssistant(corps) {
 
 // ---- Agenda : occupations et créneaux libres des prochains jours, tous agendas confondus ----
 var AGENDA_JOUR_DEBUT = 8, AGENDA_JOUR_FIN = 22;   // fenêtre de journée pour calculer les créneaux libres (le soir compris)
-var AGENDA_IGNORER = /férié|holiday|routine|lecture\s*$/i;  // agendas ou événements qui n'occupent pas vraiment
+var AGENDA_IGNORER = /férié|holiday|routine|lecture\s*$|^\s*nrp\s*$/i;  // agendas ou événements qui n'occupent pas vraiment (NRP = libre)
 function lireAgenda(jours) {
   jours = Math.max(1, Math.min(31, jours || 7));
   var tz = Session.getScriptTimeZone();
