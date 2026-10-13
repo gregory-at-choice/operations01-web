@@ -213,6 +213,10 @@ envoyée** (ou « pas de réponse envoyée »). Les fichiers sont régénérés 
   Claude (Claude Code en mode headless), le modèle local servant de repli. L'app affiche la réponse, la mention
   « étayée », les éléments de contexte, et ouvre Gmail, Messages ou WhatsApp pré-rempli selon le
   canal. Le contrat complet est dans `ASSISTANT-REPONSES.md`.
+- **À la demande** : les réponses ne sont rédigées d'avance que pour les messages urgents à répondre et
+  les demandes de créneau. Pour tout autre message, « ✨ Proposer une réponse » (ou « ↻ Nouvelle
+  proposition ») envoie une demande, avec une précision facultative (« courte, en anglais »), que le
+  Mac mini sert avec Opus 5.5 en quelques minutes ; l'app relit le fichier toutes les 30 s en attendant.
 - **Corriger et décider** : « ✏️ Modifier » ouvre la réponse en édition ; la version de Grégory est
   mémorisée (synchronisée), c'est elle qui est copiée ou envoyée, et un bouton rétablit la proposition.
   « Créer la tâche », « Une tâche par étape » et « Tâche » ouvrent une boîte : intitulé, **projet**

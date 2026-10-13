@@ -154,6 +154,26 @@ semaine dispo un midi pour déjeuner ? » reçu un lundi : « Yes avec plaisir �
    (`https://drive.google.com/file/d/<id>/view` si l'identifiant est connu).
 4. **Événements précédents du même expéditeur** et leurs propositions acceptées (`statut: traite`).
 
+### Quand rédiger : d'avance pour l'urgent, à la demande pour le reste
+
+Beaucoup de messages n'appellent pas de réponse rédigée. La règle :
+
+- **D'avance** (dès la réception) : urgences 1 et 2 **dont l'action est « répondre »**, et toute
+  demande de rendez-vous / créneau. Rien d'autre n'est rédigé automatiquement : plus de lot de nuit
+  pour les urgences 3 et 4.
+- **À la demande** : dans l'app, « ✨ Proposer une réponse » (ou « ↻ Nouvelle proposition » quand une
+  existe) écrit une demande dans `data.evRequests` de l'export du relais (v10) :
+  `{ idEvt: { type: "reponse", at, note, expediteur, source, sujet, urgence } }`. **Interroger l'export
+  toutes les 60 secondes** ; servir chaque demande dont `at` est postérieur au `genereeLe` de la
+  proposition existante, **avant tout autre travail**, avec Opus 5.5 et le contexte complet
+  (historique de l'interlocuteur, ton et habitudes, lieux, dates, agenda si un créneau est en jeu,
+  projet). `note` est une consigne de Grégory à respecter mot pour mot (« réponse courte, je décline »,
+  « en anglais », « propose un créneau la semaine prochaine »). Poster la proposition avec
+  `genereeLe` = maintenant : l'app efface la demande dès qu'elle la voit. Objectif : moins de trois
+  minutes entre la demande et l'affichage.
+- Les tâches proposées (`tache`, `processus`) et le classement ne changent pas : ils restent
+  systématiques et locaux.
+
 ### Modèle : Claude Opus 5.5 via mon forfait Claude (Claude Code en mode headless)
 
 La rédaction des réponses se fait avec **Claude Opus 5.5**, facturé sur **mon abonnement Claude**
@@ -202,9 +222,8 @@ Claude Code (part de la fenêtre de 5 heures et de la semaine), et à reporter d
 Limites du forfait et repli :
 
 - Le forfait a une **fenêtre de 5 heures** et un **plafond hebdomadaire**, partagés avec mes
-  propres sessions Claude et Claude Code. Réserver la génération immédiate aux **urgences 1 et 2**
-  (à la réception) et traiter les **urgences 3 et 4 par lots de 20, la nuit** (02 h à 06 h), les
-  plus récents d'abord, pour ne pas vider la fenêtre pendant que je travaille.
+  propres sessions Claude et Claude Code. Génération d'avance pour les **urgences 1 et 2 à
+  répondre** seulement ; le reste à la demande (section ci-dessus). Plus de lot de nuit.
 - Quand Claude Code répond par une erreur de limite d'usage (sortie JSON avec `is_error: true` ou
   code de retour non nul mentionnant « usage limit » / « rate limit »), **ne pas réessayer** avant
   la fin de la fenêtre : basculer sur le modèle local pour ce message, avec

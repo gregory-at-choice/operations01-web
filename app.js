@@ -37,14 +37,14 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v125";
+const APP_VERSION = "v126";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, evRequests: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -99,7 +99,7 @@ function adoptRemote(remote, why) {
 const BASE_KEY = "operations01_base";
 const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals"];
 const SYNC_NESTED = { missions: "entries" };
-const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "bankMap", "bankSkip", "contactIgnore"];
+const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "evRequests", "bankMap", "bankSkip", "contactIgnore"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
 let syncBase = (() => { try { const r = localStorage.getItem(BASE_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } })();
 function setSyncBase(obj) {
@@ -2752,6 +2752,52 @@ function saveEventReply(ev, text) {
   else state.evEdits[ev.id] = { reponse: text, original: p.reponse || "", genereePar: p.genereePar || "", at: new Date().toISOString(), sujet: ev.sujet || "", expediteur: eventSenderKey(ev), source: ev.source || "", compte: ev.compte || "" };
   save();
 }
+// ---- Réponse à la demande : « ✨ Proposer une réponse » enregistre une demande (synchronisée, exportée
+//      par le relais) ; le Mac mini la sert avec Opus 5.5 et renvoie la proposition dans le fichier
+//      d'événements. Tant qu'elle n'est pas arrivée, l'app relit le fichier toutes les 30 s. ----
+const EV_REQUEST_MAX_MS = 20 * 60000;   // au-delà, la demande est considérée perdue (bouton de nouveau actif)
+function evRequestOf(ev) {
+  const r = (state.evRequests || {})[ev.id]; if (!r) return null;
+  const p = ev.proposition || {};
+  // servie : une proposition plus récente que la demande est arrivée
+  if (p.genereeLe && p.genereeLe > r.at) { delete state.evRequests[ev.id]; storeState(); return null; }
+  if (Date.now() - new Date(r.at).getTime() > EV_REQUEST_MAX_MS) return Object.assign({ expired: true }, r);
+  return r;
+}
+function requestReply(ev, note) {
+  state.evRequests = state.evRequests || {};
+  state.evRequests[ev.id] = { type: "reponse", at: new Date().toISOString(), note: String(note || "").trim(), expediteur: eventSenderKey(ev), source: ev.source || "", sujet: ev.sujet || "", urgence: eventUrgence(ev) };
+  save(); scheduleRequestPoll(); render();
+  toast("Demande envoyée : Opus prépare une réponse, elle apparaîtra ici dans quelques minutes");
+}
+let evRequestTimer = null;
+function pendingRequests() { return Object.keys(state.evRequests || {}).filter((id) => { const r = state.evRequests[id]; return r && Date.now() - new Date(r.at).getTime() < EV_REQUEST_MAX_MS; }); }
+function scheduleRequestPoll() {
+  if (evRequestTimer) return;
+  evRequestTimer = setInterval(() => {
+    if (!pendingRequests().length) { clearInterval(evRequestTimer); evRequestTimer = null; return; }
+    if (eventsReady() && !eventLoading) { eventLoadedAt = 0; loadEvenements(); }
+  }, 30000);
+}
+function openReplyRequestDialog(ev) {
+  const has = !!eventReply(ev);
+  showModal(`<div class="modal-head"><strong class="grow">${has ? "Nouvelle proposition de réponse" : "Proposer une réponse"}</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <div class="muted" style="font-size:13px;margin-bottom:10px">Opus 5.5 relit l'historique avec ${esc(eventSenderName(ev) || "cet interlocuteur")}, votre ton habituel, les lieux, les dates et ton agenda, puis rédige. Compte quelques minutes.</div>
+    <label class="field"><span>Précision pour l'assistant (facultatif)</span><textarea data-rq-note rows="3" placeholder="Ex. : réponse courte, je décline poliment · propose un créneau la semaine prochaine · en anglais"></textarea></label>
+    <div class="inline" style="margin-top:10px"><span class="grow"></span><button class="btn" data-rq-send>✨ Demander</button></div>`);
+  document.querySelector("[data-modal-close]").onclick = closeModal;
+  const ta = document.querySelector("[data-rq-note]"); ta.focus();
+  document.querySelector("[data-rq-send]").onclick = () => { const note = ta.value; closeModal(); requestReply(ev, note); };
+}
+// Bouton et état de la demande, pour la ligne et la page du message.
+function replyRequestHtml(ev, compact) {
+  const r = evRequestOf(ev), has = !!eventReply(ev);
+  if (r && !r.expired) {
+    const min = Math.max(0, Math.round((Date.now() - new Date(r.at).getTime()) / 60000));
+    return `<span class="pm-tag rq-pending" title="Le Mac mini prépare la réponse avec Opus 5.5">⏳ Réponse en préparation${min ? ` · demandée il y a ${min} min` : ""}</span>`;
+  }
+  return `<button class="btn ${has || compact ? "ghost" : "secondary"} small" data-ev-request="${ev.id}" title="${has ? "Demander une nouvelle proposition, avec une précision si besoin" : "Opus 5.5 rédige une réponse à partir de l'historique, du ton, des lieux et des dates"}">${has ? "↻ Nouvelle proposition" : "✨ Proposer une réponse"}</button>`;
+}
 let evEditing = null;      // événement dont la réponse est en cours de modification
 const evDraft = {};        // texte en cours de frappe (survit aux rafraîchissements de l'écran)
 // Étapes saisies dans la boîte « Créer la tâche » : une par ligne, « | 30 » ou « (30 min) » pour la durée.
@@ -2915,6 +2961,7 @@ function eventRow(ev) {
         <span class="pm-tag ev-act" title="Action proposée${ev.classifieur ? " (" + esc(ev.classifieur) + ")" : ""}">→ ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")}</span>
         <button class="btn ghost small" data-ev-open="${ev.id}">Détails</button>
         ${link ? `<a class="btn ghost small" href="${esc(link)}" target="_blank" rel="noopener">Ouvrir</a>` : ""}
+        ${st === "nouveau" ? replyRequestHtml(ev, true) : ""}
         <span class="grow"></span>${eventButtons(ev)}
       </div></div></div>`;
 }
@@ -3131,9 +3178,10 @@ function renderEventDetail(id) {
   ].filter((x) => x[1]).map(([k, v]) => `<span class="muted">${k}</span><span>${v}</span>`).join("");
   const tasks = state.tasks.filter((t) => t.eventId === ev.id);
   const same = eventsFromSameSender(ev).filter((e) => e.id !== ev.id);
-  const reco = (p.reponse || (p.tache && p.tache.titre) || eventSteps(ev).length)
+  const reco = ((p.reponse || (p.tache && p.tache.titre) || eventSteps(ev).length)
     ? eventProposal(ev, true)
-    : `<div class="muted" style="font-size:14px">Pas de proposition détaillée de l'assistant pour ce message : action suggérée « ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")} ».</div>`;
+    : `<div class="muted" style="font-size:14px">Pas de proposition de l'assistant pour ce message : action suggérée « ${esc(EVENT_ACTIONS[ev.action] || ev.action || "?")} ».</div>`)
+    + `<div class="inline" style="margin-top:10px;gap:8px;flex-wrap:wrap">${replyRequestHtml(ev)}${!eventReply(ev) ? `<span class="muted" style="font-size:12px">Les réponses ne sont rédigées d'avance que pour les messages urgents ; pour les autres, demande-la quand tu en as besoin.</span>` : ""}</div>`;
   return `${back}
     <div class="ev-detail">
       <div class="ev-head"><div class="page-title">${esc(eventTitle(ev))}</div>${nav}</div>
@@ -7348,6 +7396,7 @@ function wire() {
     const ev = eventsAll().find((e) => e.id === b.dataset.evCopy); const txt = ev ? eventReply(ev) : ""; if (!txt) return;
     try { navigator.clipboard.writeText(txt); toast("Brouillon copié"); } catch (e) { alert("Copie impossible sur cet appareil."); }
   });
+  c.querySelectorAll("[data-ev-request]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); const ev = eventsAll().find((x) => x.id === b.dataset.evRequest); if (ev) openReplyRequestDialog(ev); });
   c.querySelectorAll("[data-ev-edit]").forEach((b) => b.onclick = () => { evEditing = b.dataset.evEdit; delete evDraft[evEditing]; render(); const ta = document.querySelector("[data-ev-reply-text]"); if (ta) ta.focus(); });
   c.querySelectorAll("[data-ev-reply-text]").forEach((ta) => ta.oninput = () => { evDraft[ta.dataset.evReplyText] = ta.value; });
   c.querySelectorAll("[data-ev-save]").forEach((b) => b.onclick = () => {
@@ -8085,6 +8134,7 @@ function exportTempsCSV() {
 // de jour, les mails arrivent par les analyses).
 refreshNotifications();
 setInterval(refreshNotifications, 5 * 60000);
+if (pendingRequests().length) scheduleRequestPoll();
 // Événements du Mac mini : relecture périodique pour tenir la pastille à jour.
 setInterval(() => {
   if (eventsReady() && Date.now() - eventLoadedAt > EVENT_FRESH) loadEvenements();

@@ -1,5 +1,5 @@
 /**
- * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 9.
+ * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 10.
  * Trois fichiers, tous CRÉÉS PAR LA WEB APP (portée drive.file) ; ce script écrit dedans.
  *   operations01-evenements.json : événements classés + propositions de l'assistant
  *   operations01-assistant.json  : brief du matin, estimations de durée par tâche
@@ -13,6 +13,9 @@
  *   GET  ?secret=…                                → { ok, service, version }
  *   GET  ?secret=…&action=export                  → { ok, data:{…}, evenements:[{id,statut,traiteLe}], assistant:{estimations} }
  *        data.contacts : id, prénom, nom, organisation, fonction, e-mail, téléphone, catégorie (jamais IBAN ni notes).
+ *        data.evRequests : demandes de réponse faites dans l'app (« ✨ Proposer une réponse ») :
+ *        { idEvt: { type:"reponse", at: ISO, note, expediteur, source, sujet, urgence } } — à servir en priorité ;
+ *        une demande est satisfaite dès qu'une proposition avec genereeLe > at est postée.
  *        data contient aussi evEdits (réponses corrigées par Grégory : { idEvt: {reponse, original, at…} }),
  *        evDecisions (tâches créées depuis un message : projet, échéance, temps alloué, étapes, et ce qui
  *        était proposé) et evLearn.senderMission (expéditeur → projet) : matière à apprentissage.
@@ -41,12 +44,12 @@
  *     tache: {…}, processus: [...] }   ← inchangés
  */
 var SECRET = "";
-var VERSION = 9;
+var VERSION = 10;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
 var EXPORT_CLES = ["missions", "tasks", "actions", "rendezvous", "recurrences", "slots"];
-var EXPORT_OBJETS = ["evEdits", "evDecisions", "evLearn", "evSteps"];   // corrections et décisions de Grégory (apprentissage)
+var EXPORT_OBJETS = ["evEdits", "evDecisions", "evLearn", "evSteps", "evRequests"];   // corrections et décisions de Grégory (apprentissage)
 var CONSERVER_JOURS = 30;
 var MAX_EVENEMENTS = 3000;   // ~95 événements par jour : 1000 ne couvrait que dix jours
 var DOSSIER_CORRESPONDANCES = "Correspondances";   // dossier à la racine du Drive (créé par appsscript-correspondances.gs)
