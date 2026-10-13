@@ -1,5 +1,5 @@
 /**
- * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 8.
+ * Operations01 — Relais entre le pipeline « assistants » (Mac mini) et Google Drive.  Version 9.
  * Trois fichiers, tous CRÉÉS PAR LA WEB APP (portée drive.file) ; ce script écrit dedans.
  *   operations01-evenements.json : événements classés + propositions de l'assistant
  *   operations01-assistant.json  : brief du matin, estimations de durée par tâche
@@ -16,6 +16,9 @@
  *        data contient aussi evEdits (réponses corrigées par Grégory : { idEvt: {reponse, original, at…} }),
  *        evDecisions (tâches créées depuis un message : projet, échéance, temps alloué, étapes, et ce qui
  *        était proposé) et evLearn.senderMission (expéditeur → projet) : matière à apprentissage.
+ *   GET  ?secret=…&action=agenda&jours=7          → { ok, du, au, evenements:[…], jours:{ "AAAA-MM-JJ": { libres:[["12:00","14:00"]…], midi, soir } } }
+ *        tous les agendas Google du compte principal (y compris ceux partagés : Icarus, perso, Majandco en
+ *        occupé/libre), pour proposer de vrais créneaux dans une réponse (déjeuner, rendez-vous, visio).
  *   GET  ?secret=…&action=correspondances         → { ok, cles:{ cle:{nom,url,n,dernier,canaux} } }   (index)
  *   GET  ?secret=…&action=correspondance&cle=…    → { ok, nom, cle, entrees:[…], markdown }           (un interlocuteur ;
  *        cle = adresse e-mail ou téléphone ; &depuis=AAAA-MM-JJ et &max=N limitent les entrées)
@@ -38,7 +41,7 @@
  *     tache: {…}, processus: [...] }   ← inchangés
  */
 var SECRET = "";
-var VERSION = 8;
+var VERSION = 9;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -53,6 +56,7 @@ var MAX_CONTENU = 3000;        // texte conservé pour un SMS / iMessage / Whats
 function doGet(e) {
   var p = (e && e.parameter) || {};
   if (!SECRET || p.secret !== SECRET) return reponse({ ok: false, erreur: "secret invalide" });
+  if (p.action === "agenda") return reponse(lireAgenda(Number(p.jours) || 7));
   if (p.action === "correspondances") return reponse(indexCorrespondances());
   if (p.action === "correspondance") return reponse(lireCorrespondance(p.cle, p.depuis, p.max));
   if (p.action !== "export") return reponse({ ok: true, service: "relais-evenements", version: VERSION });
@@ -172,6 +176,55 @@ function posterAssistant(corps) {
     return reponse({ ok: true, brief: !!corps.brief, estimations: n });
   } finally { verrou.releaseLock(); }
 }
+
+// ---- Agenda : occupations et créneaux libres des prochains jours, tous agendas confondus ----
+var AGENDA_JOUR_DEBUT = 8, AGENDA_JOUR_FIN = 22;   // fenêtre de journée pour calculer les créneaux libres (le soir compris)
+var AGENDA_IGNORER = /férié|holiday|routine|lecture\s*$/i;  // agendas ou événements qui n'occupent pas vraiment
+function lireAgenda(jours) {
+  jours = Math.max(1, Math.min(31, jours || 7));
+  var tz = Session.getScriptTimeZone();
+  var debut = new Date(); debut.setHours(0, 0, 0, 0);
+  var fin = new Date(debut.getTime() + jours * 864e5);
+  var evenements = [];
+  CalendarApp.getAllCalendars().forEach(function (cal) {
+    var nomCal = cal.getName() || cal.getId();
+    if (AGENDA_IGNORER.test(nomCal)) return;
+    var liste; try { liste = cal.getEvents(debut, fin); } catch (e) { return; }
+    liste.forEach(function (ev) {
+      var titre = ev.getTitle() || "(sans titre)";
+      var statut = ""; try { statut = String(ev.getMyStatus() || ""); } catch (e) {}
+      if (/NO|DECLINED/i.test(statut)) return;
+      var journee = ev.isAllDayEvent();
+      var d = ev.getStartTime(), f = ev.getEndTime();
+      evenements.push({ agenda: nomCal, titre: titre, journee: journee, lieu: ev.getLocation() || "",
+        date: Utilities.formatDate(d, tz, "yyyy-MM-dd"), debut: journee ? "" : Utilities.formatDate(d, tz, "HH:mm"), fin: journee ? "" : Utilities.formatDate(f, tz, "HH:mm"),
+        debutISO: d.toISOString(), finISO: f.toISOString(), optionnel: AGENDA_IGNORER.test(titre) || /tentative|MAYBE/i.test(statut), statut: statut });
+    });
+  });
+  evenements.sort(function (a, b) { return a.debutISO.localeCompare(b.debutISO); });
+  return { ok: true, version: VERSION, du: Utilities.formatDate(debut, tz, "yyyy-MM-dd"), au: Utilities.formatDate(new Date(fin.getTime() - 1), tz, "yyyy-MM-dd"),
+    evenements: evenements, jours: creneauxLibres(evenements, debut, jours, tz) };
+}
+// Pour chaque jour : plages libres entre AGENDA_JOUR_DEBUT h et AGENDA_JOUR_FIN h (hors événements optionnels
+// et journées entières), et deux raccourcis : midi (12 h–14 h libre d'au moins 75 min) et soir (19 h–22 h libre).
+function creneauxLibres(evenements, debut, jours, tz) {
+  var out = {};
+  for (var j = 0; j < jours; j++) {
+    var jour = new Date(debut.getTime() + j * 864e5), cle = Utilities.formatDate(jour, tz, "yyyy-MM-dd");
+    var occ = evenements.filter(function (e) { return !e.optionnel && !e.journee && e.date === cle; })
+      .map(function (e) { return [minutes(e.debut), minutes(e.fin)]; }).sort(function (a, b) { return a[0] - b[0]; });
+    var libres = [], cur = AGENDA_JOUR_DEBUT * 60, finJ = AGENDA_JOUR_FIN * 60;
+    occ.forEach(function (o) { if (o[0] > cur) libres.push([cur, Math.min(o[0], finJ)]); cur = Math.max(cur, o[1]); });
+    if (cur < finJ) libres.push([cur, finJ]);
+    libres = libres.filter(function (l) { return l[1] - l[0] >= 30; });
+    var libre = function (a, b, min) { return libres.some(function (l) { return Math.min(l[1], b) - Math.max(l[0], a) >= min; }); };
+    out[cle] = { libres: libres.map(function (l) { return [hhmm(l[0]), hhmm(l[1])]; }), midi: libre(12 * 60, 14 * 60, 75), soir: libre(19 * 60, 22 * 60, 90), occupe: occ.length,
+      journee: evenements.filter(function (e) { return e.journee && e.date === cle && !e.optionnel; }).map(function (e) { return e.titre; }) };
+  }
+  return out;
+}
+function minutes(hm) { var m = String(hm || "").match(/^(\d{1,2}):(\d{2})$/); return m ? Number(m[1]) * 60 + Number(m[2]) : 0; }
+function hhmm(m) { return (m / 60 < 10 ? "0" : "") + Math.floor(m / 60) + ":" + (m % 60 < 10 ? "0" : "") + (m % 60); }
 
 // ---- Correspondances (SMS, iMessage, WhatsApp… envoyés par le Mac mini ; Gmail est traité par
 //      appsscript-correspondances.gs dans chaque compte). Une entrée par message reçu :

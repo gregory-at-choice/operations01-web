@@ -84,7 +84,8 @@ que ce champ sur un événement existant) devient, **pour toutes les urgences** 
 }
 ```
 
-- `source` ∈ `correspondance` · `projet` · `evenement` · `tache` · `document` · `agenda` · `contact`.
+- `source` ∈ `correspondance` · `projet` · `evenement` · `tache` · `document` · `agenda` · `contact`
+  (`agenda` : les créneaux vérifiés, voir « Proposer de vrais créneaux »).
   L'app les affiche sous la réponse, dans « Éléments de contexte pris en compte (n) », avec le lien
   s'il existe. Trois à six éléments suffisent ; `extrait` ≤ 300 caractères.
 - La réponse est **dans ma voix** : s'appuyer sur mes réponses réelles archivées (ton, formules,
@@ -119,6 +120,26 @@ l'app sans vouloir qu'il y apparaisse (`GET ?action=export` donne la liste des i
 Un mail du compte `gmail` ou `outlook` ne consomme donc rien sur le forfait : pas d'appel à Opus, le
 classement local suffit. Les volumes concernés sont faibles (environ 175 messages par mois à eux
 deux).
+
+### Proposer de vrais créneaux (agenda)
+
+Quand un message demande ou propose une rencontre, un déjeuner, un appel, une visio ou « tes
+dispos », la réponse **ne doit jamais promettre de regarder l'agenda** : elle le regarde. Le relais v9
+l'expose : `GET ?secret=…&action=agenda&jours=10` renvoie tous les agendas Google du compte principal
+(Choice, Icarus, Majandco en occupé/libre, perso) avec, pour chaque jour, les plages libres de 8 h à
+22 h et deux raccourcis `midi` (12 h–14 h libre au moins 75 min) et `soir` (19 h–22 h). Les événements
+« routine » et « lecture » ne comptent pas comme occupés ; les événements marqués provisoires sont
+signalés `optionnel`.
+
+Règles : proposer **deux ou trois créneaux précis** (jour, heure), à partir du lendemain sauf si le
+message est urgent ; pour un déjeuner, viser 12 h 30 et vérifier qu'aucun rendez-vous ne commence avant
+14 h 15 ; tenir compte des trajets (un événement « Trajet voiture » bloque, et un lieu hors Tours la
+veille au soir ou le matin exclut un déjeuner à Tours) ; mentionner la contrainte quand elle existe
+(« je dois être à Mame à 14 h »). Mettre les créneaux retenus dans `proposition.contexte` avec
+`source: "agenda"` (titre : « Agenda · jeudi 16 : libre 11 h 30–15 h 30 »), et une tâche
+« Confirmer le créneau avec X » à l'échéance du premier créneau proposé. Exemple attendu pour « Cette
+semaine dispo un midi pour déjeuner ? » reçu un lundi : « Yes avec plaisir 🙂 Jeudi ou vendredi midi,
+12 h 30 ? Aujourd'hui aussi possible mais je dois être à Mame à 14 h. »
 
 ### Sources de contexte à interroger (dans cet ordre)
 
