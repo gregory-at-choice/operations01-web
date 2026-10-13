@@ -708,3 +708,11 @@ label.field.inline-check > span { margin-bottom: 0; }
 .ev-snippet { color: var(--text); }
 
 .rq-pending { background: var(--bg); color: var(--muted); }
+
+/* À traiter : vue par type de canal */
+.ev-canaux { margin-bottom: 10px; }
+.ch-chip { display: inline-flex; align-items: center; gap: 7px; padding-left: 7px; }
+.ch-chip .ch { width: 20px; height: 20px; border-radius: 6px; margin: 0; }
+.ch-chip .ch .i { width: 12px; height: 12px; }
+.ch-chip .chip-n { font-size: 12px; opacity: .75; }
+.ch-chip.active .ch { box-shadow: 0 0 0 2px rgba(255,255,255,.7); }

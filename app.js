@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v126";
+const APP_VERSION = "v127";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2349,7 +2349,13 @@ function refreshNotifications() {
 let eventStore = null, eventLoading = false, eventLoadedAt = 0, eventError = "";
 const EVENT_FRESH = 5 * 60000;   // le Mac mini pousse toutes les 5 minutes
 const EVENT_RETRY = 5 * 60000;
-let eventFilter = { statut: "nouveau", source: "", compte: "", expediteur: "" };
+const EV_CANAL_KEY = "op01_ev_canal";
+let eventFilter = { statut: "nouveau", source: "", compte: "", expediteur: "", canal: (() => { try { return localStorage.getItem(EV_CANAL_KEY) || ""; } catch (e) { return ""; } })() };
+// Vue par type de canal (pastilles) : chaque groupe réunit une ou plusieurs pastilles de channelOf().
+const CHANNEL_GROUPS = [
+  { key: "choice", label: "Mail Choice", cls: ["ch-choice"] }, { key: "icarus", label: "Mail Icarus", cls: ["ch-icarus"] }, { key: "majandco", label: "Mail Majandco", cls: ["ch-majandco"] },
+  { key: "mail", label: "Autres mails", cls: ["ch-mail"] }, { key: "sms", label: "SMS · iMessage", cls: ["ch-sms", "ch-imessage"] }, { key: "whatsapp", label: "WhatsApp", cls: ["ch-whatsapp"] }, { key: "autre", label: "Autres", cls: ["ch-autre"] }];
+const channelGroupOf = (ev) => { const cls = channelOf(ev).cls; return (CHANNEL_GROUPS.find((g) => g.cls.indexOf(cls) > -1) || CHANNEL_GROUPS[CHANNEL_GROUPS.length - 1]).key; };
 const EVENT_SOURCES = { mail: "Mail", sms: "SMS", imessage: "iMessage", whatsapp: "WhatsApp", googlechat: "Google Chat", bluesky: "Bluesky", linkedin: "LinkedIn", x: "X" };
 const CTX_SOURCES = { correspondance: "Correspondance", projet: "Projet", evenement: "Message", tache: "Tâche", document: "Document", agenda: "Agenda", contact: "Contact" };
 const EVENT_SOURCE_ICONS = { mail: "mail", sms: "smartphone", imessage: "message", whatsapp: "message", googlechat: "message-square", bluesky: "feather", linkedin: "briefcase", x: "message-square" };
@@ -2981,6 +2987,7 @@ function eventButtons(ev) {
 // Liste courante : filtres de l'onglet, tri par urgence puis date.
 function filteredEvents(ignoreSender) {
   return sortEvents(eventsAll().filter((e) => (!eventFilter.statut || eventStatut(e) === eventFilter.statut)
+    && (!eventFilter.canal || channelGroupOf(e) === eventFilter.canal)
     && (!eventFilter.source || e.source === eventFilter.source) && (!eventFilter.compte || e.compte === eventFilter.compte)
     && (ignoreSender || !eventFilter.expediteur || eventSenderKey(e) === eventFilter.expediteur)));
 }
@@ -3215,10 +3222,13 @@ function renderATraiter() {
   const senderKeys = Object.keys(senders).sort((a, b) => senders[b].n - senders[a].n || senders[a].label.localeCompare(senders[b].label, "fr")).slice(0, 60);
   const senderOpts = `<option value="">Tous les expéditeurs</option>` + senderKeys.map((k) => `<option value="${esc(k)}" ${eventFilter.expediteur === k ? "selected" : ""}>${esc(senders[k].label)} (${senders[k].n})</option>`).join("")
     + (eventFilter.expediteur && !senders[eventFilter.expediteur] ? `<option value="${esc(eventFilter.expediteur)}" selected>${esc(eventFilter.expediteur)}</option>` : "");
-  const filters = `<div class="filterbar">
+  // Vue par type : compte des messages du statut courant, par canal (hors filtre expéditeur).
+  const byCanal = {}; let totalCanal = 0;
+  eventsAll().filter((e) => !eventFilter.statut || eventStatut(e) === eventFilter.statut).forEach((e) => { const k = channelGroupOf(e); byCanal[k] = (byCanal[k] || 0) + 1; totalCanal++; });
+  const chip = (key, label, n, cls) => `<button class="chip ch-chip${eventFilter.canal === key ? " active" : ""}" data-ev-canal="${key}">${cls ? `<span class="ch ${cls}">${icon(cls === "ch-whatsapp" ? "whatsapp" : (cls === "ch-sms" || cls === "ch-imessage") ? "message" : cls === "ch-autre" ? "message-square" : "mail")}</span>` : ""}${esc(label)}<span class="chip-n">${n}</span></button>`;
+  const canaux = `<div class="chip-row ev-canaux">${chip("", "Tous", totalCanal, "")}${CHANNEL_GROUPS.filter((g) => byCanal[g.key]).map((g) => chip(g.key, g.label, byCanal[g.key], g.cls[0])).join("")}</div>`;
+  const filters = canaux + `<div class="filterbar">
       <select data-evfilter="statut">${opts(EVENT_STATUTS, eventFilter.statut, "Tous les statuts")}</select>
-      <select data-evfilter="source">${opts(present("source", EVENT_SOURCES), eventFilter.source, "Toutes les sources")}</select>
-      <select data-evfilter="compte">${opts(present("compte", EVENT_COMPTES), eventFilter.compte, "Tous les comptes")}</select>
       <select data-evfilter="expediteur">${senderOpts}</select>
       <label class="inline-check" style="margin:0;font-size:13px;white-space:nowrap"><input type="checkbox" data-ev-group ${eventGroup ? "checked" : ""}/> <span>Grouper par expéditeur</span></label></div>`;
   const items = filteredEvents();
@@ -7367,6 +7377,7 @@ function wire() {
     if (ev && mailReadable(ev) && mailBoxFor(ev).linked) { const cache = mailCache[mailKey(ev)] || {}; if (!cache.data && !cache.error && !cache.loading) loadMail(ev); }
   }
   c.querySelectorAll("[data-evfilter]").forEach((s) => s.onchange = () => { eventFilter[s.dataset.evfilter] = s.value; render(); });
+  c.querySelectorAll("[data-ev-canal]").forEach((b) => b.onclick = () => { eventFilter.canal = b.dataset.evCanal; eventFilter.source = ""; eventFilter.compte = ""; try { localStorage.setItem(EV_CANAL_KEY, eventFilter.canal); } catch (e) {} render(); });
   c.querySelectorAll("[data-ev-group]").forEach((cb) => cb.onchange = () => { eventGroup = cb.checked; try { localStorage.setItem(EV_GROUP_KEY, eventGroup ? "1" : "0"); } catch (e) {} render(); });
   c.querySelectorAll("[data-ev-cluster]").forEach((d) => d.addEventListener("toggle", () => { evClusterOpen[d.dataset.evCluster] = d.open; }));
   // Boutons placés dans le résumé d'un bloc : ne pas déplier/replier le bloc au clic.
