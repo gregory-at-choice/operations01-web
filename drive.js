@@ -680,7 +680,19 @@
     const j = await r.json();
     const m = j && j.messages && j.messages[0];
     if (!m) { const e = new Error("Message introuvable dans cette boîte."); e.code = "notfound"; throw e; }
-    const r2 = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(m.id)}?format=full`, null, false, tok);
+    return fetchMail(m.id, tok, email);
+  }
+  // Lit un message par son identifiant Gmail (celui que renvoie searchMails), dans la boîte indiquée.
+  async function readMailById(gmailId, email) {
+    if (!hasSession()) throw new Error("Non connecté.");
+    let tok = null;
+    if (email) { tok = await gmailTokenFor(email); }
+    else if (!gmailGranted()) { const e = new Error("Gmail non relié."); e.code = "off"; throw e; }
+    if (!gmailId) { const e = new Error("Message sans identifiant."); e.code = "notfound"; throw e; }
+    return fetchMail(gmailId, tok, email);
+  }
+  async function fetchMail(gmailId, tok, email) {
+    const r2 = await api(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(gmailId)}?format=full`, null, false, tok);
     const msg = await r2.json();
     const out = { id: msg.id, threadId: msg.threadId, html: "", text: "", attachments: [], headers: {}, labels: msg.labelIds || [], account: email || loginHint || "" };
     ["From", "To", "Cc", "Date", "Subject"].forEach((h) => { out.headers[h.toLowerCase()] = headerOf(msg.payload && msg.payload.headers, h); });
@@ -1147,6 +1159,7 @@
     enableGmail,
     disableGmail,
     readMail,
+    readMailById,
     readAttachment,
     searchMails,
     uploadToFolder,

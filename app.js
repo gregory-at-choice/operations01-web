@@ -37,7 +37,7 @@ const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours",
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v127";
+const APP_VERSION = "v128";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -4050,11 +4050,19 @@ function applyEnrichment(c, found) {
 }
 async function enrichContact(c) {
   if (!c.email) throw new Error("Ce contact n'a pas d'adresse e-mail.");
-  const res = await DriveSync.searchMails(`from:${c.email} -in:sent`, 3);
+  // Boîte principale d'abord, puis les boîtes supplémentaires reliées (Icarus, Majandco…) :
+  // le contact a pu n'écrire qu'à l'une d'elles.
+  const q = `from:${c.email} -in:sent`;
+  const boxes = [null].concat((DriveSync.gmailAccounts ? DriveSync.gmailAccounts() : []).filter((e) => DriveSync.gmailAccountValid && DriveSync.gmailAccountValid(e)));
+  let res = [];
+  for (const box of boxes) {
+    try { res = (await DriveSync.searchMails(q, 3, box)).map((m) => Object.assign(m, { box })); } catch (e) { res = []; }
+    if (res.length) break;
+  }
   if (!res.length) return { filled: [], found: {}, none: true };
   let found = {};
   for (const m of res.slice(0, 2)) {
-    const full = await DriveSync.readMail(m.id, null);
+    const full = await DriveSync.readMailById(m.id, m.box);
     const text = full.text || String(full.html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|tr|li)>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
     const f = parseSignature(text, c);
     Object.keys(f).forEach((k) => { if (!found[k]) found[k] = f[k]; });
