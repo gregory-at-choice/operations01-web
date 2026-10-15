@@ -33,11 +33,13 @@ const INV_STATUSES = [
   { code: "aPayer", label: "À payer" }, { code: "payee", label: "Payée" },
 ];
 const invStatusLabel = (c) => (INV_STATUSES.find((x) => x.code === c) || INV_STATUSES[0]).label;
-const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours", label: "En cours" }, { code: "termine", label: "Terminée" }];
+const TASK_STATUSES = [{ code: "aFaire", label: "À faire" }, { code: "enCours", label: "En cours" }, { code: "enAttente", label: "En attente" }, { code: "termine", label: "Terminée" }];
+const TASK_PRIORITIES = [["haute", "Haute", "#d23c3c"], ["moyenne", "Moyenne", "#d98c2b"], ["basse", "Basse", "#8e8e93"]];
+const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]];
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v129";
+const APP_VERSION = "v130";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -129,7 +131,7 @@ rebuildStampIndex(state);
 // l'app) : le temps ne fait que s'accumuler, une tâche ne fait qu'avancer, une
 // action se clôt… Entre deux copies non datées, la plus avancée est la plus
 // récente ; à égalité, le local.
-const TASK_RANK = { aFaire: 0, enCours: 1, termine: 2 };
+const TASK_RANK = { aFaire: 0, enAttente: 1, enCours: 2, termine: 3 };
 function legacyScore(kind, r) {
   if (!r) return -1;
   if (kind === "entries") return (r.accumulatedSeconds || 0) + (r.timerStartedAt ? 0.5 : 0);
@@ -2006,6 +2008,74 @@ let projectTab = "resume", projectTabFor = null;
 const PROJECT_TABS = [["resume", "Résumé"], ["gestion", "Gestion de projet"], ["courrier", "Correspondance"]];
 
 function projectTasks(m) { return state.tasks.filter((t) => t.missionId === m.id); }
+// ---- Administration des tâches façon Jira : clé, priorité, type, sous-tâches, dépendances, étiquettes,
+//      commentaires datés, historique des changements. ----
+const taskPriority = (t) => TASK_PRIORITIES.find((p) => p[0] === t.priority) || TASK_PRIORITIES[1];
+const subtasksOf = (t) => state.tasks.filter((x) => x.parentId === t.id);
+const taskBlockers = (t) => (t.blockedBy || []).map((id) => state.tasks.find((x) => x.id === id)).filter((x) => x && !taskDone(x));
+const taskLabels = (t) => Array.isArray(t.labels) ? t.labels : [];
+// Préfixe de projet pour les clés (« MSVL-12 ») : initiales du titre, unique parmi les projets.
+function missionPrefix(m) {
+  if (m.prefix) return m.prefix;
+  const words = noAccents(m.title || "").replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => /^[a-z]/.test(w));
+  let p = (words.length >= 2 ? words.slice(0, 4).map((w) => w[0]).join("") : (words[0] || "proj").slice(0, 4)).toUpperCase();
+  const used = state.missions.filter((x) => x.id !== m.id && x.prefix === p).length;
+  if (used) p += String(used + 1);
+  m.prefix = p; return p;
+}
+function ensureTaskKeys() {
+  let changed = false;
+  state.tasks.forEach((t) => {
+    if (t.key) return;
+    const m = t.missionId ? findMission(t.missionId) : null;
+    if (m) { m.seq = Math.max(Number(m.seq) || 0, ...state.tasks.filter((x) => x.key && x.key.indexOf(missionPrefix(m) + "-") === 0).map((x) => Number(x.key.split("-").pop()) || 0)) + 1; t.key = missionPrefix(m) + "-" + m.seq; }
+    else { const n = Math.max(0, ...state.tasks.filter((x) => x.key && /^T-\d+$/.test(x.key)).map((x) => Number(x.key.slice(2)))) + 1; t.key = "T-" + n; }
+    changed = true;
+  });
+  if (changed) save();
+}
+const TASK_LOGGED = ["status", "dueDate", "priority", "assignee", "missionId", "parentId", "estimationMin", "title", "type", "section"];
+function logTask(t, field, from, to) {
+  if (String(from == null ? "" : from) === String(to == null ? "" : to)) return;
+  t.history = (t.history || []).slice(-80);
+  t.history.push({ at: new Date().toISOString(), field, from: from == null ? "" : from, to: to == null ? "" : to });
+}
+// Toute modification d'un champ passe ici : historique + automatismes (déblocage, sous-tâches finies).
+function setTaskField(t, field, value) {
+  const old = t[field];
+  if (old === value || (old == null && (value === "" || value == null))) return false;
+  t[field] = value;
+  if (TASK_LOGGED.indexOf(field) > -1) logTask(t, field, old, value);
+  if (field === "status" && value === "termine") afterTaskDone(t);
+  return true;
+}
+function afterTaskDone(t) {
+  const unblocked = state.tasks.filter((x) => !taskDone(x) && (x.blockedBy || []).indexOf(t.id) > -1 && !taskBlockers(x).length);
+  if (unblocked.length) toast(`Débloqué : ${unblocked.map((x) => (x.key ? x.key + " " : "") + (x.title || "tâche")).join(", ")}`);
+  const parent = t.parentId ? state.tasks.find((x) => x.id === t.parentId) : null;
+  if (parent && !taskDone(parent) && subtasksOf(parent).length && subtasksOf(parent).every(taskDone)) toast(`Toutes les sous-tâches de « ${parent.title || parent.key} » sont terminées`);
+}
+function taskFieldLabel(f) { return ({ status: "statut", dueDate: "échéance", priority: "priorité", assignee: "en charge", missionId: "projet", parentId: "tâche parente", estimationMin: "estimation", title: "intitulé", type: "type", section: "section" })[f] || f; }
+function taskHistoryValue(field, v) {
+  if (v === "" || v == null) return "—";
+  if (field === "status") return taskStatusLabel(v);
+  if (field === "priority") return (TASK_PRIORITIES.find((p) => p[0] === v) || [v, v])[1];
+  if (field === "type") return (TASK_TYPES.find((p) => p[0] === v) || [v, v])[1];
+  if (field === "missionId") return missionTitle(v) || "—";
+  if (field === "parentId") { const p = state.tasks.find((x) => x.id === v); return p ? (p.key || p.title) : "—"; }
+  if (field === "dueDate") return fmtDate(v);
+  if (field === "estimationMin") return fmtEstim(v);
+  return String(v);
+}
+function newTaskLike(t, overrides) {
+  const n = Object.assign({ id: uid(), title: "", status: "aFaire", missionId: t ? t.missionId : null, section: t ? (t.section || "") : "", assignee: "", progress: 0, origin: "manuel", dueDate: "", createdAt: Date.now(), priority: "moyenne", labels: [] }, overrides || {});
+  state.tasks.push(n); ensureTaskKeys(); return n;
+}
+// Pastilles communes (clé, priorité, verrou, sous-tâches, étiquettes) pour les listes et le kanban.
+function taskBadges(t, compact) {
+  const pr = taskPriority(t), blk = taskBlockers(t), subs = subtasksOf(t), done = subs.filter(taskDone).length;
+  return `<span class="tk-key" title="Clé">${esc(t.key || "")}</span>${t.priority && t.priority !== "moyenne" ? `<span class="tk-pr" style="color:${pr[2]}" title="Priorité ${pr[1]}">${pr[0] === "haute" ? "▲" : "▽"}${compact ? "" : " " + pr[1]}</span>` : ""}${t.type === "jalon" ? `<span class="pm-tag">◆ Jalon</span>` : t.type === "bug" ? `<span class="pm-tag">✖ Anomalie</span>` : ""}${blk.length ? `<span class="pm-tag tk-blocked" title="Bloquée par ${esc(blk.map((b) => b.key || b.title).join(", "))}">🔒 ${compact ? blk.length : "Bloquée par " + esc(blk.map((b) => b.key || b.title).join(", "))}</span>` : ""}${subs.length ? `<span class="pm-tag" title="Sous-tâches">☰ ${done}/${subs.length}</span>` : ""}${taskLabels(t).map((l) => `<span class="tk-label">${esc(l)}</span>`).join("")}`;
+}
 const taskDone = (t) => (t.status || "aFaire") === "termine";
 // Avancement d'une tâche : une tâche terminée vaut 100 ; une tâche non terminée
 // ne peut pas afficher 100, même si le champ le dit.
@@ -2017,9 +2087,9 @@ function taskProgress(t) {
 function setTaskProgress(t, p) {
   p = Math.max(0, Math.min(100, Math.round(Number(p) || 0)));
   t.progress = p;
-  if (p >= 100) t.status = "termine";
-  else if (p > 0 && (t.status || "aFaire") !== "enCours") t.status = "enCours";
-  else if (p === 0 && t.status === "termine") t.status = "aFaire";
+  if (p >= 100) setTaskField(t, "status", "termine");
+  else if (p > 0 && ["enCours", "enAttente"].indexOf(t.status || "aFaire") === -1) setTaskField(t, "status", "enCours");
+  else if (p === 0 && t.status === "termine") setTaskField(t, "status", "aFaire");
 }
 // Avancement du projet : moyenne des avancements de ses tâches (null sans tâche).
 function projectProgress(m) {
@@ -2147,6 +2217,7 @@ function renderProjectResume(m) {
 
 // ---- Gestion de projet ----
 function renderProjectGestion(m) {
+  ensureTaskKeys();
   const ts = projectTasks(m);
   const open = ts.filter((t) => !taskDone(t));
   const late = open.filter((t) => t.dueDate && daysUntil(t.dueDate) < 0);
@@ -2172,8 +2243,9 @@ function renderProjectGestion(m) {
     const origin = taskOrigin(t).map((o) => o.link
       ? `<a class="pm-tag" href="${esc(o.link)}" target="_blank" rel="noopener">${o.ic} ${esc(o.label)}</a>`
       : `<span class="pm-tag">${o.ic} ${esc(o.label)}</span>`).join(" ");
-    return `<tr class="${done ? "done" : ""}" style="border-left:4px solid ${di.color}">
-      <td class="pm-title"><input class="flat-input" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
+    return `<tr class="${done ? "done" : ""}${t.parentId ? " pm-sub" : ""}" style="border-left:4px solid ${di.color}">
+      <td class="pm-title"><div class="tk-badges">${taskBadges(t, true)}<span class="grow"></span><button class="btn ghost small" data-open-task="${t.id}" title="Ouvrir la fiche">↗</button></div>
+        <input class="flat-input" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
         ${t.notes ? `<div class="pm-note">${esc(t.notes)}</div>` : ""}
         <div class="pm-origin">${origin}${t.durationDays ? `<span class="pm-tag">⏳ ${esc(String(t.durationDays).replace(".", ","))} j</span>` : ""}</div></td>
       <td><input class="flat-input" list="assigneeList" data-taskfield="assignee" data-t="${t.id}" value="${esc(t.assignee || "")}" placeholder="—"/></td>
@@ -2188,7 +2260,8 @@ function renderProjectGestion(m) {
     </tr>`;
   };
   const sections = projectSections(m);
-  const bySection = (name) => sortTasks(ts.filter((t) => (t.section || "") === name));
+  // Dans une section : les tâches, chacune suivie de ses sous-tâches (indentées).
+  const bySection = (name) => { const inSec = ts.filter((t) => (t.section || "") === name); const ids = {}; inSec.forEach((t) => { ids[t.id] = 1; }); const out = []; sortTasks(inSec.filter((t) => !t.parentId || !ids[t.parentId])).forEach((t) => { out.push(t); sortTasks(inSec.filter((x) => x.parentId === t.id)).forEach((x) => out.push(x)); }); return out; };
   const block = (name) => {
     const items = bySection(name);
     const head = name
@@ -3488,9 +3561,8 @@ function openEvent(id) {
 let focusTask = null;   // { id, until, scrolled }
 function openTask(id) {
   const t = state.tasks.find((x) => x.id === id);
-  focusTask = t ? { id, until: Date.now() + 4000, scrolled: false } : null;
-  if (t && t.missionId && findMission(t.missionId)) { projectTab = "gestion"; projectTabFor = t.missionId; openDetail("missions", t.missionId); }
-  else go("tasks");
+  if (!t) { go("tasks"); return; }
+  openDetail("tasks", id);
 }
 function applyFocus(content) {
   if (!focusTask) return;
@@ -6150,9 +6222,31 @@ function tasksOf(code) {
   return state.tasks.filter((t) => (t.status || "aFaire") === code)
     .sort((a, b) => (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31") || (a.createdAt || 0) - (b.createdAt || 0));
 }
+let taskFilter = { q: "", mission: "", priority: "", label: "", assignee: "" };
+function taskMatchesFilter(t) {
+  const f = taskFilter;
+  if (f.mission && (t.missionId || "") !== f.mission) return false;
+  if (f.priority && (t.priority || "moyenne") !== f.priority) return false;
+  if (f.label && taskLabels(t).indexOf(f.label) === -1) return false;
+  if (f.assignee && (t.assignee || "") !== f.assignee) return false;
+  if (f.q) { const q = noAccents(f.q); if (noAccents([t.key, t.title, t.notes, taskLabels(t).join(" ")].join(" ")).indexOf(q) === -1) return false; }
+  return true;
+}
 function renderTasks() {
+  if (view.detailId) return renderTaskDetail(view.detailId);
+  ensureTaskKeys();
+  const labelsAll = {}; state.tasks.forEach((t) => taskLabels(t).forEach((l) => { labelsAll[l] = 1; }));
+  const assignees = {}; state.tasks.forEach((t) => { if (t.assignee) assignees[t.assignee] = 1; });
+  const opt = (list, cur, all) => `<option value="">${all}</option>` + list.map(([v, l]) => `<option value="${esc(v)}" ${cur === v ? "selected" : ""}>${esc(l)}</option>`).join("");
+  const filters = `<div class="filterbar tk-filters">
+      <input type="search" data-tkf="q" value="${esc(taskFilter.q)}" placeholder="Rechercher (clé, intitulé, notes…)"/>
+      <select data-tkf="mission">${opt(sortedMissions().map((m) => [m.id, m.title || "Sans titre"]), taskFilter.mission, "Tous les projets")}</select>
+      <select data-tkf="priority">${opt(TASK_PRIORITIES.map((p) => [p[0], p[1]]), taskFilter.priority, "Toutes priorités")}</select>
+      ${Object.keys(labelsAll).length ? `<select data-tkf="label">${opt(Object.keys(labelsAll).sort().map((l) => [l, l]), taskFilter.label, "Toutes étiquettes")}</select>` : ""}
+      ${Object.keys(assignees).length ? `<select data-tkf="assignee">${opt(Object.keys(assignees).sort().map((l) => [l, l]), taskFilter.assignee, "Tout le monde")}</select>` : ""}
+      ${(taskFilter.q || taskFilter.mission || taskFilter.priority || taskFilter.label || taskFilter.assignee) ? `<button class="btn ghost small" data-tkf-clear>✕ Effacer</button>` : ""}</div>`;
   const cols = TASK_STATUSES.map((st, idx) => {
-    const items = tasksOf(st.code);
+    const items = tasksOf(st.code).filter(taskMatchesFilter);
     const cards = items.map((t) => {
       const done = st.code === "termine";
       const di = deadlineInfo(t.dueDate, done);
@@ -6160,6 +6254,7 @@ function renderTasks() {
       const mission = `<select class="flat-input kb-mission" data-task-mission="${t.id}" title="Projet">${projOpts}</select>${t.assignee ? `<div class="kb-mission">👤 ${esc(t.assignee)}</div>` : ""}`;
       return `<div class="kb-card" data-task-card="${t.id}" style="border-left-color:${di.color}">
         <div class="kb-grip" title="Glisser vers une autre colonne">⠿</div>
+        <div class="tk-badges">${taskBadges(t, true)}<span class="grow"></span><button class="btn ghost small" data-open-task="${t.id}" title="Ouvrir la fiche">↗</button></div>
         <input class="flat-input kb-title" data-taskfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
         ${mission}
         <div class="kb-dl" style="color:${di.muted ? "var(--muted)" : di.color};font-weight:${di.muted ? 400 : 600}">${di.muted ? "" : "⬤ "}${esc(di.label)}${t.estimationMin ? ` <span class="muted" style="font-weight:400">· ${icon("clock")} ${esc(fmtEstim(t.estimationMin))}</span>` : ""}</div>
@@ -6183,12 +6278,74 @@ function renderTasks() {
     <span class="muted" style="font-size:12px">lointaine → imminente</span></div>`;
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tâches</div>
       <button class="btn" data-add-task="aFaire">+ Nouvelle tâche</button></div>
+    ${filters}
     ${legend}
     <div class="muted" style="font-size:12px;margin-bottom:10px">Colonnes classées par échéance la plus proche · glisse une carte (⠿) ou utilise ‹ › pour la déplacer.</div>
     <div class="kb-board">${cols}</div>
     <button class="btn fab" data-add-task="aFaire">+</button>`;
 }
 function missionTitle(id) { const m = state.missions.find((x) => x.id === id); return m ? (m.title || "Sans titre") : ""; }
+// Fiche d'une tâche, façon ticket Jira : champs, sous-tâches, dépendances, étiquettes, commentaires, historique.
+function renderTaskDetail(id) {
+  const t = state.tasks.find((x) => x.id === id);
+  if (!t) { view.detailId = null; return renderTasks(); }
+  ensureTaskKeys();
+  const m = t.missionId ? findMission(t.missionId) : null;
+  const done = taskDone(t), di = deadlineInfo(t.dueDate, done), p = taskProgress(t);
+  const parent = t.parentId ? state.tasks.find((x) => x.id === t.parentId) : null;
+  const subs = sortTasks(subtasksOf(t)), blockers = (t.blockedBy || []).map((bid) => state.tasks.find((x) => x.id === bid)).filter(Boolean);
+  const dependents = state.tasks.filter((x) => (x.blockedBy || []).indexOf(t.id) > -1);
+  const sel = (field, list, cur, empty) => `<select data-tsel="${field}" data-t="${t.id}">${empty ? `<option value="">${empty}</option>` : ""}${list.map(([v, l]) => `<option value="${esc(v)}" ${String(cur || "") === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+  const pool = state.tasks.filter((x) => x.id !== t.id && x.parentId !== t.id && (!m || x.missionId === m.id || !x.missionId)).sort((a, b) => (a.key || "").localeCompare(b.key || "", "fr", { numeric: true }));
+  const candidates = pool.filter((x) => !taskDone(x) && (t.blockedBy || []).indexOf(x.id) === -1 && x.id !== t.parentId);
+  const secs = m ? taskSeconds(m, t) : 0, running = m && (m.entries || []).some((e) => e.taskId === t.id && e.timerStartedAt);
+  const row = (x) => `<div class="brief-row" data-open-task="${x.id}"><span class="tk-key">${esc(x.key || "")}</span><span class="brief-main ${taskDone(x) ? "muted" : ""}">${taskDone(x) ? "✓ " : ""}${esc(x.title || "Sans titre")}</span><span class="badge ${x.status || "aFaire"}">${taskStatusLabel(x.status || "aFaire")}</span>${x.dueDate ? `<span class="muted" style="font-size:12px">${esc(fmtDate(x.dueDate))}</span>` : ""}</div>`;
+  const comments = (t.comments || []).slice().sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  const hist = (t.history || []).slice().reverse();
+  return `<button class="back" data-back>‹ Tâches</button>
+    <div class="tk-head">
+      <div class="tk-badges">${taskBadges(t)}${m ? `<a href="#" class="pm-tag" data-open-mission="${m.id}">${icon("folder")} ${esc(m.title || "Projet")}</a>` : ""}${parent ? `<a href="#" class="pm-tag" data-open-task="${parent.id}">↑ ${esc(parent.key || parent.title)}</a>` : ""}</div>
+      <input class="tk-title" data-tfield="title" data-t="${t.id}" value="${esc(t.title)}" placeholder="Intitulé de la tâche"/>
+    </div>
+    <div class="tk-grid">
+      <div class="tk-main">
+        <div class="card"><div class="section-h" style="margin-top:0">Description</div>
+          <textarea class="tk-notes" data-tfield="notes" data-t="${t.id}" rows="5" placeholder="Contexte, attendus, liens…">${esc(t.notes || "")}</textarea>
+          <div class="pm-origin" style="margin-top:6px">${taskOrigin(t).map((o) => o.link ? `<a class="pm-tag" href="${esc(o.link)}" target="_blank" rel="noopener">${o.ic} ${esc(o.label)}</a>` : `<span class="pm-tag">${o.ic} ${esc(o.label)}</span>`).join(" ")}</div></div>
+        <div class="card"><div class="section-h" style="margin-top:0">Sous-tâches <span class="muted">(${subs.filter(taskDone).length}/${subs.length})</span></div>
+          ${subs.map(row).join("") || '<div class="muted" style="font-size:13px">Aucune sous-tâche.</div>'}
+          <div class="inline" style="margin-top:8px"><input class="grow" data-sub-title="${t.id}" placeholder="Nouvelle sous-tâche…"/><button class="btn secondary small" data-sub-add="${t.id}">+ Ajouter</button></div></div>
+        <div class="card"><div class="section-h" style="margin-top:0">Dépendances</div>
+          <div class="muted" style="font-size:12px;margin-bottom:4px">Bloquée par</div>
+          ${blockers.map((b) => `<div class="brief-row"><span class="tk-key">${esc(b.key || "")}</span><span class="brief-main ${taskDone(b) ? "muted" : ""}" data-open-task="${b.id}">${taskDone(b) ? "✓ " : "🔒 "}${esc(b.title || "Sans titre")}</span><button class="btn ghost small" data-unblock="${b.id}" data-t="${t.id}" title="Retirer la dépendance">✕</button></div>`).join("") || '<div class="muted" style="font-size:13px">Rien ne la bloque.</div>'}
+          ${candidates.length ? `<div class="inline" style="margin-top:8px"><select class="grow" data-block-pick="${t.id}"><option value="">Ajouter une tâche qui la bloque…</option>${candidates.map((x) => `<option value="${x.id}">${esc((x.key ? x.key + " · " : "") + (x.title || "Sans titre"))}</option>`).join("")}</select></div>` : ""}
+          ${dependents.length ? `<div class="muted" style="font-size:12px;margin:10px 0 4px">Bloque</div>${dependents.map(row).join("")}` : ""}</div>
+        <div class="card"><div class="section-h" style="margin-top:0">Commentaires <span class="muted">(${comments.length})</span></div>
+          ${comments.map((c) => `<div class="tk-comment"><div class="muted" style="font-size:12px">${esc(fmtDateTimeISO(c.at))}</div><div>${esc(c.text)}</div></div>`).join("") || '<div class="muted" style="font-size:13px">Aucun commentaire.</div>'}
+          <div class="inline" style="margin-top:8px;align-items:flex-start"><textarea class="grow" data-comment-text="${t.id}" rows="2" placeholder="Ajouter un commentaire daté (décision, appel, point d'avancement…)"></textarea><button class="btn secondary small" data-comment-add="${t.id}">Ajouter</button></div></div>
+        <details class="card tk-hist"><summary class="muted" style="cursor:pointer">Historique (${hist.length})</summary>
+          ${hist.map((h) => `<div class="tk-hist-row"><span class="muted">${esc(fmtDateTimeISO(h.at))}</span> ${esc(taskFieldLabel(h.field))} : <s class="muted">${esc(taskHistoryValue(h.field, h.from))}</s> → <strong>${esc(taskHistoryValue(h.field, h.to))}</strong></div>`).join("") || '<div class="muted" style="font-size:13px;margin-top:6px">Aucun changement enregistré.</div>'}</details>
+      </div>
+      <div class="tk-side card">
+        <label class="field"><span>Statut</span>${sel("status", TASK_STATUSES.map((st) => [st.code, st.label]), t.status || "aFaire")}</label>
+        <label class="field"><span>Priorité</span>${sel("priority", TASK_PRIORITIES.map((x) => [x[0], x[1]]), t.priority || "moyenne")}</label>
+        <label class="field"><span>Type</span>${sel("type", TASK_TYPES, t.type || "tache")}</label>
+        <label class="field"><span>Projet</span>${sel("missionId", sortedMissions().map((x) => [x.id, x.title || "Sans titre"]), t.missionId || "", "Aucun projet")}</label>
+        ${m ? `<label class="field"><span>Section</span><input list="sectionList" data-tfield="section" data-t="${t.id}" value="${esc(t.section || "")}" placeholder="—"/><datalist id="sectionList">${projectSections(m).map((x) => `<option value="${esc(x)}"></option>`).join("")}</datalist></label>` : ""}
+        <label class="field"><span>Tâche parente</span>${sel("parentId", pool.filter((x) => !x.parentId).map((x) => [x.id, (x.key ? x.key + " · " : "") + (x.title || "Sans titre")]), t.parentId || "", "Aucune")}</label>
+        <label class="field"><span>En charge</span><input list="assigneeList" data-tfield="assignee" data-t="${t.id}" value="${esc(t.assignee || "")}" placeholder="Moi"/><datalist id="assigneeList"><option value="Moi"></option>${state.contacts.map((c) => `<option value="${esc(contactName(c))}"></option>`).join("")}</datalist></label>
+        <label class="field"><span>Échéance</span><input type="date" data-tfield="dueDate" data-t="${t.id}" value="${esc(t.dueDate || "")}"/></label>
+        <div class="pm-dl" style="color:${di.muted ? "var(--muted)" : di.color};margin:-4px 0 8px">${di.muted ? "" : "⬤ "}${esc(di.label)}</div>
+        <label class="field"><span>Estimation (minutes)</span><input type="number" min="0" step="5" data-tfield="estimationMin" data-t="${t.id}" value="${t.estimationMin || ""}"/></label>
+        <label class="field"><span>Avancement</span><select data-taskprog="${t.id}">${[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((v) => `<option value="${v}" ${v === p || (p > 0 && v === Math.round(p / 10) * 10 && v !== 100 && !done) ? "selected" : ""}>${v} %</option>`).join("")}</select></label>
+        <div class="pm-bar" style="margin:-4px 0 10px"><div class="pm-bar-fill" style="width:${p}%"></div></div>
+        <label class="field"><span>Étiquettes (séparées par des virgules)</span><input data-tlabels="${t.id}" value="${esc(taskLabels(t).join(", "))}" placeholder="urgent, client, admin…"/></label>
+        ${m ? `<div class="inline" style="margin-top:4px"><span class="muted" style="font-size:13px">Temps passé : <span class="timer ${running ? "running" : ""}">${secs ? fmtDurationShort(secs) : "—"}</span></span><span class="grow"></span><button class="btn ${running ? "danger" : "secondary"} small" data-task-timer="${t.id}" data-m="${m.id}">${running ? "■ Arrêter" : "▶ Chrono"}</button></div>` : ""}
+        <div class="muted" style="font-size:12px;margin-top:12px">Créée le ${esc(fmtDate(new Date(t.createdAt || Date.now()).toISOString().slice(0, 10)))}</div>
+        <div style="margin-top:14px" class="inline"><button class="btn ghost small" data-task-clone="${t.id}">Dupliquer</button><span class="grow"></span><button class="btn danger small" data-del-task="${t.id}">Supprimer</button></div>
+      </div>
+    </div>`;
+}
 
 // ----------------------------- Actions (tickets) -----------------------------
 function renderActions() {
@@ -7503,7 +7660,7 @@ function wire() {
     save(); render();
   });
   c.querySelectorAll("[data-taskprog]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskprog); if (t) { setTaskProgress(t, el.value); save(); render(); } });
-  c.querySelectorAll("[data-task-mission]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskMission); if (t) { t.missionId = el.value || null; save(); render(); } });
+  c.querySelectorAll("[data-task-mission]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskMission); if (t) { t.key = ""; setTaskField(t, "missionId", el.value || null); ensureTaskKeys(); save(); render(); } });
   c.querySelectorAll("[data-mail-task]").forEach((b) => b.onclick = () => {
     const m = findMission(b.dataset.m); const th = mailThreads().find((x) => x.id === b.dataset.mailTask); if (!m || !th) return;
     state.tasks.push({ id: uid(), title: th.subject || "Mail", status: "aFaire", missionId: m.id, section: "", assignee: "", progress: 0, origin: "mail", mailLink: th.link || "", mailThreadId: th.id, mailSubject: th.subject || "", dueDate: "", createdAt: Date.now() });
@@ -7638,18 +7795,39 @@ function wire() {
 
   // Tâches
   c.querySelectorAll("[data-add-task]").forEach((b) => b.onclick = () => { const st = b.dataset.addTask || "aFaire"; state.tasks.push({ id: uid(), title: "", status: st, missionId: null, dueDate: "", createdAt: Date.now() }); save(); render(); });
-  c.querySelectorAll("[data-taskfield]").forEach((el) => { const h = () => { const t = state.tasks.find((x) => x.id === el.dataset.t); if (t) { t[el.dataset.taskfield] = el.value; save(); } }; el.addEventListener("change", h); el.addEventListener("blur", h); });
-  c.querySelectorAll("[data-taskdue]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskdue); if (t) { t.dueDate = el.value; save(); render(); } });
-  c.querySelectorAll("[data-task-status]").forEach((sel) => sel.onchange = () => { const t = state.tasks.find((x) => x.id === sel.dataset.taskStatus); if (t) { t.status = sel.value; save(); render(); } });
+  c.querySelectorAll("[data-taskfield]").forEach((el) => { const h = () => { const t = state.tasks.find((x) => x.id === el.dataset.t); if (t && setTaskField(t, el.dataset.taskfield, el.value)) save(); }; el.addEventListener("change", h); el.addEventListener("blur", h); });
+  c.querySelectorAll("[data-taskdue]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskdue); if (t) { setTaskField(t, "dueDate", el.value); save(); render(); } });
+  c.querySelectorAll("[data-task-status]").forEach((sel) => sel.onchange = () => { const t = state.tasks.find((x) => x.id === sel.dataset.taskStatus); if (t) { setTaskField(t, "status", sel.value); save(); render(); } });
+  // Fiche tâche
+  c.querySelectorAll("[data-tfield]").forEach((el) => { const h = () => { const t = state.tasks.find((x) => x.id === el.dataset.t); if (!t) return; const f = el.dataset.tfield; const v = f === "estimationMin" ? (Math.round(Number(el.value)) || null) : el.value; if (setTaskField(t, f, v)) { save(); if (f !== "title" && f !== "notes") render(); } }; el.addEventListener("change", h); if (el.tagName !== "TEXTAREA" && el.type !== "date") el.addEventListener("blur", h); });
+  c.querySelectorAll("[data-tsel]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.t); if (!t) return; const f = el.dataset.tsel, v = el.value || (f === "missionId" || f === "parentId" ? null : el.value); if (f === "missionId" && v !== t.missionId) { t.key = ""; } setTaskField(t, f, v); if (f === "missionId") ensureTaskKeys(); save(); render(); });
+  c.querySelectorAll("[data-tlabels]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.tlabels); if (!t) return; t.labels = el.value.split(",").map((x) => x.trim()).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i); save(); render(); });
+  c.querySelectorAll("[data-sub-add]").forEach((b) => b.onclick = () => { const t = state.tasks.find((x) => x.id === b.dataset.subAdd); const inp = c.querySelector(`[data-sub-title="${b.dataset.subAdd}"]`); if (!t || !inp || !inp.value.trim()) return; newTaskLike(t, { title: inp.value.trim(), parentId: t.id, dueDate: t.dueDate || "" }); save(); render(); });
+  c.querySelectorAll("[data-sub-title]").forEach((inp) => inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); const b = c.querySelector(`[data-sub-add="${inp.dataset.subTitle}"]`); if (b) b.onclick(); } });
+  c.querySelectorAll("[data-block-pick]").forEach((sel) => sel.onchange = () => { const t = state.tasks.find((x) => x.id === sel.dataset.blockPick); if (!t || !sel.value) return; t.blockedBy = (t.blockedBy || []).concat(sel.value).filter((x, i, a) => a.indexOf(x) === i); logTask(t, "blockedBy", "", sel.value); save(); render(); });
+  c.querySelectorAll("[data-unblock]").forEach((b) => b.onclick = () => { const t = state.tasks.find((x) => x.id === b.dataset.t); if (!t) return; t.blockedBy = (t.blockedBy || []).filter((x) => x !== b.dataset.unblock); save(); render(); });
+  c.querySelectorAll("[data-comment-add]").forEach((b) => b.onclick = () => { const t = state.tasks.find((x) => x.id === b.dataset.commentAdd); const ta = c.querySelector(`[data-comment-text="${b.dataset.commentAdd}"]`); if (!t || !ta || !ta.value.trim()) return; t.comments = (t.comments || []).concat({ id: uid(), at: new Date().toISOString(), text: ta.value.trim() }); save(); render(); });
+  c.querySelectorAll("[data-task-clone]").forEach((b) => b.onclick = () => { const t = state.tasks.find((x) => x.id === b.dataset.taskClone); if (!t) return; const n = newTaskLike(t, { title: (t.title || "") + " (copie)", priority: t.priority || "moyenne", labels: taskLabels(t).slice(), notes: t.notes || "", estimationMin: t.estimationMin || null, dueDate: t.dueDate || "", parentId: t.parentId || null }); save(); openDetail("tasks", n.id); });
+  c.querySelectorAll("[data-tkf]").forEach((el) => { const h = () => { taskFilter[el.dataset.tkf] = el.value; render(); const again = document.querySelector(`[data-tkf="${el.dataset.tkf}"]`); if (again && el.dataset.tkf === "q") { again.focus(); again.setSelectionRange(again.value.length, again.value.length); } }; el.addEventListener("change", h); if (el.dataset.tkf === "q") el.addEventListener("input", h); });
+  c.querySelectorAll("[data-tkf-clear]").forEach((b) => b.onclick = () => { taskFilter = { q: "", mission: "", priority: "", label: "", assignee: "" }; render(); });
   // Kanban : déplacement d'une colonne à l'autre par les flèches
   c.querySelectorAll("[data-task-move]").forEach((b) => b.onclick = () => {
     const t = state.tasks.find((x) => x.id === b.dataset.t); if (!t) return;
     const i = TASK_STATUSES.findIndex((s) => s.code === (t.status || "aFaire"));
     const j = Math.max(0, Math.min(TASK_STATUSES.length - 1, i + Number(b.dataset.taskMove)));
-    if (j !== i) { t.status = TASK_STATUSES[j].code; save(); render(); }
+    if (j !== i) { setTaskField(t, "status", TASK_STATUSES[j].code); save(); render(); }
   });
   wireKanban(c);
-  c.querySelectorAll("[data-del-task]").forEach((b) => b.onclick = () => { state.tasks = state.tasks.filter((t) => t.id !== b.dataset.delTask); save(); render(); });
+  c.querySelectorAll("[data-del-task]").forEach((b) => b.onclick = () => {
+    const t = state.tasks.find((x) => x.id === b.dataset.delTask); if (!t) return;
+    const subs = subtasksOf(t);
+    if (subs.length && !confirm(`Supprimer « ${t.title || t.key} » et ses ${subs.length} sous-tâche(s) ?`)) return;
+    const gone = [t.id].concat(subs.map((x) => x.id));
+    state.tasks = state.tasks.filter((x) => gone.indexOf(x.id) === -1);
+    state.tasks.forEach((x) => { if (x.blockedBy) x.blockedBy = x.blockedBy.filter((bid) => gone.indexOf(bid) === -1); });
+    if (view.section === "tasks" && view.detailId === t.id) view.detailId = null;
+    save(); render();
+  });
 
   // Actions (tickets)
   c.querySelectorAll("[data-open-action]").forEach((r) => r.onclick = () => openDetail("actions", r.dataset.openAction));
@@ -7737,7 +7915,7 @@ function wireKanban(c) {
   wireBoardDnD(c, "data-task-card", "data-kanban-col",
     (id) => { const t = state.tasks.find((x) => x.id === id); return t ? (t.title || "Tâche") : null; },
     (id) => { const t = state.tasks.find((x) => x.id === id); return t ? (t.status || "aFaire") : ""; },
-    (id, code) => { const t = state.tasks.find((x) => x.id === id); if (t) { t.status = code; save(); render(); } });
+    (id, code) => { const t = state.tasks.find((x) => x.id === id); if (t) { setTaskField(t, "status", code); save(); render(); } });
   // tableau des missions
   wireBoardDnD(c, "data-mission-card", "data-mission-col",
     (id) => { const m = findMission(id); return m ? (m.title || "Projet") : null; },

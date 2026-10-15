@@ -716,3 +716,26 @@ label.field.inline-check > span { margin-bottom: 0; }
 .ch-chip .ch .i { width: 12px; height: 12px; }
 .ch-chip .chip-n { font-size: 12px; opacity: .75; }
 .ch-chip.active .ch { box-shadow: 0 0 0 2px rgba(255,255,255,.7); }
+
+/* Tâches façon Jira */
+.tk-key { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; white-space: nowrap; }
+.tk-pr { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.tk-label { font-size: 11px; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; color: var(--muted); }
+.tk-blocked { color: #d23c3c; }
+.tk-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.tk-head { margin-bottom: 12px; }
+.tk-title { width: 100%; font-size: 22px; font-weight: 700; border: none; background: transparent; color: var(--text); padding: 4px 0; outline: none; border-bottom: 1px solid transparent; }
+.tk-title:focus { border-bottom-color: var(--primary); }
+.tk-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+@media (max-width: 860px) { .tk-grid { grid-template-columns: 1fr; } }
+.tk-main > .card { margin-bottom: 12px; }
+.tk-notes { width: 100%; font: inherit; line-height: 1.45; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); resize: vertical; box-sizing: border-box; }
+.tk-side .field { margin-bottom: 8px; }
+.tk-comment { padding: 8px 0; border-top: 1px solid var(--line); white-space: pre-wrap; }
+.tk-hist-row { font-size: 13px; padding: 4px 0; border-top: 1px solid var(--line); }
+.pm-table tr.pm-sub td.pm-title { padding-left: 28px; }
+.pm-table tr.pm-sub td.pm-title::before { content: "↳ "; color: var(--muted); }
+.tk-filters input[type="search"] { min-width: 200px; }
+.badge.enAttente { background: #fff4e0; color: #b4690e; }
+.badge.aFaire { background: var(--bg); color: var(--muted); }
+.badge.termine { background: rgba(77,200,187,.22); color: #1f8074; }

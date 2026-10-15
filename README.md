@@ -188,6 +188,19 @@ parlé (interlocuteurs, invités à trouver, réponses en attente, à préparer 
 avec les mêmes réglages de voix et de vitesse que Documents, réglables sur place ; changer d'onglet du
 Planning ne coupe pas la lecture, changer de section l'arrête.
 
+## Tâches : administration façon Jira
+
+Chaque tâche a une **fiche** (bouton ↗ dans le kanban et dans le tableau d'un projet, ou clic depuis
+le brief) : intitulé, description, **clé** (« MSVL-12 », préfixe tiré du titre du projet, « T-n » sans
+projet), **statut** (À faire · En cours · En attente · Terminée), **priorité** (haute ▲ · moyenne ·
+basse ▽), **type** (tâche, jalon, anomalie), projet et section, **tâche parente** et **sous-tâches**
+(ajout en une ligne, indentées dans le tableau du projet, compteur « 2/3 »), **dépendances**
+(« bloquée par », verrou 🔒 tant que la bloquante n'est pas terminée ; terminer la bloquante affiche
+« Débloqué : … »), **étiquettes**, en charge, échéance, estimation, avancement, chrono, **commentaires
+datés**, **historique** des changements (statut, échéance, priorité, projet…), dupliquer, supprimer
+(avec ses sous-tâches). Le kanban a une barre de **filtres** : recherche (clé, intitulé, notes),
+projet, priorité, étiquette, personne.
+
 ## Correspondances : un fichier par interlocuteur sur le Drive, réponses étayées
 
 Le dossier **Correspondances/** du Drive (racine de « Mon Drive ») contient **un `.md` par
