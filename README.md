@@ -198,8 +198,14 @@ basse ▽), **type** (tâche, jalon, anomalie), projet et section, **tâche pare
 (« bloquée par », verrou 🔒 tant que la bloquante n'est pas terminée ; terminer la bloquante affiche
 « Débloqué : … »), **étiquettes**, en charge, échéance, estimation, avancement, chrono, **commentaires
 datés**, **historique** des changements (statut, échéance, priorité, projet…), dupliquer, supprimer
-(avec ses sous-tâches). Le kanban a une barre de **filtres** : recherche (clé, intitulé, notes),
-projet, priorité, étiquette, personne.
+(avec ses sous-tâches). La section Tâches propose deux vues, mémorisées par appareil : le **Backlog**
+(façon Jira : panneau des projets avec avancement à gauche ; à droite les tickets groupés « En
+retard », « Cette semaine », « Semaine prochaine », semaines suivantes, « Backlog » sans échéance,
+avec compteurs à faire / en cours / terminées par groupe ; chaque ligne porte la clé, le projet
+coloré, le statut modifiable, l'échéance (rouge si dépassée), l'estimation, la priorité et les
+initiales de la personne ; cases à cocher pour une action groupée : statut, échéance, projet,
+priorité, suppression) et le **Kanban**. Les deux ont la barre de **filtres** : recherche (clé,
+intitulé, notes), projet, priorité, étiquette, personne.
 
 ## Correspondances : un fichier par interlocuteur sur le Drive, réponses étayées
 

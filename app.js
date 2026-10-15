@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v130";
+const APP_VERSION = "v131";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -6225,12 +6225,76 @@ function tasksOf(code) {
 let taskFilter = { q: "", mission: "", priority: "", label: "", assignee: "" };
 function taskMatchesFilter(t) {
   const f = taskFilter;
-  if (f.mission && (t.missionId || "") !== f.mission) return false;
+  if (f.mission === "__none" ? !!t.missionId : (f.mission && (t.missionId || "") !== f.mission)) return false;
   if (f.priority && (t.priority || "moyenne") !== f.priority) return false;
   if (f.label && taskLabels(t).indexOf(f.label) === -1) return false;
   if (f.assignee && (t.assignee || "") !== f.assignee) return false;
   if (f.q) { const q = noAccents(f.q); if (noAccents([t.key, t.title, t.notes, taskLabels(t).join(" ")].join(" ")).indexOf(q) === -1) return false; }
   return true;
+}
+// ---- Vue backlog (façon Jira) : projets à gauche, tickets groupés par semaine d'échéance à droite ----
+const TASK_VIEW_KEY = "op01_tasks_view";
+let taskViewMode = (() => { try { return localStorage.getItem(TASK_VIEW_KEY) || "backlog"; } catch (e) { return "backlog"; } })();
+let blSelected = {};                 // id → true (sélection multiple)
+const blCollapsed = {};              // groupe → replié
+const PROJECT_COLORS = ["#2563eb", "#7c3aed", "#d98c2b", "#16a34a", "#dc2626", "#0891b2", "#9333ea", "#ca8a04", "#059669", "#e11d48"];
+function projectColor(mid) { const i = sortedMissions().findIndex((m) => m.id === mid); return i < 0 ? "#8e8e93" : PROJECT_COLORS[i % PROJECT_COLORS.length]; }
+const initialsOf = (name) => String(name || "").trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase() || "—";
+const shortDate = (iso) => iso ? new Date(iso + "T12:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "short" }) : "";
+function backlogGroups(tasks) {
+  const today = todayISO(), wk = weekInterval(new Date()), curMon = localISO(wk.start);
+  const groups = {}; const order = [];
+  const put = (key, label, sub, t, rank) => { if (!groups[key]) { groups[key] = { key, label, sub, items: [], rank }; order.push(key); } groups[key].items.push(t); };
+  tasks.forEach((t) => {
+    const done = taskDone(t);
+    if (!t.dueDate) { put(done ? "fini" : "backlog", done ? "Terminées sans échéance" : "Backlog", done ? "" : "sans échéance", t, done ? 900 : 800); return; }
+    if (!done && t.dueDate < today) { put("retard", "En retard", "à replanifier", t, 0); return; }
+    const w = weekInterval(new Date(t.dueDate + "T12:00:00")), mon = localISO(w.start);
+    if (mon < curMon) { if (!done) put("retard", "En retard", "à replanifier", t, 0); return; }   // terminées des semaines passées : hors backlog
+    const end = new Date(w.end); end.setDate(end.getDate() - 1);
+    const n = Math.round((w.start - wk.start) / 6048e5);
+    put("s" + mon, n === 0 ? "Cette semaine" : n === 1 ? "Semaine prochaine" : `Semaine du ${shortDate(mon)}`, `${shortDate(mon)} – ${shortDate(localISO(end))}`, t, 1 + n);
+  });
+  return order.map((k) => groups[k]).sort((a, b) => a.rank - b.rank).map((g) => Object.assign(g, { items: sortTasks(g.items).sort((a, b) => (taskDone(a) - taskDone(b))) }));
+}
+function renderTaskBacklog() {
+  const all = state.tasks.filter(taskMatchesFilter);
+  const groups = backlogGroups(all);
+  const selN = Object.keys(blSelected).filter((id) => state.tasks.some((t) => t.id === id)).length;
+  const row = (t) => {
+    const done = taskDone(t), m = t.missionId ? findMission(t.missionId) : null, pr = taskPriority(t), late = !done && t.dueDate && t.dueDate < todayISO();
+    const blk = taskBlockers(t);
+    return `<div class="bl-row ${done ? "done" : ""}" data-bl-row="${t.id}">
+      <input type="checkbox" data-bl-sel="${t.id}" ${blSelected[t.id] ? "checked" : ""}/>
+      <span class="tk-key">${esc(t.key || "")}</span>
+      <span class="bl-title grow" data-open-task="${t.id}" title="Ouvrir la fiche">${t.parentId ? "↳ " : ""}${t.type === "jalon" ? "◆ " : ""}${esc(t.title || "Sans titre")}${blk.length ? ` <span class="tk-blocked" title="Bloquée par ${esc(blk.map((b) => b.key || b.title).join(", "))}">🔒</span>` : ""}${subtasksOf(t).length ? ` <span class="muted" style="font-size:12px">☰ ${subtasksOf(t).filter(taskDone).length}/${subtasksOf(t).length}</span>` : ""}</span>
+      ${m ? `<span class="bl-proj" style="--pc:${projectColor(m.id)}" title="${esc(m.title)}">${esc(m.title)}</span>` : `<span class="bl-proj muted" style="--pc:#8e8e93">Sans projet</span>`}
+      <select class="bl-status ${t.status || "aFaire"}" data-task-status="${t.id}">${TASK_STATUSES.map((st) => `<option value="${st.code}" ${(t.status || "aFaire") === st.code ? "selected" : ""}>${st.label}</option>`).join("")}</select>
+      <span class="bl-due ${late ? "late" : ""}"><input type="date" data-taskdue="${t.id}" value="${esc(t.dueDate || "")}" title="Échéance"/>${late ? `<span class="bl-late">⚠ ${esc(shortDate(t.dueDate))}</span>` : ""}</span>
+      <span class="bl-est" title="Estimation">${t.estimationMin ? esc(fmtEstim(t.estimationMin)) : ""}</span>
+      <span class="bl-pr" style="color:${pr[2]}" title="Priorité ${pr[1]}">${pr[0] === "haute" ? "⏫" : pr[0] === "basse" ? "⏬" : "="}</span>
+      <span class="bl-who" title="${esc(t.assignee || "Moi")}">${esc(initialsOf(t.assignee || "Moi"))}</span>
+    </div>`;
+  };
+  const counts = (items) => { const c = { aFaire: 0, enCours: 0, termine: 0 }; items.forEach((t) => { const st = t.status || "aFaire"; c[st === "termine" ? "termine" : st === "enCours" ? "enCours" : "aFaire"]++; }); return `<span class="bl-cnt c1" title="À faire / en attente">${c.aFaire}</span><span class="bl-cnt c2" title="En cours">${c.enCours}</span><span class="bl-cnt c3" title="Terminées">${c.termine}</span>`; };
+  const list = groups.length ? groups.map((g) => `<div class="bl-group">
+      <div class="bl-ghead"><button class="btn ghost small" data-bl-toggle="${g.key}">${blCollapsed[g.key] ? "›" : "⌄"}</button><strong>${esc(g.label)}</strong><span class="muted">${esc(g.sub)}${g.sub ? " · " : ""}${g.items.length} ticket${g.items.length > 1 ? "s" : ""}</span><span class="grow"></span>${counts(g.items)}</div>
+      ${blCollapsed[g.key] ? "" : `<div class="bl-list">${g.items.map(row).join("")}</div>`}</div>`).join("") : '<div class="center-empty">Aucune tâche ne correspond.</div>';
+  // Panneau projets (« epics »)
+  const open = (m) => projectTasks(m).filter((t) => !taskDone(t)).length;
+  const missions = sortedMissions().filter((m) => m.statusCode !== "terminee" || projectTasks(m).some((t) => !taskDone(t)));
+  const panel = `<div class="bl-panel card">
+      <div class="inline" style="margin-bottom:6px"><strong class="grow">Projets</strong>${taskFilter.mission ? `<button class="btn ghost small" data-bl-mission="">Tous</button>` : ""}</div>
+      ${missions.map((m) => { const p = projectProgress(m); return `<div class="bl-epic ${taskFilter.mission === m.id ? "active" : ""}" data-bl-mission="${m.id}"><div class="inline" style="gap:6px"><span class="bl-dot" style="background:${projectColor(m.id)}"></span><span class="grow bl-epic-t">${esc(m.title || "Sans titre")}</span><span class="muted" style="font-size:12px">${open(m)}</span></div>${p != null ? `<div class="pm-bar"><div class="pm-bar-fill" style="width:${p}%"></div></div>` : ""}</div>`; }).join("")}
+      <div class="bl-epic ${taskFilter.mission === "__none" ? "active" : ""}" data-bl-mission="__none"><div class="inline" style="gap:6px"><span class="bl-dot" style="background:#8e8e93"></span><span class="grow bl-epic-t muted">Sans projet</span><span class="muted" style="font-size:12px">${state.tasks.filter((t) => !t.missionId && !taskDone(t)).length}</span></div></div>
+    </div>`;
+  const bulk = selN ? `<div class="bl-bulk card"><strong>${selN} sélectionnée${selN > 1 ? "s" : ""}</strong>
+      <select data-bl-bulk="status"><option value="">Statut…</option>${TASK_STATUSES.map((st) => `<option value="${st.code}">${st.label}</option>`).join("")}</select>
+      <input type="date" data-bl-bulk="dueDate" title="Échéance"/>
+      <select data-bl-bulk="missionId"><option value="">Projet…</option>${sortedMissions().map((m) => `<option value="${m.id}">${esc(m.title || "Sans titre")}</option>`).join("")}</select>
+      <select data-bl-bulk="priority"><option value="">Priorité…</option>${TASK_PRIORITIES.map((x) => `<option value="${x[0]}">${x[1]}</option>`).join("")}</select>
+      <span class="grow"></span><button class="btn ghost small" data-bl-bulk-clear>Désélectionner</button><button class="btn danger small" data-bl-bulk-del>Supprimer</button></div>` : "";
+  return `<div class="bl-grid">${panel}<div class="bl-main">${bulk}${list}</div></div>`;
 }
 function renderTasks() {
   if (view.detailId) return renderTaskDetail(view.detailId);
@@ -6276,12 +6340,15 @@ function renderTasks() {
   const legend = `<div class="dl-legend"><span class="muted">Échéance :</span>
     <span class="dl-grad"></span>
     <span class="muted" style="font-size:12px">lointaine → imminente</span></div>`;
+  const modes = `<div class="chip-row" style="margin-bottom:10px">${[["backlog", "Backlog"], ["kanban", "Kanban"]].map(([k, l]) => `<button class="chip ${taskViewMode === k ? "active" : ""}" data-task-view="${k}">${l}</button>`).join("")}</div>`;
+  const body = taskViewMode === "kanban"
+    ? `${legend}<div class="muted" style="font-size:12px;margin-bottom:10px">Colonnes classées par échéance la plus proche · glisse une carte (⠿) ou utilise ‹ › pour la déplacer.</div><div class="kb-board">${cols}</div>`
+    : renderTaskBacklog();
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tâches</div>
       <button class="btn" data-add-task="aFaire">+ Nouvelle tâche</button></div>
+    ${modes}
     ${filters}
-    ${legend}
-    <div class="muted" style="font-size:12px;margin-bottom:10px">Colonnes classées par échéance la plus proche · glisse une carte (⠿) ou utilise ‹ › pour la déplacer.</div>
-    <div class="kb-board">${cols}</div>
+    ${body}
     <button class="btn fab" data-add-task="aFaire">+</button>`;
 }
 function missionTitle(id) { const m = state.missions.find((x) => x.id === id); return m ? (m.title || "Sans titre") : ""; }
@@ -7810,6 +7877,23 @@ function wire() {
   c.querySelectorAll("[data-task-clone]").forEach((b) => b.onclick = () => { const t = state.tasks.find((x) => x.id === b.dataset.taskClone); if (!t) return; const n = newTaskLike(t, { title: (t.title || "") + " (copie)", priority: t.priority || "moyenne", labels: taskLabels(t).slice(), notes: t.notes || "", estimationMin: t.estimationMin || null, dueDate: t.dueDate || "", parentId: t.parentId || null }); save(); openDetail("tasks", n.id); });
   c.querySelectorAll("[data-tkf]").forEach((el) => { const h = () => { taskFilter[el.dataset.tkf] = el.value; render(); const again = document.querySelector(`[data-tkf="${el.dataset.tkf}"]`); if (again && el.dataset.tkf === "q") { again.focus(); again.setSelectionRange(again.value.length, again.value.length); } }; el.addEventListener("change", h); if (el.dataset.tkf === "q") el.addEventListener("input", h); });
   c.querySelectorAll("[data-tkf-clear]").forEach((b) => b.onclick = () => { taskFilter = { q: "", mission: "", priority: "", label: "", assignee: "" }; render(); });
+  c.querySelectorAll("[data-task-view]").forEach((b) => b.onclick = () => { taskViewMode = b.dataset.taskView; try { localStorage.setItem(TASK_VIEW_KEY, taskViewMode); } catch (e) {} render(); });
+  c.querySelectorAll("[data-bl-mission]").forEach((b) => b.onclick = () => { const v = b.dataset.blMission; taskFilter.mission = taskFilter.mission === v ? "" : v; render(); });
+  c.querySelectorAll("[data-bl-toggle]").forEach((b) => b.onclick = () => { blCollapsed[b.dataset.blToggle] = !blCollapsed[b.dataset.blToggle]; render(); });
+  c.querySelectorAll("[data-bl-sel]").forEach((cb) => cb.onchange = () => { if (cb.checked) blSelected[cb.dataset.blSel] = true; else delete blSelected[cb.dataset.blSel]; render(); });
+  c.querySelectorAll("[data-bl-bulk]").forEach((el) => el.onchange = () => {
+    const f = el.dataset.blBulk, v = el.value; if (!v) return;
+    state.tasks.filter((t) => blSelected[t.id]).forEach((t) => { if (f === "missionId") { t.key = ""; } setTaskField(t, f, v); });
+    if (f === "missionId") ensureTaskKeys();
+    save(); render(); toast(`${Object.keys(blSelected).length} tâche(s) mise(s) à jour`);
+  });
+  c.querySelectorAll("[data-bl-bulk-clear]").forEach((b) => b.onclick = () => { blSelected = {}; render(); });
+  c.querySelectorAll("[data-bl-bulk-del]").forEach((b) => b.onclick = () => {
+    const ids = Object.keys(blSelected); if (!ids.length || !confirm(`Supprimer ${ids.length} tâche(s) ?`)) return;
+    state.tasks = state.tasks.filter((t) => ids.indexOf(t.id) === -1 && ids.indexOf(t.parentId) === -1);
+    state.tasks.forEach((x) => { if (x.blockedBy) x.blockedBy = x.blockedBy.filter((bid) => ids.indexOf(bid) === -1); });
+    blSelected = {}; save(); render();
+  });
   // Kanban : déplacement d'une colonne à l'autre par les flèches
   c.querySelectorAll("[data-task-move]").forEach((b) => b.onclick = () => {
     const t = state.tasks.find((x) => x.id === b.dataset.t); if (!t) return;
