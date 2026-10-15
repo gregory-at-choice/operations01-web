@@ -775,3 +775,37 @@ label.field.inline-check > span { margin-bottom: 0; }
 .bl-row input[type="checkbox"], .bl-row select, .bl-row input[type="date"] { width: auto; flex: none; margin: 0; }
 .bl-row input[type="checkbox"] { width: 16px; height: 16px; }
 .bl-title { flex: 1 1 auto; }
+
+/* Chronologie (Gantt) */
+.gt-wrap { display: flex; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--card); }
+.gt-left { flex: none; border-right: 1px solid var(--line); }
+.gt-corner { height: 44px; border-bottom: 1px solid var(--line); background: var(--bg); box-sizing: border-box; }
+.gt-label { display: flex; align-items: center; gap: 6px; padding: 0 8px; border-bottom: 1px solid var(--line); font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; box-sizing: border-box; }
+.gt-label.sub { padding-left: 22px; }
+.gt-label.done .gt-lt { text-decoration: line-through; color: var(--muted); }
+.gt-label.gt-head { background: var(--bg); font-weight: 700; cursor: default; }
+.gt-lt { overflow: hidden; text-overflow: ellipsis; }
+.gt-scroll { flex: 1; overflow-x: auto; overflow-y: hidden; }
+.gt-canvas { position: relative; }
+.gt-months, .gt-days { position: relative; height: 22px; background: var(--bg); border-bottom: 1px solid var(--line); box-sizing: border-box; }
+.gt-month, .gt-day { position: absolute; top: 0; height: 21px; line-height: 21px; font-size: 11px; color: var(--muted); border-left: 1px solid var(--line); padding-left: 4px; white-space: nowrap; overflow: hidden; box-sizing: border-box; }
+.gt-day { text-align: center; padding-left: 0; }
+.gt-day.we { background: rgba(0,0,0,.04); }
+.gt-day.today { color: #d23c3c; font-weight: 700; }
+.gt-body { position: relative; }
+.gt-row { position: absolute; left: 0; border-bottom: 1px solid var(--line); box-sizing: border-box; }
+.gt-rowhead { background: var(--bg); }
+.gt-we { position: absolute; top: 0; background: rgba(0,0,0,.035); }
+.gt-today { position: absolute; top: 0; width: 2px; background: #d23c3c; opacity: .8; z-index: 2; }
+.gt-bar { position: absolute; top: 6px; height: 18px; border-radius: 6px; color: #fff; font-size: 11px; cursor: pointer; overflow: hidden; z-index: 3; box-sizing: border-box; }
+.gt-bar.late { box-shadow: 0 0 0 2px #d23c3c; }
+.gt-fill { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(255,255,255,.35); }
+.gt-bt { position: relative; padding: 0 6px; line-height: 18px; white-space: nowrap; }
+.gt-ms { position: absolute; top: 7px; width: 16px; height: 16px; transform: rotate(45deg); border-radius: 3px; cursor: pointer; z-index: 3; }
+.gt-svg { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 4; }
+@media (prefers-color-scheme: dark) { .gt-day.we, .gt-we { background: rgba(255,255,255,.05); } }
+/* Vue d'ensemble d'un projet */
+.ov-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--bg); }
+.ov-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; margin-top: 6px; color: var(--muted); }
+.ov-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.ov-act { font-size: 13px; padding: 4px 0; border-top: 1px solid var(--line); cursor: pointer; }

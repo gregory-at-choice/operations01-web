@@ -204,8 +204,20 @@ retard », « Cette semaine », « Semaine prochaine », semaines suivantes, « 
 avec compteurs à faire / en cours / terminées par groupe ; chaque ligne porte la clé, le projet
 coloré, le statut modifiable, l'échéance (rouge si dépassée), l'estimation, la priorité et les
 initiales de la personne ; cases à cocher pour une action groupée : statut, échéance, projet,
-priorité, suppression) et le **Kanban**. Les deux ont la barre de **filtres** : recherche (clé,
-intitulé, notes), projet, priorité, étiquette, personne.
+priorité, suppression), le **Kanban** et la **Chronologie**. Toutes ont la barre de **filtres** :
+recherche (clé, intitulé, notes), projet, priorité, étiquette, personne.
+
+- **Début et durée** : une tâche porte une échéance, et peut aussi avoir un début et une durée en
+  jours ; l'étendue (début → fin) se déduit de ce qui est renseigné.
+- **Chronologie (Gantt)** : onglet d'un projet, et vue globale dans Tâches (groupée par projet).
+  Une ligne par tâche datée, barres colorées par statut (liseré rouge en retard, remplissage =
+  avancement), sous-tâches indentées, jalons en losange, dépendances fléchées, trait « aujourd'hui »,
+  échelle adaptée à l'étendue (jours ou semaines). Clic sur une barre : la fiche.
+- **Résumé de projet** : vue d'ensemble en tête de l'onglet Résumé : ouvertes, créées et terminées sur
+  30 jours, charge restante estimée, temps passé contre estimé, ouvertes par personne, répartition par
+  statut et par priorité, échéances sous 7 jours, activité récente (changements et commentaires).
+- **Partager** : depuis la fiche d'une tâche (« Partager ») ou la chronologie d'un projet (« Partager
+  le planning »), un texte brut à copier, envoyer par mail ou via la feuille de partage de l'appareil.
 
 ## Correspondances : un fichier par interlocuteur sur le Drive, réponses étayées
 

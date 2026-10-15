@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v131";
+const APP_VERSION = "v132";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2005,7 +2005,7 @@ try { doneOpen = localStorage.getItem("op01_doneOpen") === "1"; } catch (e) {}
 // ----------------------------- Projet : fiche à trois vues -----------------------------
 // Résumé · Gestion de projet (tâches par section) · Correspondance (mails liés).
 let projectTab = "resume", projectTabFor = null;
-const PROJECT_TABS = [["resume", "Résumé"], ["gestion", "Gestion de projet"], ["courrier", "Correspondance"]];
+const PROJECT_TABS = [["resume", "Résumé"], ["gestion", "Gestion de projet"], ["chrono", "Chronologie"], ["courrier", "Correspondance"]];
 
 function projectTasks(m) { return state.tasks.filter((t) => t.missionId === m.id); }
 // ---- Administration des tâches façon Jira : clé, priorité, type, sous-tâches, dépendances, étiquettes,
@@ -2034,7 +2034,7 @@ function ensureTaskKeys() {
   });
   if (changed) save();
 }
-const TASK_LOGGED = ["status", "dueDate", "priority", "assignee", "missionId", "parentId", "estimationMin", "title", "type", "section"];
+const TASK_LOGGED = ["status", "dueDate", "priority", "assignee", "missionId", "parentId", "estimationMin", "title", "type", "section", "startDate", "durationDays"];
 function logTask(t, field, from, to) {
   if (String(from == null ? "" : from) === String(to == null ? "" : to)) return;
   t.history = (t.history || []).slice(-80);
@@ -2055,7 +2055,7 @@ function afterTaskDone(t) {
   const parent = t.parentId ? state.tasks.find((x) => x.id === t.parentId) : null;
   if (parent && !taskDone(parent) && subtasksOf(parent).length && subtasksOf(parent).every(taskDone)) toast(`Toutes les sous-tâches de « ${parent.title || parent.key} » sont terminées`);
 }
-function taskFieldLabel(f) { return ({ status: "statut", dueDate: "échéance", priority: "priorité", assignee: "en charge", missionId: "projet", parentId: "tâche parente", estimationMin: "estimation", title: "intitulé", type: "type", section: "section" })[f] || f; }
+function taskFieldLabel(f) { return ({ status: "statut", dueDate: "échéance", priority: "priorité", assignee: "en charge", missionId: "projet", parentId: "tâche parente", estimationMin: "estimation", title: "intitulé", type: "type", section: "section", startDate: "début", durationDays: "durée (jours)" })[f] || f; }
 function taskHistoryValue(field, v) {
   if (v === "" || v == null) return "—";
   if (field === "status") return taskStatusLabel(v);
@@ -2063,13 +2063,123 @@ function taskHistoryValue(field, v) {
   if (field === "type") return (TASK_TYPES.find((p) => p[0] === v) || [v, v])[1];
   if (field === "missionId") return missionTitle(v) || "—";
   if (field === "parentId") { const p = state.tasks.find((x) => x.id === v); return p ? (p.key || p.title) : "—"; }
-  if (field === "dueDate") return fmtDate(v);
+  if (field === "dueDate" || field === "startDate") return fmtDate(v);
   if (field === "estimationMin") return fmtEstim(v);
   return String(v);
 }
 function newTaskLike(t, overrides) {
   const n = Object.assign({ id: uid(), title: "", status: "aFaire", missionId: t ? t.missionId : null, section: t ? (t.section || "") : "", assignee: "", progress: 0, origin: "manuel", dueDate: "", createdAt: Date.now(), priority: "moyenne", labels: [] }, overrides || {});
   state.tasks.push(n); ensureTaskKeys(); return n;
+}
+// Étendue d'une tâche dans le temps : début explicite, ou déduit de l'échéance et de la durée ; fin = échéance,
+// ou début + durée. Sans aucune date : null.
+const gtAddDays = (iso, n) => { const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return localISO(d); };
+const gtDaysBetween = (a, b) => Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 864e5);
+function taskSpan(t) {
+  const dur = Math.max(0, Math.round(Number(t.durationDays) || 0));
+  let start = t.startDate || "", end = t.dueDate || "";
+  if (!start && end) start = dur > 1 ? gtAddDays(end, -(dur - 1)) : end;
+  if (start && !end) end = dur > 1 ? gtAddDays(start, dur - 1) : start;
+  if (!start) return null;
+  if (end < start) end = start;
+  return { start, end, days: gtDaysBetween(start, end) + 1 };
+}
+const GANTT_COLORS = { termine: "#16a34a", enCours: "#2563eb", enAttente: "#d98c2b", aFaire: "#9ca3af" };
+// Chronologie (Gantt) : une ligne par tâche datée, barres par statut, jalons en losange, dépendances fléchées, trait « aujourd'hui ».
+function renderGantt(tasks, opts) {
+  opts = opts || {};
+  const today = todayISO();
+  const dated = tasks.filter((t) => taskSpan(t));
+  const undated = tasks.filter((t) => !taskSpan(t) && !taskDone(t));
+  if (!dated.length) return `<div class="center-empty">Aucune tâche datée${undated.length ? ` · ${undated.length} sans date` : ""}.<br><span class="muted" style="font-size:13px">Donne une échéance, ou un début et une durée, pour la voir ici.</span></div>`;
+  const byStart = (a, b) => taskSpan(a).start.localeCompare(taskSpan(b).start) || (a.key || "").localeCompare(b.key || "", "fr", { numeric: true });
+  const rows = [];
+  const groups = opts.byProject ? sortedMissions().map((m) => ({ m, items: dated.filter((t) => t.missionId === m.id) })).filter((g) => g.items.length).concat(dated.some((t) => !t.missionId) ? [{ m: null, items: dated.filter((t) => !t.missionId) }] : []) : [{ m: null, items: dated, noHead: true }];
+  groups.forEach((g) => {
+    if (!g.noHead) rows.push({ head: g.m ? (g.m.title || "Projet") : "Sans projet", color: g.m ? projectColor(g.m.id) : "#8e8e93" });
+    const ids = {}; g.items.forEach((t) => { ids[t.id] = 1; });
+    g.items.filter((t) => !t.parentId || !ids[t.parentId]).sort(byStart).forEach((t) => { rows.push({ t }); g.items.filter((x) => x.parentId === t.id).sort(byStart).forEach((x) => rows.push({ t: x, sub: true })); });
+  });
+  let min = dated.reduce((a, t) => (taskSpan(t).start < a ? taskSpan(t).start : a), today), max = dated.reduce((a, t) => (taskSpan(t).end > a ? taskSpan(t).end : a), today);
+  min = gtAddDays(min < gtAddDays(today, -7) ? min : gtAddDays(today, -7), -3); max = gtAddDays(max > gtAddDays(today, 21) ? max : gtAddDays(today, 21), 3);
+  const nDays = gtDaysBetween(min, max) + 1;
+  const dw = nDays <= 45 ? 28 : nDays <= 130 ? 12 : nDays <= 400 ? 6 : 3;
+  const x = (iso) => gtDaysBetween(min, iso) * dw;
+  const RH = 30, LW = 220, W = nDays * dw;
+  let months = "", days = "";
+  for (let i = 0; i < nDays; i++) {
+    const iso = gtAddDays(min, i), d = new Date(iso + "T12:00:00");
+    if (d.getDate() === 1 || i === 0) { const end = new Date(d.getFullYear(), d.getMonth() + 1, 0); const span = Math.min(nDays - i, end.getDate() - d.getDate() + 1); months += `<div class="gt-month" style="left:${i * dw}px;width:${span * dw}px">${d.toLocaleDateString("fr-FR", span * dw > 110 ? { month: "long", year: "numeric" } : { month: span * dw > 70 ? "long" : "short" })}</div>`; }
+    if (dw >= 12) days += `<div class="gt-day ${d.getDay() === 0 || d.getDay() === 6 ? "we" : ""} ${iso === today ? "today" : ""}" style="left:${i * dw}px;width:${dw}px">${dw >= 20 ? d.getDate() : (d.getDay() === 1 ? d.getDate() : "")}</div>`;
+    else if (d.getDay() === 1) days += `<div class="gt-day" style="left:${i * dw}px;width:${7 * dw}px">${d.getDate()}/${d.getMonth() + 1}</div>`;
+  }
+  const pos = {}; rows.forEach((r, i) => { if (r.t) pos[r.t.id] = i; });
+  const labels = rows.map((r) => r.head ? `<div class="gt-label gt-head" style="height:${RH}px"><span class="bl-dot" style="background:${r.color}"></span>${esc(r.head)}</div>`
+    : `<div class="gt-label ${r.sub ? "sub" : ""} ${taskDone(r.t) ? "done" : ""}" style="height:${RH}px" data-open-task="${r.t.id}" title="${esc(r.t.title || "")}"><span class="tk-key">${esc(r.t.key || "")}</span><span class="gt-lt">${r.t.type === "jalon" ? "◆ " : ""}${esc(r.t.title || "Sans titre")}</span></div>`).join("");
+  const bars = rows.map((r, i) => {
+    if (!r.t) return `<div class="gt-row gt-rowhead" style="top:${i * RH}px;height:${RH}px;width:${W}px"></div>`;
+    const t = r.t, sp = taskSpan(t), done = taskDone(t), late = !done && sp.end < today, col = GANTT_COLORS[t.status || "aFaire"] || GANTT_COLORS.aFaire;
+    const left = x(sp.start), width = Math.max(dw, sp.days * dw), p = taskProgress(t);
+    const bar = t.type === "jalon"
+      ? `<div class="gt-ms" data-open-task="${t.id}" style="left:${x(sp.end) + dw / 2 - 8}px;background:${late ? "#d23c3c" : col}" title="${esc(t.title)} · ${esc(fmtDate(sp.end))}"></div>`
+      : `<div class="gt-bar ${late ? "late" : ""}" data-open-task="${t.id}" style="left:${left}px;width:${width}px;background:${col}" title="${esc(t.title)} · ${esc(fmtDate(sp.start))}${sp.days > 1 ? " → " + esc(fmtDate(sp.end)) : ""}${p ? " · " + p + " %" : ""}"><div class="gt-fill" style="width:${p}%"></div>${width > 60 ? `<span class="gt-bt">${esc(t.title || "")}</span>` : ""}</div>`;
+    return `<div class="gt-row" style="top:${i * RH}px;height:${RH}px;width:${W}px">${bar}</div>`;
+  }).join("");
+  let paths = "";
+  rows.forEach((r) => {
+    if (!r.t) return;
+    (r.t.blockedBy || []).forEach((bid) => {
+      if (pos[bid] == null) return;
+      const b = state.tasks.find((q) => q.id === bid), sb = taskSpan(b), st = taskSpan(r.t);
+      const x1 = x(sb.end) + dw, y1 = pos[bid] * RH + RH / 2, x2 = x(st.start), y2 = pos[r.t.id] * RH + RH / 2;
+      const mid = Math.max(x1 + 8, x2 - 8);
+      paths += `<path d="M${x1},${y1} H${mid} V${y2} H${x2 - 2}" fill="none" stroke="${taskDone(b) ? "#9ca3af" : "#d23c3c"}" stroke-width="1.5" marker-end="url(#gtArrow)"/>`;
+    });
+  });
+  const H = rows.length * RH;
+  const weekends = dw >= 6 ? Array.from({ length: nDays }, (_, i) => { const d = new Date(gtAddDays(min, i) + "T12:00:00").getDay(); return d === 0 || d === 6 ? `<div class="gt-we" style="left:${i * dw}px;width:${dw}px;height:${H}px"></div>` : ""; }).join("") : "";
+  return `<div class="gt-wrap"><div class="gt-left" style="width:${LW}px"><div class="gt-corner"></div>${labels}</div>
+    <div class="gt-scroll"><div class="gt-canvas" style="width:${W}px;height:${H + 44}px">
+      <div class="gt-months" style="width:${W}px">${months}</div><div class="gt-days" style="width:${W}px">${days}</div>
+      <div class="gt-body" style="height:${H}px">${weekends}<div class="gt-today" style="left:${x(today)}px;height:${H}px"></div>${bars}
+        <svg class="gt-svg" width="${W}" height="${H}"><defs><marker id="gtArrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d23c3c"/></marker></defs>${paths}</svg></div>
+    </div></div></div>
+    <div class="muted" style="font-size:12px;margin-top:8px">${dated.length} tâche${dated.length > 1 ? "s" : ""} datée${dated.length > 1 ? "s" : ""}${undated.length ? ` · ${undated.length} sans date (donne un début et une durée, ou une échéance)` : ""} · barres : gris à faire, bleu en cours, orange en attente, vert terminée, liseré rouge en retard · ◆ jalon · flèches : dépendances.</div>`;
+}
+function renderProjectChrono(m) {
+  ensureTaskKeys();
+  const ts = projectTasks(m);
+  return `<div class="inline" style="margin-bottom:10px;flex-wrap:wrap"><span class="muted" style="font-size:13px">Chaque tâche datée sur une frise, avec ses dépendances. Clique une barre pour ouvrir la fiche.</span><span class="grow"></span><button class="btn ghost small" data-share-project="${m.id}">${icon("external")} Partager le planning</button></div>${renderGantt(ts, {})}`;
+}
+// ---- Partage : texte d'une tâche ou d'un planning de projet, à copier ou envoyer par mail ----
+function taskShareText(t) {
+  const m = t.missionId ? findMission(t.missionId) : null, sp = taskSpan(t), subs = subtasksOf(t), blk = (t.blockedBy || []).map((id) => state.tasks.find((x) => x.id === id)).filter(Boolean);
+  const l = [];
+  l.push(`${t.key ? t.key + " · " : ""}${t.title || "Sans titre"}`);
+  l.push([m ? "Projet : " + (m.title || "") : "", "Statut : " + taskStatusLabel(t.status || "aFaire"), "Priorité : " + taskPriority(t)[1], t.type && t.type !== "tache" ? "Type : " + (TASK_TYPES.find((x) => x[0] === t.type) || ["", t.type])[1] : ""].filter(Boolean).join(" · "));
+  l.push([t.dueDate ? "Échéance : " + fmtDate(t.dueDate) : "", sp && sp.start !== t.dueDate ? "Début : " + fmtDate(sp.start) : "", t.durationDays ? "Durée : " + t.durationDays + " j" : "", t.estimationMin ? "Estimation : " + fmtEstim(t.estimationMin) : "", "En charge : " + (t.assignee || "Moi")].filter(Boolean).join(" · "));
+  if (t.notes) l.push("", t.notes.trim());
+  if (subs.length) { l.push("", "Sous-tâches :"); subs.forEach((x) => l.push(`- [${taskDone(x) ? "x" : " "}] ${x.title || "Sans titre"}${x.dueDate ? " (" + fmtDate(x.dueDate) + ")" : ""}`)); }
+  if (blk.length) l.push("", "Bloquée par : " + blk.map((b) => (b.key ? b.key + " " : "") + (b.title || "")).join(", "));
+  if (taskLabels(t).length) l.push("", "Étiquettes : " + taskLabels(t).join(", "));
+  return l.join("\n");
+}
+function projectShareText(m) {
+  const ts = sortTasks(projectTasks(m).filter((t) => !taskDone(t)));
+  const l = [`${m.title || "Projet"} — planning au ${fmtDate(todayISO())}`];
+  if (m.summary) l.push(m.summary.trim());
+  const p = projectProgress(m); if (p != null) l.push(`Avancement : ${p} % · ${projectTasks(m).filter(taskDone).length}/${projectTasks(m).length} tâches terminées`);
+  l.push("");
+  backlogGroups(ts).forEach((g) => { l.push(`${g.label}${g.sub ? " (" + g.sub + ")" : ""} :`); g.items.forEach((t) => l.push(`- [ ] ${t.key ? t.key + " " : ""}${t.title || "Sans titre"}${t.dueDate ? " — " + fmtDate(t.dueDate) : ""}${t.assignee ? " (" + t.assignee + ")" : ""}${taskBlockers(t).length ? " · bloquée" : ""}`)); l.push(""); });
+  return l.join("\n").trim();
+}
+function openShareDialog(title, text, subject) {
+  showModal(`<div class="modal-head"><strong class="grow">${esc(title)}</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <textarea class="tk-notes" data-share-text rows="12" readonly>${esc(text)}</textarea>
+    <div class="inline" style="margin-top:10px;gap:8px;flex-wrap:wrap"><button class="btn small" data-share-copy>Copier</button><a class="btn secondary small" href="mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}">${icon("mail")} Envoyer par mail</a>${navigator.share ? `<button class="btn ghost small" data-share-native>Partager…</button>` : ""}<span class="muted" style="font-size:12px">Texte brut : Messages, WhatsApp, Slack ou un document.</span></div>`);
+  document.querySelector("[data-modal-close]").onclick = closeModal;
+  document.querySelector("[data-share-copy]").onclick = () => { try { navigator.clipboard.writeText(text); toast("Copié"); } catch (e) { alert("Copie impossible sur cet appareil."); } };
+  const nat = document.querySelector("[data-share-native]"); if (nat) nat.onclick = () => { try { navigator.share({ title: subject, text }); } catch (e) {} };
 }
 // Pastilles communes (clé, priorité, verrou, sous-tâches, étiquettes) pour les listes et le kanban.
 function taskBadges(t, compact) {
@@ -2162,7 +2272,7 @@ function renderMissionDetail(id) {
         <button class="btn" data-project-timer="${m.id}">▶ Suivi du projet</button>
         <span class="muted" style="font-size:13px">Temps total : <span class="timer" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span> · cette semaine : ${fmtDuration(projectWeekSeconds(m))}</span></div>`;
   const tabs = PROJECT_TABS.map(([tid, lbl]) => `<button class="chip ${projectTab === tid ? "active" : ""}" data-projtab="${tid}">${lbl}</button>`).join("");
-  const body = projectTab === "gestion" ? renderProjectGestion(m) : projectTab === "courrier" ? renderProjectCourrier(m) : renderProjectResume(m);
+  const body = projectTab === "gestion" ? renderProjectGestion(m) : projectTab === "chrono" ? renderProjectChrono(m) : projectTab === "courrier" ? renderProjectCourrier(m) : renderProjectResume(m);
   return `<button class="back" data-back>‹ Projets</button>
     <div class="toolbar">
       <input class="grow" data-bind="missions|${m.id}|title" value="${esc(m.title)}" placeholder="Intitulé du projet" style="font-size:21px;font-weight:700"/>
@@ -2174,6 +2284,36 @@ function renderMissionDetail(id) {
 }
 
 // ---- Résumé ----
+// Vue d'ensemble façon « Résumé » Jira : répartition, flux sur 30 jours, charge, échéances, activité récente.
+function renderProjectOverview(m, ts) {
+  if (!ts.length) return "";
+  ensureTaskKeys();
+  const since = Date.now() - 30 * 864e5, sinceISO = new Date(since).toISOString();
+  const open = ts.filter((t) => !taskDone(t));
+  const byStatus = TASK_STATUSES.map((st) => ({ st, n: ts.filter((t) => (t.status || "aFaire") === st.code).length })).filter((x) => x.n);
+  const byPr = TASK_PRIORITIES.map((p) => ({ p, n: open.filter((t) => (t.priority || "moyenne") === p[0]).length })).filter((x) => x.n);
+  const created30 = ts.filter((t) => (t.createdAt || 0) >= since).length;
+  const done30 = ts.filter((t) => taskDone(t) && (t.history || []).some((h) => h.field === "status" && h.to === "termine" && h.at >= sinceISO)).length;
+  const restMin = open.reduce((a, t) => a + (Number(t.estimationMin) || 0), 0), estAll = ts.reduce((a, t) => a + (Number(t.estimationMin) || 0), 0);
+  const spent = missionTotal(m);
+  const who = {}; open.forEach((t) => { const k = t.assignee || "Moi"; who[k] = (who[k] || 0) + 1; });
+  const soon = sortTasks(open.filter((t) => t.dueDate && daysUntil(t.dueDate) >= 0 && daysUntil(t.dueDate) <= 7));
+  const acts = [];
+  ts.forEach((t) => { (t.history || []).forEach((h) => acts.push({ at: h.at, t, txt: `${taskFieldLabel(h.field)} : ${taskHistoryValue(h.field, h.from)} → ${taskHistoryValue(h.field, h.to)}` })); (t.comments || []).forEach((c) => acts.push({ at: c.at, t, txt: "💬 " + c.text })); });
+  acts.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  const bar = (parts, total) => `<div class="ov-bar">${parts.map((x) => `<div style="width:${Math.max(2, 100 * x.n / total)}%;background:${x.c}" title="${esc(x.l)} : ${x.n}"></div>`).join("")}</div><div class="ov-legend">${parts.map((x) => `<span><i style="background:${x.c}"></i>${esc(x.l)} ${x.n}</span>`).join("")}</div>`;
+  const kpi = (v, l) => `<div class="kpi" style="cursor:default"><span class="kpi-val">${v}</span><span class="kpi-label">${l}</span></div>`;
+  return `<div class="section-h">Vue d'ensemble</div>
+    <div class="kpi-grid">
+      ${kpi(open.length, "tâches ouvertes")}${kpi(created30, "créées sur 30 jours")}${kpi(done30, "terminées sur 30 jours")}
+      ${kpi(restMin ? fmtEstim(restMin) : "—", "charge restante estimée")}${kpi(`${fmtDurationShort(spent) || "0"}${estAll ? ` <span class="muted" style="font-size:13px">/ ${esc(fmtEstim(estAll))} estimé</span>` : ""}`, "temps passé")}
+      ${kpi(Object.keys(who).map((k) => `${esc(k)} ${who[k]}`).join(" · ") || "—", "ouvertes par personne")}
+    </div>
+    <div class="dash-cols"><div class="card"><div class="muted" style="font-size:12px;margin-bottom:6px">Par statut</div>${bar(byStatus.map((x) => ({ l: x.st.label, n: x.n, c: GANTT_COLORS[x.st.code] })), ts.length)}</div>
+      <div class="card"><div class="muted" style="font-size:12px;margin-bottom:6px">Ouvertes par priorité</div>${byPr.length ? bar(byPr.map((x) => ({ l: x.p[1], n: x.n, c: x.p[2] })), open.length) : '<div class="muted" style="font-size:13px">Rien d\'ouvert.</div>'}</div></div>
+    <div class="dash-cols"><div class="card"><div class="muted" style="font-size:12px;margin-bottom:6px">Échéances sous 7 jours</div>${soon.length ? soon.map((t) => `<div class="brief-row" data-open-task="${t.id}"><span class="tk-key">${esc(t.key || "")}</span><span class="brief-main">${esc(t.title || "")}</span><span class="muted" style="font-size:12px">${esc(fmtDate(t.dueDate))}</span></div>`).join("") : '<div class="muted" style="font-size:13px">Aucune.</div>'}</div>
+      <div class="card"><div class="muted" style="font-size:12px;margin-bottom:6px">Activité récente</div>${acts.slice(0, 8).map((a) => `<div class="ov-act" data-open-task="${a.t.id}"><span class="muted">${esc(fmtDateTimeISO(a.at))}</span> <span class="tk-key">${esc(a.t.key || "")}</span> ${esc(a.txt)}</div>`).join("") || '<div class="muted" style="font-size:13px">Rien encore.</div>'}</div></div>`;
+}
 function renderProjectResume(m) {
   const ts = projectTasks(m);
   const done = ts.filter(taskDone).length;
@@ -2196,6 +2336,7 @@ function renderProjectResume(m) {
       ${stat(mails, "fils de correspondance")}
     </div>
     ${prog != null ? `<div class="pm-bar" style="margin:8px 0 14px"><div class="pm-bar-fill" style="width:${prog}%"></div></div>` : ""}
+    ${renderProjectOverview(m, ts)}
     <div class="card">
       <label class="field"><span>Société</span>${companySelect(`missions|${m.id}|companyId`, m.companyId)}</label>
       <label class="field"><span>Date de démarrage</span><input type="date" data-bind="missions|${m.id}|startDate" data-rerender value="${esc(missionStart(m))}"/></label>
@@ -6340,9 +6481,10 @@ function renderTasks() {
   const legend = `<div class="dl-legend"><span class="muted">Échéance :</span>
     <span class="dl-grad"></span>
     <span class="muted" style="font-size:12px">lointaine → imminente</span></div>`;
-  const modes = `<div class="chip-row" style="margin-bottom:10px">${[["backlog", "Backlog"], ["kanban", "Kanban"]].map(([k, l]) => `<button class="chip ${taskViewMode === k ? "active" : ""}" data-task-view="${k}">${l}</button>`).join("")}</div>`;
+  const modes = `<div class="chip-row" style="margin-bottom:10px">${[["backlog", "Backlog"], ["kanban", "Kanban"], ["chrono", "Chronologie"]].map(([k, l]) => `<button class="chip ${taskViewMode === k ? "active" : ""}" data-task-view="${k}">${l}</button>`).join("")}</div>`;
   const body = taskViewMode === "kanban"
     ? `${legend}<div class="muted" style="font-size:12px;margin-bottom:10px">Colonnes classées par échéance la plus proche · glisse une carte (⠿) ou utilise ‹ › pour la déplacer.</div><div class="kb-board">${cols}</div>`
+    : taskViewMode === "chrono" ? renderGantt(state.tasks.filter(taskMatchesFilter), { byProject: true })
     : renderTaskBacklog();
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tâches</div>
       <button class="btn" data-add-task="aFaire">+ Nouvelle tâche</button></div>
@@ -6403,13 +6545,15 @@ function renderTaskDetail(id) {
         <label class="field"><span>En charge</span><input list="assigneeList" data-tfield="assignee" data-t="${t.id}" value="${esc(t.assignee || "")}" placeholder="Moi"/><datalist id="assigneeList"><option value="Moi"></option>${state.contacts.map((c) => `<option value="${esc(contactName(c))}"></option>`).join("")}</datalist></label>
         <label class="field"><span>Échéance</span><input type="date" data-tfield="dueDate" data-t="${t.id}" value="${esc(t.dueDate || "")}"/></label>
         <div class="pm-dl" style="color:${di.muted ? "var(--muted)" : di.color};margin:-4px 0 8px">${di.muted ? "" : "⬤ "}${esc(di.label)}</div>
+        <div class="inline" style="gap:8px;align-items:flex-start"><label class="field grow"><span>Début</span><input type="date" data-tfield="startDate" data-t="${t.id}" value="${esc(t.startDate || "")}"/></label><label class="field" style="width:110px"><span>Durée (jours)</span><input type="number" min="0" step="1" data-tfield="durationDays" data-t="${t.id}" value="${t.durationDays || ""}"/></label></div>
+        ${taskSpan(t) && taskSpan(t).days > 1 ? `<div class="muted" style="font-size:12px;margin:-4px 0 8px">Du ${esc(fmtDate(taskSpan(t).start))} au ${esc(fmtDate(taskSpan(t).end))} · ${taskSpan(t).days} jours</div>` : ""}
         <label class="field"><span>Estimation (minutes)</span><input type="number" min="0" step="5" data-tfield="estimationMin" data-t="${t.id}" value="${t.estimationMin || ""}"/></label>
         <label class="field"><span>Avancement</span><select data-taskprog="${t.id}">${[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((v) => `<option value="${v}" ${v === p || (p > 0 && v === Math.round(p / 10) * 10 && v !== 100 && !done) ? "selected" : ""}>${v} %</option>`).join("")}</select></label>
         <div class="pm-bar" style="margin:-4px 0 10px"><div class="pm-bar-fill" style="width:${p}%"></div></div>
         <label class="field"><span>Étiquettes (séparées par des virgules)</span><input data-tlabels="${t.id}" value="${esc(taskLabels(t).join(", "))}" placeholder="urgent, client, admin…"/></label>
         ${m ? `<div class="inline" style="margin-top:4px"><span class="muted" style="font-size:13px">Temps passé : <span class="timer ${running ? "running" : ""}">${secs ? fmtDurationShort(secs) : "—"}</span></span><span class="grow"></span><button class="btn ${running ? "danger" : "secondary"} small" data-task-timer="${t.id}" data-m="${m.id}">${running ? "■ Arrêter" : "▶ Chrono"}</button></div>` : ""}
         <div class="muted" style="font-size:12px;margin-top:12px">Créée le ${esc(fmtDate(new Date(t.createdAt || Date.now()).toISOString().slice(0, 10)))}</div>
-        <div style="margin-top:14px" class="inline"><button class="btn ghost small" data-task-clone="${t.id}">Dupliquer</button><span class="grow"></span><button class="btn danger small" data-del-task="${t.id}">Supprimer</button></div>
+        <div class="inline" style="margin-top:14px;flex-wrap:wrap;gap:8px"><button class="btn secondary small" data-share-task="${t.id}">${icon("external")} Partager</button><button class="btn ghost small" data-task-clone="${t.id}">Dupliquer</button><span class="grow"></span><button class="btn danger small" data-del-task="${t.id}">Supprimer</button></div>
       </div>
     </div>`;
 }
@@ -7866,7 +8010,7 @@ function wire() {
   c.querySelectorAll("[data-taskdue]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskdue); if (t) { setTaskField(t, "dueDate", el.value); save(); render(); } });
   c.querySelectorAll("[data-task-status]").forEach((sel) => sel.onchange = () => { const t = state.tasks.find((x) => x.id === sel.dataset.taskStatus); if (t) { setTaskField(t, "status", sel.value); save(); render(); } });
   // Fiche tâche
-  c.querySelectorAll("[data-tfield]").forEach((el) => { const h = () => { const t = state.tasks.find((x) => x.id === el.dataset.t); if (!t) return; const f = el.dataset.tfield; const v = f === "estimationMin" ? (Math.round(Number(el.value)) || null) : el.value; if (setTaskField(t, f, v)) { save(); if (f !== "title" && f !== "notes") render(); } }; el.addEventListener("change", h); if (el.tagName !== "TEXTAREA" && el.type !== "date") el.addEventListener("blur", h); });
+  c.querySelectorAll("[data-tfield]").forEach((el) => { const h = () => { const t = state.tasks.find((x) => x.id === el.dataset.t); if (!t) return; const f = el.dataset.tfield; const v = (f === "estimationMin" || f === "durationDays") ? (Math.round(Number(el.value)) || null) : el.value; if (setTaskField(t, f, v)) { save(); if (f !== "title" && f !== "notes") render(); } }; el.addEventListener("change", h); if (el.tagName !== "TEXTAREA" && el.type !== "date") el.addEventListener("blur", h); });
   c.querySelectorAll("[data-tsel]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.t); if (!t) return; const f = el.dataset.tsel, v = el.value || (f === "missionId" || f === "parentId" ? null : el.value); if (f === "missionId" && v !== t.missionId) { t.key = ""; } setTaskField(t, f, v); if (f === "missionId") ensureTaskKeys(); save(); render(); });
   c.querySelectorAll("[data-tlabels]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.tlabels); if (!t) return; t.labels = el.value.split(",").map((x) => x.trim()).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i); save(); render(); });
   c.querySelectorAll("[data-sub-add]").forEach((b) => b.onclick = () => { const t = state.tasks.find((x) => x.id === b.dataset.subAdd); const inp = c.querySelector(`[data-sub-title="${b.dataset.subAdd}"]`); if (!t || !inp || !inp.value.trim()) return; newTaskLike(t, { title: inp.value.trim(), parentId: t.id, dueDate: t.dueDate || "" }); save(); render(); });
@@ -7874,6 +8018,8 @@ function wire() {
   c.querySelectorAll("[data-block-pick]").forEach((sel) => sel.onchange = () => { const t = state.tasks.find((x) => x.id === sel.dataset.blockPick); if (!t || !sel.value) return; t.blockedBy = (t.blockedBy || []).concat(sel.value).filter((x, i, a) => a.indexOf(x) === i); logTask(t, "blockedBy", "", sel.value); save(); render(); });
   c.querySelectorAll("[data-unblock]").forEach((b) => b.onclick = () => { const t = state.tasks.find((x) => x.id === b.dataset.t); if (!t) return; t.blockedBy = (t.blockedBy || []).filter((x) => x !== b.dataset.unblock); save(); render(); });
   c.querySelectorAll("[data-comment-add]").forEach((b) => b.onclick = () => { const t = state.tasks.find((x) => x.id === b.dataset.commentAdd); const ta = c.querySelector(`[data-comment-text="${b.dataset.commentAdd}"]`); if (!t || !ta || !ta.value.trim()) return; t.comments = (t.comments || []).concat({ id: uid(), at: new Date().toISOString(), text: ta.value.trim() }); save(); render(); });
+  c.querySelectorAll("[data-share-task]").forEach((b) => b.onclick = () => { const t = state.tasks.find((x) => x.id === b.dataset.shareTask); if (t) openShareDialog("Partager la tâche", taskShareText(t), `${t.key ? t.key + " · " : ""}${t.title || "Tâche"}`); });
+  c.querySelectorAll("[data-share-project]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.shareProject); if (m) openShareDialog("Partager le planning", projectShareText(m), `${m.title || "Projet"} — planning`); });
   c.querySelectorAll("[data-task-clone]").forEach((b) => b.onclick = () => { const t = state.tasks.find((x) => x.id === b.dataset.taskClone); if (!t) return; const n = newTaskLike(t, { title: (t.title || "") + " (copie)", priority: t.priority || "moyenne", labels: taskLabels(t).slice(), notes: t.notes || "", estimationMin: t.estimationMin || null, dueDate: t.dueDate || "", parentId: t.parentId || null }); save(); openDetail("tasks", n.id); });
   c.querySelectorAll("[data-tkf]").forEach((el) => { const h = () => { taskFilter[el.dataset.tkf] = el.value; render(); const again = document.querySelector(`[data-tkf="${el.dataset.tkf}"]`); if (again && el.dataset.tkf === "q") { again.focus(); again.setSelectionRange(again.value.length, again.value.length); } }; el.addEventListener("change", h); if (el.dataset.tkf === "q") el.addEventListener("input", h); });
   c.querySelectorAll("[data-tkf-clear]").forEach((b) => b.onclick = () => { taskFilter = { q: "", mission: "", priority: "", label: "", assignee: "" }; render(); });
