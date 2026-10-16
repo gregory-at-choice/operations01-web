@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v133";
+const APP_VERSION = "v134";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -126,6 +126,8 @@ function stampChanges(st, now) {
   eachRecord(st, (key, r) => { const s = sigOf(r); next[key] = s; if (stampIndex[key] !== s) r._t = now; });
   stampIndex = next;
 }
+// Anciennes versions : le drapeau « déplié » était enregistré dans l'élément ; on l'oublie.
+state.missions.forEach((m) => (m.entries || []).forEach((e) => { if (e && "_open" in e) delete e._open; }));
 rebuildStampIndex(state);
 // « Avancement » d'une fiche sans date (écrite par une ancienne version de
 // l'app) : le temps ne fait que s'accumuler, une tâche ne fait qu'avancer, une
@@ -3997,18 +3999,22 @@ function renderProjectCourrier(m) {
     ${body}${manual}`;
 }
 
+// Cartes de l'historique : toutes fermées à l'ouverture de l'app ; l'état déplié ne vit que le temps de
+// la session (jamais enregistré, jamais synchronisé).
+const entryOpen = {};
 function renderEntry(mid, e) {
   const k = kindMeta(e.kind), running = !!e.timerStartedAt;
   const urlLink = validURL(e.url) ? `<a class="btn ghost small" href="${esc(e.url)}" target="_blank" rel="noopener">↗ Ouvrir</a>` : (e.url ? '<span class="muted" style="font-size:13px">Lien invalide</span>' : "");
   const kindOpts = KINDS.map((x) => `<option value="${x.code}" ${x.code === e.kind ? "selected" : ""}>${x.ic} ${x.label}</option>`).join("");
-  return `<div class="entry ${running ? "running" : ""} ${e._open ? "open" : ""}">
+  const isOpen = !!entryOpen[e.id];
+  return `<div class="entry ${running ? "running" : ""} ${isOpen ? "open" : ""}">
     <div class="entry-head" data-toggle="${e.id}" data-m="${mid}">
       <span class="ic">${k.ic}</span>
       <div class="grow"><div class="r-title">${esc(e.title || k.label)}</div>
         <div class="r-sub">${k.label} · ${fmtDate(e.date)}${!running && entryElapsed(e) > 0 ? ` · ⏱ <span class="timer" data-entry-time="${e.id}">${fmtDuration(entryElapsed(e))}</span>` : ""}${running ? ' · <span class="entry-dot"></span> chrono en cours' : ""}</div></div>
       ${running ? `<div class="entry-big"><span class="timer running" data-entry-time="${e.id}">${fmtDuration(entryElapsed(e))}</span><button class="btn danger small" data-timer="${e.id}" data-m="${mid}">■ Arrêter</button></div>` : ""}
-      <span class="muted">${e._open ? "▾" : "▸"}</span></div>
-    <div class="entry-body" style="display:${e._open ? "block" : "none"}">
+      <span class="muted">${isOpen ? "▾" : "▸"}</span></div>
+    <div class="entry-body" style="display:${isOpen ? "block" : "none"}">
       <label class="field"><span>Type</span><select data-efield="kind" data-m="${mid}" data-e="${e.id}">${kindOpts}</select></label>
       <label class="field"><span>Titre</span><input data-efield="title" data-m="${mid}" data-e="${e.id}" value="${esc(e.title)}"/></label>
       <label class="field"><span>Date</span><input type="date" data-efield="date" data-m="${mid}" data-e="${e.id}" value="${esc(e.date || todayISO())}"/></label>
@@ -7953,8 +7959,8 @@ function wire() {
   c.querySelectorAll("[data-reset]").forEach((b) => b.onclick = () => { if (confirm("Effacer TOUTES les données de la web app ? (irréversible)")) { state = blankState(); save(); go("missions"); } });
 
   // entrées d'historique
-  c.querySelectorAll("[data-add-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); if (!m) return; m.entries.push({ id: uid(), kind: b.dataset.addEntry, title: "", content: "", date: todayISO(), url: "", accumulatedSeconds: 0, timerStartedAt: null, createdAt: Date.now(), _open: true }); save(); render(); });
-  c.querySelectorAll("[data-toggle]").forEach((h) => h.onclick = (ev) => { if (ev.target.closest("a,button,input,select,textarea")) return; const m = findMission(h.dataset.m); const e = findEntry(m, h.dataset.toggle); if (e) { e._open = !e._open; render(); } });
+  c.querySelectorAll("[data-add-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); if (!m) return; m.entries.push({ id: uid(), kind: b.dataset.addEntry, title: "", content: "", date: todayISO(), url: "", accumulatedSeconds: 0, timerStartedAt: null, createdAt: Date.now() }); entryOpen[m.entries[m.entries.length - 1].id] = true; save(); render(); });
+  c.querySelectorAll("[data-toggle]").forEach((h) => h.onclick = (ev) => { if (ev.target.closest("a,button,input,select,textarea")) return; const m = findMission(h.dataset.m); const e = findEntry(m, h.dataset.toggle); if (e) { entryOpen[e.id] = !entryOpen[e.id]; render(); } });
   c.querySelectorAll("[data-efield]").forEach((el) => { const h = () => { const m = findMission(el.dataset.m); const e = findEntry(m, el.dataset.e); if (!e) return; e[el.dataset.efield] = el.value; save(); if (el.dataset.efield === "kind") render(); }; el.addEventListener("change", h); el.addEventListener("blur", h); });
   c.querySelectorAll("[data-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.timer); if (!e) return; if (e.timerStartedAt) { e.accumulatedSeconds = (e.accumulatedSeconds || 0) + (Date.now() - e.timerStartedAt) / 1000; e.timerStartedAt = null; } else { e.timerStartedAt = Date.now(); } save(); render(); });
 
