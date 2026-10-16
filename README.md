@@ -221,7 +221,10 @@ recherche (clé, intitulé, notes), projet, priorité, étiquette, personne.
   projet est la même que celle des Tâches : barre de filtres, bouton « + Tâche », mêmes barres.
 - **Charge répartie** : l'estimation d'une tâche étalée sur plusieurs jours se distribue à parts égales
   sur chaque jour de son étendue (6 jours à 120 min, début lundi : 20 min du lundi au samedi). Le Gantt
-  l'affiche (« 20 min/j »), le Planning liste la tâche chaque jour avec sa part (« 20 min ce jour »,
+  l'affiche dans la barre ou juste à sa droite quand elle est étroite (« 1 h · 20 min/j »), et sa ligne
+  **Charge par jour**, sous l'échelle, donne le total des estimations des tâches ouvertes affichées pour
+  chaque jour (texte par jour à l'échelle jour, total de la semaine à l'échelle resserrée, total général
+  dans le coin). Le Planning liste la tâche chaque jour avec sa part (« 20 min ce jour »,
   « échéance » le dernier jour) et affiche la charge estimée en tête de journée, la to-do du jour et
   le brief vocal la comptent dans « Travail du jour » pour sa part seulement.
 - **Résumé de projet** : vue d'ensemble en tête de l'onglet Résumé : ouvertes, créées et terminées sur

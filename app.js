@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v136";
+const APP_VERSION = "v137";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2137,8 +2137,26 @@ function renderGantt(tasks, opts) {
     const bar = t.type === "jalon"
       ? `<div class="gt-ms" data-open-task="${t.id}" style="left:${x(sp.end) + dw / 2 - 8}px;background:${late ? "#d23c3c" : col}" title="${esc(t.title)} · ${esc(fmtDate(sp.end))}"></div>`
       : `<div class="gt-bar ${late ? "late" : ""}" data-open-task="${t.id}" style="left:${left}px;width:${width}px;background:${col}" title="${esc(t.title)} · ${esc(fmtDate(sp.start))}${sp.days > 1 ? " → " + esc(fmtDate(sp.end)) : ""}${p ? " · " + p + " %" : ""}${t.estimationMin ? " · " + esc(fmtEstim(t.estimationMin)) + (taskIsMultiDay(t) ? " soit " + esc(fmtEstim(taskDailyLoad(t))) + " par jour" : "") : ""}"><div class="gt-fill" style="width:${p}%"></div>${width > 60 ? `<span class="gt-bt">${esc(t.title || "")}${t.estimationMin && taskIsMultiDay(t) && width > 160 ? ` <span style="opacity:.85">· ${esc(fmtEstim(taskDailyLoad(t)))}/j</span>` : ""}</span>` : ""}</div>`;
-    return `<div class="gt-row" style="top:${i * RH}px;height:${RH}px;width:${W}px">${bar}</div>`;
+    // Estimation lisible même quand la barre est étroite : total, et part par jour pour une tâche étalée, à droite de la barre.
+    const estTxt = t.type !== "jalon" && !done && t.estimationMin ? (taskIsMultiDay(t) ? `${fmtEstim(t.estimationMin)} · ${fmtEstim(taskDailyLoad(t))}/j` : fmtEstim(t.estimationMin)) : "";
+    const after = estTxt && !(width > 160 && taskIsMultiDay(t)) ? `<span class="gt-after" style="left:${left + width + 6}px">${esc(estTxt)}</span>` : "";
+    return `<div class="gt-row" style="top:${i * RH}px;height:${RH}px;width:${W}px">${bar}${after}</div>`;
   }).join("");
+  // Ligne « Charge par jour » : total des estimations des tâches affichées encore ouvertes, part du jour pour les tâches étalées.
+  const LH = 36, loads = Array.from({ length: nDays }, (_, i) => tasks.reduce((a, t) => a + taskLoadOn(t, gtAddDays(min, i)), 0)), maxLoad = Math.max(1, ...loads);
+  const compact = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? String(m % 60).padStart(2, "0") : ""}` : `${m}m`);
+  let loadHtml = "";
+  for (let i = 0; i < nDays; i++) {
+    const iso = gtAddDays(min, i), d = new Date(iso + "T12:00:00");
+    if (loads[i]) loadHtml += `<div class="gt-ld ${iso === today ? "today" : ""}" style="left:${i * dw}px;width:${dw}px" title="${esc(fmtDate(iso))} : ${esc(fmtEstim(loads[i]))}"><div class="gt-ldb" style="height:${Math.max(3, Math.round(14 * loads[i] / maxLoad))}px"></div>${dw >= 24 ? `<span>${compact(loads[i])}</span>` : ""}</div>`;
+    if (dw < 24 && 7 * dw >= 40 && (d.getDay() === 1 || i === 0)) {
+      // Échelle resserrée : le total de la semaine (lundi → dimanche) en toutes lettres au-dessus des jours.
+      const span = Math.min(nDays - i, d.getDay() === 1 ? 7 : (8 - d.getDay()) % 7 || 7);
+      const wk = loads.slice(i, i + span).reduce((a, b) => a + b, 0);
+      if (wk) loadHtml += `<div class="gt-lw" style="left:${i * dw}px;width:${span * dw}px" title="Semaine du ${esc(fmtDate(iso))} : ${esc(fmtEstim(wk))}">${compact(wk)}</div>`;
+    }
+  }
+  const totalLoad = loads.reduce((a, b) => a + b, 0);
   let paths = "";
   rows.forEach((r) => {
     if (!r.t) return;
@@ -2152,13 +2170,13 @@ function renderGantt(tasks, opts) {
   });
   const H = rows.length * RH;
   const weekends = dw >= 6 ? Array.from({ length: nDays }, (_, i) => { const d = new Date(gtAddDays(min, i) + "T12:00:00").getDay(); return d === 0 || d === 6 ? `<div class="gt-we" style="left:${i * dw}px;width:${dw}px;height:${H}px"></div>` : ""; }).join("") : "";
-  return `<div class="gt-wrap"><div class="gt-left" style="width:${LW}px"><div class="gt-corner"></div>${labels}</div>
-    <div class="gt-scroll"><div class="gt-canvas" style="width:${W}px;height:${H + 44}px">
-      <div class="gt-months" style="width:${W}px">${months}</div><div class="gt-days" style="width:${W}px">${days}</div>
+  return `<div class="gt-wrap"><div class="gt-left" style="width:${LW}px"><div class="gt-corner" style="height:${44 + LH}px"><span class="gt-ldlab" title="Total des estimations des tâches ouvertes affichées, part du jour pour les tâches étalées${totalLoad ? " · total " + esc(fmtEstim(totalLoad)) : ""}">${icon("clock")} Charge par jour${totalLoad ? ` <span class="muted">· ${esc(fmtEstim(totalLoad))}</span>` : ""}</span></div>${labels}</div>
+    <div class="gt-scroll"><div class="gt-canvas" style="width:${W}px;height:${H + 44 + LH}px">
+      <div class="gt-months" style="width:${W}px">${months}</div><div class="gt-days" style="width:${W}px">${days}</div><div class="gt-load" style="width:${W}px;height:${LH}px">${loadHtml}</div>
       <div class="gt-body" style="height:${H}px">${weekends}<div class="gt-today" style="left:${x(today)}px;height:${H}px"></div>${bars}
         <svg class="gt-svg" width="${W}" height="${H}"><defs><marker id="gtArrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d23c3c"/></marker></defs>${paths}</svg></div>
     </div></div></div>
-    <div class="muted" style="font-size:12px;margin-top:8px">${dated.length} tâche${dated.length > 1 ? "s" : ""} datée${dated.length > 1 ? "s" : ""}${undated.length ? ` · ${undated.length} sans date (donne un début et une durée, ou une échéance)` : ""} · barres : gris à faire, bleu en cours, orange en attente, vert terminée, liseré rouge en retard · ◆ jalon · flèches : dépendances.</div>`;
+    <div class="muted" style="font-size:12px;margin-top:8px">${dated.length} tâche${dated.length > 1 ? "s" : ""} datée${dated.length > 1 ? "s" : ""}${undated.length ? ` · ${undated.length} sans date (donne un début et une durée, ou une échéance)` : ""} · barres : gris à faire, bleu en cours, orange en attente, vert terminée, liseré rouge en retard · ◆ jalon · flèches : dépendances · ligne Charge par jour : estimations des tâches ouvertes affichées, part du jour pour les tâches étalées.</div>`;
 }
 function renderProjectChrono(m) {
   ensureTaskKeys();

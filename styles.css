@@ -829,3 +829,14 @@ label.field.inline-check > span { margin-bottom: 0; }
 @media (max-width: 640px) { .entry-big .timer { font-size: 24px; } .entry.running.open .entry-big .timer { font-size: 30px; } .entry-big { gap: 8px; } }
 .entry-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #d23c3c; vertical-align: middle; margin: 0 2px; animation: entryPulse 1.2s ease-in-out infinite; }
 @keyframes entryPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+/* v137 : estimation à droite des barres étroites, ligne « Charge par jour » sous l'échelle du Gantt */
+.gt-after { position: absolute; top: 6px; line-height: 18px; font-size: 11px; color: var(--muted); white-space: nowrap; pointer-events: none; z-index: 3; }
+.gt-corner { display: flex; align-items: flex-end; padding: 0 8px 6px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.gt-ldlab { display: inline-flex; align-items: center; gap: 4px; }
+.gt-ldlab svg { width: 12px; height: 12px; }
+.gt-load { position: relative; background: var(--bg); border-bottom: 1px solid var(--line); box-sizing: border-box; }
+.gt-ld { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line); box-sizing: border-box; text-align: center; font-size: 10px; line-height: 16px; white-space: nowrap; overflow: hidden; color: var(--text); }
+.gt-ld.today { color: #d23c3c; font-weight: 700; }
+.gt-ld span { position: absolute; left: 0; right: 0; top: 2px; }
+.gt-ldb { position: absolute; left: 2px; right: 2px; bottom: 0; background: var(--primary); opacity: .55; border-radius: 2px 2px 0 0; }
+.gt-lw { position: absolute; top: 2px; height: 16px; line-height: 16px; font-size: 10px; font-weight: 600; text-align: center; color: var(--text); white-space: nowrap; overflow: hidden; }
