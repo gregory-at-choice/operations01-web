@@ -840,3 +840,7 @@ label.field.inline-check > span { margin-bottom: 0; }
 .gt-ld span { position: absolute; left: 0; right: 0; top: 2px; }
 .gt-ldb { position: absolute; left: 2px; right: 2px; bottom: 0; background: var(--primary); opacity: .55; border-radius: 2px 2px 0 0; }
 .gt-lw { position: absolute; top: 2px; height: 16px; line-height: 16px; font-size: 10px; font-weight: 600; text-align: center; color: var(--text); white-space: nowrap; overflow: hidden; }
+/* v138 : échelle Jour / Semaine / Mois ; la frise remplit toute la largeur disponible */
+.gt-canvas, .gt-months, .gt-days, .gt-load { min-width: 100%; }
+.gt-row { right: 0; }
+.gt-ld.thin { border-left: none; }

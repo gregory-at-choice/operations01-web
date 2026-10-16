@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v137";
+const APP_VERSION = "v138";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2100,6 +2100,10 @@ function taskLoadOn(t, iso) { if (taskDone(t) || !(Number(t.estimationMin) || 0)
 function dayLoad(iso) { return state.tasks.reduce((a, t) => a + taskLoadOn(t, iso), 0); }
 const GANTT_COLORS = { termine: "#16a34a", enCours: "#2563eb", enAttente: "#d98c2b", aFaire: "#9ca3af" };
 // Chronologie (Gantt) : une ligne par tâche datée, barres par statut, jalons en losange, dépendances fléchées, trait « aujourd'hui ».
+// Échelle de la chronologie, mémorisée par appareil : Jour (28 px/jour), Semaine (12 px/jour), Mois (3 px/jour).
+const GT_SCALE_KEY = "op01_gt_scale";
+const GT_SCALES = [["jour", "Jour"], ["semaine", "Semaine"], ["mois", "Mois"]];
+let gtScale = (() => { try { const v = localStorage.getItem(GT_SCALE_KEY); return GT_SCALES.some((x) => x[0] === v) ? v : "semaine"; } catch (e) { return "semaine"; } })();
 function renderGantt(tasks, opts) {
   opts = opts || {};
   const today = todayISO();
@@ -2115,9 +2119,11 @@ function renderGantt(tasks, opts) {
     g.items.filter((t) => !t.parentId || !ids[t.parentId]).sort(byStart).forEach((t) => { rows.push({ t }); g.items.filter((x) => x.parentId === t.id).sort(byStart).forEach((x) => rows.push({ t: x, sub: true })); });
   });
   let min = dated.reduce((a, t) => (taskSpan(t).start < a ? taskSpan(t).start : a), today), max = dated.reduce((a, t) => (taskSpan(t).end > a ? taskSpan(t).end : a), today);
-  min = gtAddDays(min < gtAddDays(today, -7) ? min : gtAddDays(today, -7), -3); max = gtAddDays(max > gtAddDays(today, 21) ? max : gtAddDays(today, 21), 3);
+  // Fenêtre minimale autour d'aujourd'hui selon l'échelle, puis marge de part et d'autre.
+  const pad = gtScale === "jour" ? [7, 21, 3] : gtScale === "semaine" ? [14, 56, 7] : [31, 300, 15];
+  min = gtAddDays(min < gtAddDays(today, -pad[0]) ? min : gtAddDays(today, -pad[0]), -pad[2]); max = gtAddDays(max > gtAddDays(today, pad[1]) ? max : gtAddDays(today, pad[1]), pad[2]);
   const nDays = gtDaysBetween(min, max) + 1;
-  const dw = nDays <= 45 ? 28 : nDays <= 130 ? 12 : nDays <= 400 ? 6 : 3;
+  const dw = gtScale === "jour" ? 28 : gtScale === "semaine" ? 12 : 3;
   const x = (iso) => gtDaysBetween(min, iso) * dw;
   const RH = 30, LW = 220, W = nDays * dw;
   let months = "", days = "";
@@ -2125,22 +2131,22 @@ function renderGantt(tasks, opts) {
     const iso = gtAddDays(min, i), d = new Date(iso + "T12:00:00");
     if (d.getDate() === 1 || i === 0) { const end = new Date(d.getFullYear(), d.getMonth() + 1, 0); const span = Math.min(nDays - i, end.getDate() - d.getDate() + 1); months += `<div class="gt-month" style="left:${i * dw}px;width:${span * dw}px">${d.toLocaleDateString("fr-FR", span * dw > 110 ? { month: "long", year: "numeric" } : { month: span * dw > 70 ? "long" : "short" })}</div>`; }
     if (dw >= 12) days += `<div class="gt-day ${d.getDay() === 0 || d.getDay() === 6 ? "we" : ""} ${iso === today ? "today" : ""}" style="left:${i * dw}px;width:${dw}px">${dw >= 20 ? d.getDate() : (d.getDay() === 1 ? d.getDate() : "")}</div>`;
-    else if (d.getDay() === 1) days += `<div class="gt-day" style="left:${i * dw}px;width:${7 * dw}px">${d.getDate()}/${d.getMonth() + 1}</div>`;
+    else if (d.getDate() === 1 || d.getDate() === 15) days += `<div class="gt-day" style="left:${i * dw}px;width:${14 * dw}px">${d.getDate()}</div>`;
   }
   const pos = {}; rows.forEach((r, i) => { if (r.t) pos[r.t.id] = i; });
   const labels = rows.map((r) => r.head ? `<div class="gt-label gt-head" style="height:${RH}px"><span class="bl-dot" style="background:${r.color}"></span>${esc(r.head)}</div>`
     : `<div class="gt-label ${r.sub ? "sub" : ""} ${taskDone(r.t) ? "done" : ""}" style="height:${RH}px" data-open-task="${r.t.id}" title="${esc(r.t.title || "")}"><span class="tk-key">${esc(r.t.key || "")}</span><span class="gt-lt">${r.t.type === "jalon" ? "◆ " : ""}${esc(r.t.title || "Sans titre")}</span></div>`).join("");
   const bars = rows.map((r, i) => {
-    if (!r.t) return `<div class="gt-row gt-rowhead" style="top:${i * RH}px;height:${RH}px;width:${W}px"></div>`;
+    if (!r.t) return `<div class="gt-row gt-rowhead" style="top:${i * RH}px;height:${RH}px"></div>`;
     const t = r.t, sp = taskSpan(t), done = taskDone(t), late = !done && sp.end < today, col = GANTT_COLORS[t.status || "aFaire"] || GANTT_COLORS.aFaire;
-    const left = x(sp.start), width = Math.max(dw, sp.days * dw), p = taskProgress(t);
+    const left = x(sp.start), width = Math.max(dw, 6, sp.days * dw), p = taskProgress(t);
     const bar = t.type === "jalon"
       ? `<div class="gt-ms" data-open-task="${t.id}" style="left:${x(sp.end) + dw / 2 - 8}px;background:${late ? "#d23c3c" : col}" title="${esc(t.title)} · ${esc(fmtDate(sp.end))}"></div>`
       : `<div class="gt-bar ${late ? "late" : ""}" data-open-task="${t.id}" style="left:${left}px;width:${width}px;background:${col}" title="${esc(t.title)} · ${esc(fmtDate(sp.start))}${sp.days > 1 ? " → " + esc(fmtDate(sp.end)) : ""}${p ? " · " + p + " %" : ""}${t.estimationMin ? " · " + esc(fmtEstim(t.estimationMin)) + (taskIsMultiDay(t) ? " soit " + esc(fmtEstim(taskDailyLoad(t))) + " par jour" : "") : ""}"><div class="gt-fill" style="width:${p}%"></div>${width > 60 ? `<span class="gt-bt">${esc(t.title || "")}${t.estimationMin && taskIsMultiDay(t) && width > 160 ? ` <span style="opacity:.85">· ${esc(fmtEstim(taskDailyLoad(t)))}/j</span>` : ""}</span>` : ""}</div>`;
     // Estimation lisible même quand la barre est étroite : total, et part par jour pour une tâche étalée, à droite de la barre.
     const estTxt = t.type !== "jalon" && !done && t.estimationMin ? (taskIsMultiDay(t) ? `${fmtEstim(t.estimationMin)} · ${fmtEstim(taskDailyLoad(t))}/j` : fmtEstim(t.estimationMin)) : "";
     const after = estTxt && !(width > 160 && taskIsMultiDay(t)) ? `<span class="gt-after" style="left:${left + width + 6}px">${esc(estTxt)}</span>` : "";
-    return `<div class="gt-row" style="top:${i * RH}px;height:${RH}px;width:${W}px">${bar}${after}</div>`;
+    return `<div class="gt-row" style="top:${i * RH}px;height:${RH}px">${bar}${after}</div>`;
   }).join("");
   // Ligne « Charge par jour » : total des estimations des tâches affichées encore ouvertes, part du jour pour les tâches étalées.
   const LH = 36, loads = Array.from({ length: nDays }, (_, i) => tasks.reduce((a, t) => a + taskLoadOn(t, gtAddDays(min, i)), 0)), maxLoad = Math.max(1, ...loads);
@@ -2148,12 +2154,15 @@ function renderGantt(tasks, opts) {
   let loadHtml = "";
   for (let i = 0; i < nDays; i++) {
     const iso = gtAddDays(min, i), d = new Date(iso + "T12:00:00");
-    if (loads[i]) loadHtml += `<div class="gt-ld ${iso === today ? "today" : ""}" style="left:${i * dw}px;width:${dw}px" title="${esc(fmtDate(iso))} : ${esc(fmtEstim(loads[i]))}"><div class="gt-ldb" style="height:${Math.max(3, Math.round(14 * loads[i] / maxLoad))}px"></div>${dw >= 24 ? `<span>${compact(loads[i])}</span>` : ""}</div>`;
-    if (dw < 24 && 7 * dw >= 40 && (d.getDay() === 1 || i === 0)) {
-      // Échelle resserrée : le total de la semaine (lundi → dimanche) en toutes lettres au-dessus des jours.
-      const span = Math.min(nDays - i, d.getDay() === 1 ? 7 : (8 - d.getDay()) % 7 || 7);
-      const wk = loads.slice(i, i + span).reduce((a, b) => a + b, 0);
-      if (wk) loadHtml += `<div class="gt-lw" style="left:${i * dw}px;width:${span * dw}px" title="Semaine du ${esc(fmtDate(iso))} : ${esc(fmtEstim(wk))}">${compact(wk)}</div>`;
+    if (loads[i]) loadHtml += `<div class="gt-ld ${iso === today ? "today" : ""} ${dw < 6 ? "thin" : ""}" style="left:${i * dw}px;width:${dw}px" title="${esc(fmtDate(iso))} : ${esc(fmtEstim(loads[i]))}"><div class="gt-ldb" style="height:${Math.max(3, Math.round(14 * loads[i] / maxLoad))}px"></div>${dw >= 24 ? `<span>${compact(loads[i])}</span>` : ""}</div>`;
+    if (dw < 24) {
+      // Échelle resserrée : total de la période au-dessus des jours (semaine lundi → dimanche à l'échelle Semaine, mois à l'échelle Mois).
+      const monthly = 7 * dw < 40;
+      if (i === 0 || (monthly ? d.getDate() === 1 : d.getDay() === 1)) {
+        const span = Math.min(nDays - i, monthly ? new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() - d.getDate() + 1 : (d.getDay() === 1 ? 7 : (8 - d.getDay()) % 7 || 7));
+        const sum = loads.slice(i, i + span).reduce((a, b) => a + b, 0);
+        if (sum) loadHtml += `<div class="gt-lw" style="left:${i * dw}px;width:${span * dw}px" title="${monthly ? esc(d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })) : "Semaine du " + esc(fmtDate(iso))} : ${esc(fmtEstim(sum))}">${compact(sum)}</div>`;
+      }
     }
   }
   const totalLoad = loads.reduce((a, b) => a + b, 0);
@@ -2170,7 +2179,8 @@ function renderGantt(tasks, opts) {
   });
   const H = rows.length * RH;
   const weekends = dw >= 6 ? Array.from({ length: nDays }, (_, i) => { const d = new Date(gtAddDays(min, i) + "T12:00:00").getDay(); return d === 0 || d === 6 ? `<div class="gt-we" style="left:${i * dw}px;width:${dw}px;height:${H}px"></div>` : ""; }).join("") : "";
-  return `<div class="gt-wrap"><div class="gt-left" style="width:${LW}px"><div class="gt-corner" style="height:${44 + LH}px"><span class="gt-ldlab" title="Total des estimations des tâches ouvertes affichées, part du jour pour les tâches étalées${totalLoad ? " · total " + esc(fmtEstim(totalLoad)) : ""}">${icon("clock")} Charge par jour${totalLoad ? ` <span class="muted">· ${esc(fmtEstim(totalLoad))}</span>` : ""}</span></div>${labels}</div>
+  const scaleChips = `<div class="inline" style="margin-bottom:8px;gap:6px;flex-wrap:wrap"><span class="muted" style="font-size:12px">Échelle</span>${GT_SCALES.map(([id, lbl]) => `<button class="chip small ${gtScale === id ? "active" : ""}" data-gt-scale="${id}">${lbl}</button>`).join("")}<span class="grow"></span><span class="muted" style="font-size:12px">${esc(fmtDate(min))} → ${esc(fmtDate(max))}</span></div>`;
+  return `${scaleChips}<div class="gt-wrap" data-gt-today="${x(today)}"><div class="gt-left" style="width:${LW}px"><div class="gt-corner" style="height:${44 + LH}px"><span class="gt-ldlab" title="Total des estimations des tâches ouvertes affichées, part du jour pour les tâches étalées${totalLoad ? " · total " + esc(fmtEstim(totalLoad)) : ""}">${icon("clock")} Charge par jour${totalLoad ? ` <span class="muted">· ${esc(fmtEstim(totalLoad))}</span>` : ""}</span></div>${labels}</div>
     <div class="gt-scroll"><div class="gt-canvas" style="width:${W}px;height:${H + 44 + LH}px">
       <div class="gt-months" style="width:${W}px">${months}</div><div class="gt-days" style="width:${W}px">${days}</div><div class="gt-load" style="width:${W}px;height:${LH}px">${loadHtml}</div>
       <div class="gt-body" style="height:${H}px">${weekends}<div class="gt-today" style="left:${x(today)}px;height:${H}px"></div>${bars}
@@ -7802,6 +7812,9 @@ function wire() {
   c.querySelectorAll("[data-ev-nav]").forEach((b) => b.onclick = () => { if (b.dataset.evNav) openDetail("atraiter", b.dataset.evNav); });
   const backEv = c.querySelector("[data-back-ev]"); if (backEv) backEv.onclick = () => { view.detailId = null; render(); };
   c.querySelectorAll("[data-open-task]").forEach((b) => b.onclick = () => openTask(b.dataset.openTask));
+  c.querySelectorAll("[data-gt-scale]").forEach((b) => b.onclick = () => { gtScale = b.dataset.gtScale; try { localStorage.setItem(GT_SCALE_KEY, gtScale); } catch (e) {} render(); });
+  // La frise s'ouvre centrée sur aujourd'hui (un tiers de la largeur visible à gauche du trait rouge).
+  c.querySelectorAll(".gt-wrap[data-gt-today]").forEach((w) => { const sc = w.querySelector(".gt-scroll"); if (sc) sc.scrollLeft = Math.max(0, Number(w.dataset.gtToday) - sc.clientWidth / 3); });
   // le mail lui-même (Gmail, lecture seule)
   c.querySelectorAll("[data-gmail-enable]").forEach((b) => b.onclick = () => enableGmail());
   c.querySelectorAll("[data-gmail-unlink]").forEach((b) => b.onclick = () => { if (confirm("Retirer l'accès de choice à ta boîte Gmail ?")) unlinkGmail(); });

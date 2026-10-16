@@ -217,7 +217,8 @@ recherche (clé, intitulé, notes), projet, priorité, étiquette, personne.
 - **Chronologie (Gantt)** : onglet d'un projet, et vue globale dans Tâches (groupée par projet).
   Une ligne par tâche datée, barres colorées par statut (liseré rouge en retard, remplissage =
   avancement), sous-tâches indentées, jalons en losange, dépendances fléchées, trait « aujourd'hui »,
-  échelle adaptée à l'étendue (jours ou semaines). Clic sur une barre : la fiche. La chronologie d'un
+  échelle au choix **Jour / Semaine / Mois** (mémorisée par appareil, la frise s'ouvre centrée sur
+  aujourd'hui, l'étendue affichée est rappelée à droite). Clic sur une barre : la fiche. La chronologie d'un
   projet est la même que celle des Tâches : barre de filtres, bouton « + Tâche », mêmes barres.
 - **Charge répartie** : l'estimation d'une tâche étalée sur plusieurs jours se distribue à parts égales
   sur chaque jour de son étendue (6 jours à 120 min, début lundi : 20 min du lundi au samedi). Le Gantt
