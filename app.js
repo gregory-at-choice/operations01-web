@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v135";
+const APP_VERSION = "v136";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2086,6 +2086,18 @@ function taskSpan(t) {
   if (end < start) end = start;
   return { start, end, days: gtDaysBetween(start, end) + 1 };
 }
+// Charge de travail répartie : l'estimation d'une tâche étalée sur plusieurs jours se distribue à parts
+// égales sur chacun des jours de son étendue (une tâche de 6 jours à 120 min commençant le lundi : 20 min par jour).
+function taskLoadDays(t) {
+  const sp = taskSpan(t); if (!sp) return [];
+  const days = []; for (let i = 0; i < sp.days; i++) days.push(gtAddDays(sp.start, i));
+  return days;
+}
+const taskIsMultiDay = (t) => taskLoadDays(t).length > 1;
+function taskDailyLoad(t) { const est = Number(t.estimationMin) || 0; if (!est) return 0; return Math.round(est / (taskLoadDays(t).length || 1)); }
+function taskLoadOn(t, iso) { if (taskDone(t) || !(Number(t.estimationMin) || 0)) return 0; const days = taskLoadDays(t); return days.indexOf(iso) > -1 ? taskDailyLoad(t) : 0; }
+// Charge estimée d'une journée, toutes tâches ouvertes confondues (part du jour des tâches étalées, total des tâches d'un jour).
+function dayLoad(iso) { return state.tasks.reduce((a, t) => a + taskLoadOn(t, iso), 0); }
 const GANTT_COLORS = { termine: "#16a34a", enCours: "#2563eb", enAttente: "#d98c2b", aFaire: "#9ca3af" };
 // Chronologie (Gantt) : une ligne par tâche datée, barres par statut, jalons en losange, dépendances fléchées, trait « aujourd'hui ».
 function renderGantt(tasks, opts) {
@@ -2124,7 +2136,7 @@ function renderGantt(tasks, opts) {
     const left = x(sp.start), width = Math.max(dw, sp.days * dw), p = taskProgress(t);
     const bar = t.type === "jalon"
       ? `<div class="gt-ms" data-open-task="${t.id}" style="left:${x(sp.end) + dw / 2 - 8}px;background:${late ? "#d23c3c" : col}" title="${esc(t.title)} · ${esc(fmtDate(sp.end))}"></div>`
-      : `<div class="gt-bar ${late ? "late" : ""}" data-open-task="${t.id}" style="left:${left}px;width:${width}px;background:${col}" title="${esc(t.title)} · ${esc(fmtDate(sp.start))}${sp.days > 1 ? " → " + esc(fmtDate(sp.end)) : ""}${p ? " · " + p + " %" : ""}"><div class="gt-fill" style="width:${p}%"></div>${width > 60 ? `<span class="gt-bt">${esc(t.title || "")}</span>` : ""}</div>`;
+      : `<div class="gt-bar ${late ? "late" : ""}" data-open-task="${t.id}" style="left:${left}px;width:${width}px;background:${col}" title="${esc(t.title)} · ${esc(fmtDate(sp.start))}${sp.days > 1 ? " → " + esc(fmtDate(sp.end)) : ""}${p ? " · " + p + " %" : ""}${t.estimationMin ? " · " + esc(fmtEstim(t.estimationMin)) + (taskIsMultiDay(t) ? " soit " + esc(fmtEstim(taskDailyLoad(t))) + " par jour" : "") : ""}"><div class="gt-fill" style="width:${p}%"></div>${width > 60 ? `<span class="gt-bt">${esc(t.title || "")}${t.estimationMin && taskIsMultiDay(t) && width > 160 ? ` <span style="opacity:.85">· ${esc(fmtEstim(taskDailyLoad(t)))}/j</span>` : ""}</span>` : ""}</div>`;
     return `<div class="gt-row" style="top:${i * RH}px;height:${RH}px;width:${W}px">${bar}</div>`;
   }).join("");
   let paths = "";
@@ -2151,7 +2163,8 @@ function renderGantt(tasks, opts) {
 function renderProjectChrono(m) {
   ensureTaskKeys();
   const ts = projectTasks(m);
-  return `<div class="inline" style="margin-bottom:10px;flex-wrap:wrap"><span class="muted" style="font-size:13px">Chaque tâche datée sur une frise, avec ses dépendances. Clique une barre pour ouvrir la fiche.</span><span class="grow"></span><button class="btn ghost small" data-share-project="${m.id}">${icon("external")} Partager le planning</button></div>${renderGantt(ts, {})}`;
+  return `<div class="inline" style="margin-bottom:10px;flex-wrap:wrap"><span class="muted" style="font-size:13px">Chaque tâche datée sur une frise, avec ses dépendances. Clique une barre pour ouvrir la fiche.</span><span class="grow"></span><button class="btn ghost small" data-share-project="${m.id}">${icon("external")} Partager le planning</button><button class="btn small" data-add-ptask="${m.id}" data-section="">+ Tâche</button></div>
+    ${taskFiltersHtml({ scope: ts, noMission: true })}${renderGantt(ts.filter(taskMatchesFilterNoMission), {})}`;
 }
 // ---- Partage : texte d'une tâche ou d'un planning de projet, à copier ou envoyer par mail ----
 function taskShareText(t) {
@@ -3554,7 +3567,7 @@ function briefLabelParts(el) {
   return { sujet: s };
 }
 const BRIEF_GROUPS = [
-  ["evenement", "tray", "Messages"], ["echeance", "calendar", "Échéances du jour"], ["retard", "alert", "En retard"], ["rdv", "calendar-check", "Rendez-vous"]
+  ["evenement", "tray", "Messages"], ["echeance", "calendar", "Échéances du jour"], ["travail", "clock", "Travail du jour (tâches étalées)"], ["retard", "alert", "En retard"], ["rdv", "calendar-check", "Rendez-vous"]
 ];
 function briefRow(el, s, parts) {
   const u = el.urgence ? Math.min(4, Math.max(1, Number(el.urgence) || 4)) : 0;
@@ -3587,7 +3600,10 @@ function todoElements() {
     const days = Math.round((new Date(today + "T12:00:00") - new Date(t.dueDate + "T12:00:00")) / 86400000);
     els.push({ type: "retard", id: t.id, libelle: `${voiceTaskLabel(t)} (J+${days})`, estimationMin: voiceTaskEstim(t) });
   });
-  state.tasks.filter((t) => !taskDone(t) && t.dueDate === today).forEach((t) => els.push({ type: "echeance", id: t.id, libelle: voiceTaskLabel(t), estimationMin: voiceTaskEstim(t) }));
+  state.tasks.filter((t) => !taskDone(t) && t.dueDate === today).forEach((t) => els.push({ type: "echeance", id: t.id, libelle: voiceTaskLabel(t), estimationMin: taskIsMultiDay(t) ? taskLoadOn(t, today) : voiceTaskEstim(t) }));
+  // Tâches étalées sur plusieurs jours dont aujourd'hui fait partie : leur part du jour.
+  state.tasks.filter((t) => !taskDone(t) && taskIsMultiDay(t) && t.dueDate !== today && taskLoadDays(t).indexOf(today) > -1)
+    .forEach((t) => els.push({ type: "travail", id: t.id, libelle: `${voiceTaskLabel(t)} · jusqu'au ${fmtDate(taskSpan(t).end)}`, estimationMin: taskLoadOn(t, today) }));
   eventsNew().filter((e) => eventUrgence(e) <= 2).sort((a, b) => eventUrgence(a) - eventUrgence(b)).slice(0, 10)
     .forEach((e) => { const p = e.proposition && e.proposition.tache; els.push({ type: "evenement", id: e.id, urgence: eventUrgence(e), libelle: `${EVENT_ACTION_VERB[e.action] || "Traiter :"} ${(e.expediteur && e.expediteur.nom) || (e.expediteur && e.expediteur.adresse) || "?"} — ${e.sujet || ""}`, estimationMin: p && p.estimationMin ? Number(p.estimationMin) : 0 }); });
   voiceAgenda(today).forEach((x, i) => els.push({ type: "rdv", id: "cal-" + i, libelle: `${x.time ? voiceHour(x.time) + " " : ""}${x.title}${x.who ? " avec " + x.who : ""}` }));
@@ -7181,8 +7197,16 @@ function renderRendezvousDetail(id) {
 function planningEvents() {
   const ev = [];
   state.tasks.forEach((t) => {
-    if (!t.dueDate || (t.status || "aFaire") === "termine") return;
-    ev.push({ date: t.dueDate, time: "", kind: "Tâche", ic: "✅", title: t.title || "Tâche", color: deadlineColor(daysUntil(t.dueDate)), section: "tasks", detailId: null });
+    if ((t.status || "aFaire") === "termine") return;
+    if (taskIsMultiDay(t)) {
+      // Tâche étalée : présente chaque jour de son étendue avec sa part de charge, l'échéance en dernier.
+      // Les jours déjà passés ne sont pas repris (seule l'échéance dépassée compte comme retard).
+      const sp = taskSpan(t), share = taskDailyLoad(t), today = todayISO();
+      taskLoadDays(t).filter((d) => d >= today || d === sp.end).forEach((d) => ev.push({ date: d, time: "", kind: d === sp.end ? "Tâche · échéance" : `Tâche · ${share ? fmtEstim(share) + " ce jour" : "en cours"}`, ic: d === sp.end ? "✅" : "🛠️", title: t.title || "Tâche", color: deadlineColor(daysUntil(sp.end)), section: "tasks", detailId: t.id, taskId: t.id }));
+      return;
+    }
+    if (!t.dueDate) return;
+    ev.push({ date: t.dueDate, time: "", kind: "Tâche" + (t.estimationMin ? ` · ${fmtEstim(t.estimationMin)}` : ""), ic: "✅", title: t.title || "Tâche", color: deadlineColor(daysUntil(t.dueDate)), section: "tasks", detailId: t.id, taskId: t.id });
   });
   state.actions.forEach((a) => {
     if (!a.dueDate || a.closed) return;
@@ -7229,7 +7253,7 @@ function renderAgenda() {
   // Regroupement des à-venir par date
   let groupsHtml = "";
   let curDate = null, buf = [];
-  const flush = () => { if (buf.length) { groupsHtml += `<div class="plan-day">${esc(fmtDate(curDate))}${curDate === today ? " · aujourd'hui" : ""}</div><div class="list">${buf.join("")}</div>`; buf = []; } };
+  const flush = () => { if (buf.length) { const load = dayLoad(curDate); groupsHtml += `<div class="plan-day">${esc(fmtDate(curDate))}${curDate === today ? " · aujourd'hui" : ""}${load ? ` <span class="muted" style="font-weight:400">· charge estimée ${esc(fmtEstim(load))}</span>` : ""}</div><div class="list">${buf.join("")}</div>`; buf = []; } };
   upcoming.forEach((e) => { if (e.date !== curDate) { flush(); curDate = e.date; } buf.push(evRow(e)); });
   flush();
   const overdueHtml = overdue.length
@@ -8760,7 +8784,8 @@ function voicePriorities() {
   }
   if (!out.length) {
     state.tasks.filter((t) => !taskDone(t) && t.dueDate && t.dueDate < today).sort((a, b) => a.dueDate.localeCompare(b.dueDate)).forEach((t) => out.push({ label: voiceTaskLabel(t) + " (en retard)", min: voiceTaskEstim(t), kind: "task", id: t.id }));
-    state.tasks.filter((t) => !taskDone(t) && t.dueDate === today).forEach((t) => out.push({ label: voiceTaskLabel(t), min: voiceTaskEstim(t), kind: "task", id: t.id }));
+    state.tasks.filter((t) => !taskDone(t) && t.dueDate === today).forEach((t) => out.push({ label: voiceTaskLabel(t), min: taskIsMultiDay(t) ? taskLoadOn(t, today) : voiceTaskEstim(t), kind: "task", id: t.id }));
+    state.tasks.filter((t) => !taskDone(t) && taskIsMultiDay(t) && t.dueDate !== today && taskLoadDays(t).indexOf(today) > -1).forEach((t) => out.push({ label: voiceTaskLabel(t) + " (part du jour)", min: taskLoadOn(t, today), kind: "task", id: t.id }));
     eventsNew().filter((e) => eventUrgence(e) <= 2).forEach((e) => out.push({ label: `${EVENT_ACTION_VERB[e.action] || "Traiter"} ${(e.expediteur && e.expediteur.nom) || ""} — ${e.sujet || ""}`, min: 0, kind: "evenement", id: e.id }));
   }
   return out;

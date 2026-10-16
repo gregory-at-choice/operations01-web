@@ -217,7 +217,13 @@ recherche (clé, intitulé, notes), projet, priorité, étiquette, personne.
 - **Chronologie (Gantt)** : onglet d'un projet, et vue globale dans Tâches (groupée par projet).
   Une ligne par tâche datée, barres colorées par statut (liseré rouge en retard, remplissage =
   avancement), sous-tâches indentées, jalons en losange, dépendances fléchées, trait « aujourd'hui »,
-  échelle adaptée à l'étendue (jours ou semaines). Clic sur une barre : la fiche.
+  échelle adaptée à l'étendue (jours ou semaines). Clic sur une barre : la fiche. La chronologie d'un
+  projet est la même que celle des Tâches : barre de filtres, bouton « + Tâche », mêmes barres.
+- **Charge répartie** : l'estimation d'une tâche étalée sur plusieurs jours se distribue à parts égales
+  sur chaque jour de son étendue (6 jours à 120 min, début lundi : 20 min du lundi au samedi). Le Gantt
+  l'affiche (« 20 min/j »), le Planning liste la tâche chaque jour avec sa part (« 20 min ce jour »,
+  « échéance » le dernier jour) et affiche la charge estimée en tête de journée, la to-do du jour et
+  le brief vocal la comptent dans « Travail du jour » pour sa part seulement.
 - **Résumé de projet** : vue d'ensemble en tête de l'onglet Résumé : ouvertes, créées et terminées sur
   30 jours, charge restante estimée, temps passé contre estimé, ouvertes par personne, répartition par
   statut et par priorité, échéances sous 7 jours, activité récente (changements et commentaires).

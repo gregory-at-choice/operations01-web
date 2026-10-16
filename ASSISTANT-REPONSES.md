@@ -266,6 +266,11 @@ passés (`missions[].entries`). À exploiter à chaque génération et dans un r
 | **Temps réellement passé** : `missions[].entries` (chronos) et `tasks[].estimationMin` | export | Ratio réel / alloué par projet et par type de tâche, repris dans les estimations (`assistant.estimations`). |
 | **Décisions sans suite** : événement `traite` sans tâche créée, ou `ignore` | export + événements | Un expéditeur ignoré trois fois d'affilée → urgence 4 par défaut ; un expéditeur dont les messages deviennent toujours des tâches → urgence relevée d'un cran. |
 
+Charge journalière : une tâche étalée sur plusieurs jours (`startDate`/`durationDays`/`dueDate`
+dans `data.tasks`) compte dans le brief et dans `totalEstimeMin` pour **sa part du jour** seulement :
+estimation divisée par le nombre de jours de son étendue (6 jours à 120 min : 20 min par jour), pas
+pour son total.
+
 Règles : l'apprentissage ne modifie jamais les données de l'app (lecture seule de l'export) ; il
 s'exprime dans les propositions suivantes. Journaliser chaque nuit dans `apprentissage.log` : nombre
 de corrections lues, distance moyenne, ratios de temps, projets appris. Mettre dans le brief du matin
