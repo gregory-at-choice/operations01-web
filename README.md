@@ -207,6 +207,11 @@ initiales de la personne ; cases à cocher pour une action groupée : statut, é
 priorité, suppression), le **Kanban** et la **Chronologie**. Toutes ont la barre de **filtres** :
 recherche (clé, intitulé, notes), projet, priorité, étiquette, personne.
 
+- **Gestion de projet** : l'onglet d'un projet propose les mêmes vues, mémorisées par appareil :
+  **Backlog** (tickets du projet groupés par semaine, section en pastille, statut et échéance en ligne,
+  sélection multiple), **Kanban** (quatre colonnes, « + Ajouter » crée la tâche dans la colonne) et
+  **Par section** (le tableau historique : sections, avancement, estimation, chrono). Ajouter une
+  tâche depuis le Backlog ouvre directement sa fiche.
 - **Début et durée** : une tâche porte une échéance, et peut aussi avoir un début et une durée en
   jours ; l'étendue (début → fin) se déduit de ce qui est renseigné.
 - **Chronologie (Gantt)** : onglet d'un projet, et vue globale dans Tâches (groupée par projet).

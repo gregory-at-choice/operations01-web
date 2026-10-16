@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v134";
+const APP_VERSION = "v135";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2359,9 +2359,26 @@ function renderProjectResume(m) {
 }
 
 // ---- Gestion de projet ----
+const PG_VIEW_KEY = "op01_pg_view";
+let pgView = (() => { try { return localStorage.getItem(PG_VIEW_KEY) || "backlog"; } catch (e) { return "backlog"; } })();
 function renderProjectGestion(m) {
   ensureTaskKeys();
   const ts = projectTasks(m);
+  const modes = `<div class="chip-row" style="margin:0 0 10px">${[["backlog", "Backlog"], ["kanban", "Kanban"], ["sections", "Par section"]].map(([k, l]) => `<button class="chip ${pgView === k ? "active" : ""}" data-pg-view="${k}">${l}</button>`).join("")}</div>`;
+  if (pgView !== "sections") {
+    const open = ts.filter((t) => !taskDone(t));
+    const late = open.filter((t) => t.dueDate && daysUntil(t.dueDate) < 0), soon = open.filter((t) => t.dueDate && daysUntil(t.dueDate) >= 0 && daysUntil(t.dueDate) <= 7), noDue = open.filter((t) => !t.dueDate);
+    const alerts = [late.length ? `<span class="pm-alert late">⚠️ ${late.length} en retard</span>` : "", soon.length ? `<span class="pm-alert soon">⏳ ${soon.length} sous 7 jours</span>` : "", noDue.length ? `<span class="pm-alert none">📭 ${noDue.length} sans date limite</span>` : "", !late.length && !soon.length && !noDue.length && open.length ? '<span class="pm-alert ok">✓ Aucune alerte</span>' : ""].filter(Boolean).join(" ");
+    const list = ts.filter(taskMatchesFilterNoMission);
+    const body = pgView === "kanban" ? kanbanBoardHtml(list, { mission: m }) : renderTaskBacklog(list, { noPanel: true });
+    return `${modes}<div class="inline" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">${alerts || '<span class="muted" style="font-size:13px">Aucune tâche pour l\'instant.</span>'}
+      <span class="grow"></span>
+      <button class="btn ghost small" data-share-project="${m.id}">${icon("external")} Partager</button>
+      <button class="btn ghost small" data-import-tasks="${m.id}" title="Importer des tâches depuis un fichier CSV (tableau de suivi) ou JSON">${icon("download")} Importer</button>
+      <button class="btn small" data-add-ptask="${m.id}" data-section="">+ Tâche</button></div>
+      ${taskFiltersHtml({ scope: ts, noMission: true })}
+      ${body}`;
+  }
   const open = ts.filter((t) => !taskDone(t));
   const late = open.filter((t) => t.dueDate && daysUntil(t.dueDate) < 0);
   const soon = open.filter((t) => t.dueDate && daysUntil(t.dueDate) >= 0 && daysUntil(t.dueDate) <= 7);
@@ -2418,7 +2435,7 @@ function renderProjectGestion(m) {
     return head + (items.map(row).join("") || `<tr><td colspan="7" class="muted" style="padding:8px 12px;font-size:13px">Aucune tâche.</td></tr>`);
   };
   const body = sections.map(block).join("") + block("");
-  return `<div class="inline" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">${alerts || '<span class="muted" style="font-size:13px">Aucune tâche pour l\'instant.</span>'}
+  return `${modes}<div class="inline" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">${alerts || '<span class="muted" style="font-size:13px">Aucune tâche pour l\'instant.</span>'}
       <span class="grow"></span>
       <button class="btn ghost small" data-import-tasks="${m.id}" title="Importer des tâches depuis un fichier CSV (tableau de suivi) ou JSON">${icon("download")} Importer</button>
       <button class="btn secondary small" data-add-section="${m.id}">+ Section</button>
@@ -6405,8 +6422,9 @@ function backlogGroups(tasks) {
   });
   return order.map((k) => groups[k]).sort((a, b) => a.rank - b.rank).map((g) => Object.assign(g, { items: sortTasks(g.items).sort((a, b) => (taskDone(a) - taskDone(b))) }));
 }
-function renderTaskBacklog() {
-  const all = state.tasks.filter(taskMatchesFilter);
+function renderTaskBacklog(all, opts) {
+  opts = opts || {};
+  all = all || state.tasks.filter(taskMatchesFilter);
   const groups = backlogGroups(all);
   const selN = Object.keys(blSelected).filter((id) => state.tasks.some((t) => t.id === id)).length;
   const row = (t) => {
@@ -6416,7 +6434,7 @@ function renderTaskBacklog() {
       <input type="checkbox" data-bl-sel="${t.id}" ${blSelected[t.id] ? "checked" : ""}/>
       <span class="tk-key">${esc(t.key || "")}</span>
       <span class="bl-title grow" data-open-task="${t.id}" title="Ouvrir la fiche">${t.parentId ? "↳ " : ""}${t.type === "jalon" ? "◆ " : ""}${esc(t.title || "Sans titre")}${blk.length ? ` <span class="tk-blocked" title="Bloquée par ${esc(blk.map((b) => b.key || b.title).join(", "))}">🔒</span>` : ""}${subtasksOf(t).length ? ` <span class="muted" style="font-size:12px">☰ ${subtasksOf(t).filter(taskDone).length}/${subtasksOf(t).length}</span>` : ""}</span>
-      ${m ? `<span class="bl-proj" style="--pc:${projectColor(m.id)}" title="${esc(m.title)}">${esc(m.title)}</span>` : `<span class="bl-proj muted" style="--pc:#8e8e93">Sans projet</span>`}
+      ${opts.noPanel ? (t.section ? `<span class="bl-proj" style="--pc:#8e8e93" title="Section">${esc(t.section)}</span>` : "") : m ? `<span class="bl-proj" style="--pc:${projectColor(m.id)}" title="${esc(m.title)}">${esc(m.title)}</span>` : `<span class="bl-proj muted" style="--pc:#8e8e93">Sans projet</span>`}
       <select class="bl-status ${t.status || "aFaire"}" data-task-status="${t.id}">${TASK_STATUSES.map((st) => `<option value="${st.code}" ${(t.status || "aFaire") === st.code ? "selected" : ""}>${st.label}</option>`).join("")}</select>
       <span class="bl-due ${late ? "late" : ""}"><input type="date" data-taskdue="${t.id}" value="${esc(t.dueDate || "")}" title="Échéance"/>${late ? `<span class="bl-late">⚠ ${esc(shortDate(t.dueDate))}</span>` : ""}</span>
       <span class="bl-est" title="Estimation">${t.estimationMin ? esc(fmtEstim(t.estimationMin)) : ""}</span>
@@ -6442,28 +6460,39 @@ function renderTaskBacklog() {
       <select data-bl-bulk="missionId"><option value="">Projet…</option>${sortedMissions().map((m) => `<option value="${m.id}">${esc(m.title || "Sans titre")}</option>`).join("")}</select>
       <select data-bl-bulk="priority"><option value="">Priorité…</option>${TASK_PRIORITIES.map((x) => `<option value="${x[0]}">${x[1]}</option>`).join("")}</select>
       <span class="grow"></span><button class="btn ghost small" data-bl-bulk-clear>Désélectionner</button><button class="btn danger small" data-bl-bulk-del>Supprimer</button></div>` : "";
+  if (opts.noPanel) return `${bulk}${list}`;
   return `<div class="bl-grid">${panel}<div class="bl-main">${bulk}${list}</div></div>`;
 }
-function renderTasks() {
-  if (view.detailId) return renderTaskDetail(view.detailId);
-  ensureTaskKeys();
-  const labelsAll = {}; state.tasks.forEach((t) => taskLabels(t).forEach((l) => { labelsAll[l] = 1; }));
-  const assignees = {}; state.tasks.forEach((t) => { if (t.assignee) assignees[t.assignee] = 1; });
+// Barre de filtres des tâches (clé, intitulé, notes · projet · priorité · étiquette · personne).
+// opts.scope : liste de tâches servant à proposer étiquettes et personnes ; opts.noMission : sans le choix du projet.
+function taskFiltersHtml(opts) {
+  opts = opts || {};
+  const scope = opts.scope || state.tasks;
+  const labelsAll = {}; scope.forEach((t) => taskLabels(t).forEach((l) => { labelsAll[l] = 1; }));
+  const assignees = {}; scope.forEach((t) => { if (t.assignee) assignees[t.assignee] = 1; });
   const opt = (list, cur, all) => `<option value="">${all}</option>` + list.map(([v, l]) => `<option value="${esc(v)}" ${cur === v ? "selected" : ""}>${esc(l)}</option>`).join("");
-  const filters = `<div class="filterbar tk-filters">
+  const active = taskFilter.q || (!opts.noMission && taskFilter.mission) || taskFilter.priority || taskFilter.label || taskFilter.assignee;
+  return `<div class="filterbar tk-filters">
       <input type="search" data-tkf="q" value="${esc(taskFilter.q)}" placeholder="Rechercher (clé, intitulé, notes…)"/>
-      <select data-tkf="mission">${opt(sortedMissions().map((m) => [m.id, m.title || "Sans titre"]), taskFilter.mission, "Tous les projets")}</select>
+      ${opts.noMission ? "" : `<select data-tkf="mission">${opt(sortedMissions().map((m) => [m.id, m.title || "Sans titre"]), taskFilter.mission, "Tous les projets")}</select>`}
       <select data-tkf="priority">${opt(TASK_PRIORITIES.map((p) => [p[0], p[1]]), taskFilter.priority, "Toutes priorités")}</select>
       ${Object.keys(labelsAll).length ? `<select data-tkf="label">${opt(Object.keys(labelsAll).sort().map((l) => [l, l]), taskFilter.label, "Toutes étiquettes")}</select>` : ""}
       ${Object.keys(assignees).length ? `<select data-tkf="assignee">${opt(Object.keys(assignees).sort().map((l) => [l, l]), taskFilter.assignee, "Tout le monde")}</select>` : ""}
-      ${(taskFilter.q || taskFilter.mission || taskFilter.priority || taskFilter.label || taskFilter.assignee) ? `<button class="btn ghost small" data-tkf-clear>✕ Effacer</button>` : ""}</div>`;
+      ${active ? `<button class="btn ghost small" data-tkf-clear>✕ Effacer</button>` : ""}</div>`;
+}
+// Filtre sans le critère projet (vue d'un projet donné).
+const taskMatchesFilterNoMission = (t) => { const keep = taskFilter.mission; taskFilter.mission = ""; const ok = taskMatchesFilter(t); taskFilter.mission = keep; return ok; };
+// Kanban : une colonne par statut, cartes classées par échéance. opts.mission : tâches d'un projet (le « + Ajouter » y crée la tâche).
+function kanbanBoardHtml(list, opts) {
+  opts = opts || {};
+  const byDue = (a, b) => (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31") || (a.createdAt || 0) - (b.createdAt || 0);
   const cols = TASK_STATUSES.map((st, idx) => {
-    const items = tasksOf(st.code).filter(taskMatchesFilter);
+    const items = list.filter((t) => (t.status || "aFaire") === st.code).sort(byDue);
     const cards = items.map((t) => {
       const done = st.code === "termine";
       const di = deadlineInfo(t.dueDate, done);
       const projOpts = ['<option value="">— Sans projet —</option>'].concat(sortedMissions().map((m) => `<option value="${m.id}" ${m.id === t.missionId ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`)).join("");
-      const mission = `<select class="flat-input kb-mission" data-task-mission="${t.id}" title="Projet">${projOpts}</select>${t.assignee ? `<div class="kb-mission">👤 ${esc(t.assignee)}</div>` : ""}`;
+      const mission = opts.mission ? (t.assignee ? `<div class="kb-mission">👤 ${esc(t.assignee)}</div>` : "") : `<select class="flat-input kb-mission" data-task-mission="${t.id}" title="Projet">${projOpts}</select>${t.assignee ? `<div class="kb-mission">👤 ${esc(t.assignee)}</div>` : ""}`;
       return `<div class="kb-card" data-task-card="${t.id}" style="border-left-color:${di.color}">
         <div class="kb-grip" title="Glisser vers une autre colonne">⠿</div>
         <div class="tk-badges">${taskBadges(t, true)}<span class="grow"></span><button class="btn ghost small" data-open-task="${t.id}" title="Ouvrir la fiche">↗</button></div>
@@ -6479,24 +6508,27 @@ function renderTasks() {
           <button class="btn ghost small" data-del-task="${t.id}" title="Supprimer">✕</button>
         </div></div>`;
     }).join("");
+    const add = opts.mission ? `<button class="btn ghost small kb-add" data-add-ptask="${opts.mission.id}" data-section="" data-status="${st.code}">+ Ajouter</button>` : `<button class="btn ghost small kb-add" data-add-task="${st.code}">+ Ajouter</button>`;
     return `<div class="kb-col" data-kanban-col="${st.code}">
       <div class="kb-head"><span class="grow">${st.label}</span><span class="kb-count">${items.length}</span></div>
-      <div class="kb-body">${cards || '<div class="kb-empty">Aucune tâche</div>'}
-        <button class="btn ghost small kb-add" data-add-task="${st.code}">+ Ajouter</button></div>
+      <div class="kb-body">${cards || '<div class="kb-empty">Aucune tâche</div>'}${add}</div>
     </div>`;
   }).join("");
-  const legend = `<div class="dl-legend"><span class="muted">Échéance :</span>
-    <span class="dl-grad"></span>
-    <span class="muted" style="font-size:12px">lointaine → imminente</span></div>`;
+  const legend = `<div class="dl-legend"><span class="muted">Échéance :</span><span class="dl-grad"></span><span class="muted" style="font-size:12px">lointaine → imminente</span></div>`;
+  return `${legend}<div class="muted" style="font-size:12px;margin-bottom:10px">Colonnes classées par échéance la plus proche · glisse une carte (⠿) ou utilise ‹ › pour la déplacer.</div><div class="kb-board">${cols}</div>`;
+}
+function renderTasks() {
+  if (view.detailId) return renderTaskDetail(view.detailId);
+  ensureTaskKeys();
+  const list = state.tasks.filter(taskMatchesFilter);
   const modes = `<div class="chip-row" style="margin-bottom:10px">${[["backlog", "Backlog"], ["kanban", "Kanban"], ["chrono", "Chronologie"]].map(([k, l]) => `<button class="chip ${taskViewMode === k ? "active" : ""}" data-task-view="${k}">${l}</button>`).join("")}</div>`;
-  const body = taskViewMode === "kanban"
-    ? `${legend}<div class="muted" style="font-size:12px;margin-bottom:10px">Colonnes classées par échéance la plus proche · glisse une carte (⠿) ou utilise ‹ › pour la déplacer.</div><div class="kb-board">${cols}</div>`
-    : taskViewMode === "chrono" ? renderGantt(state.tasks.filter(taskMatchesFilter), { byProject: true })
-    : renderTaskBacklog();
+  const body = taskViewMode === "kanban" ? kanbanBoardHtml(list)
+    : taskViewMode === "chrono" ? renderGantt(list, { byProject: true })
+    : renderTaskBacklog(list);
   return `<div class="toolbar"><div class="page-title grow" style="margin:0">Tâches</div>
       <button class="btn" data-add-task="aFaire">+ Nouvelle tâche</button></div>
     ${modes}
-    ${filters}
+    ${taskFiltersHtml()}
     ${body}
     <button class="btn fab" data-add-task="aFaire">+</button>`;
 }
@@ -7846,8 +7878,11 @@ function wire() {
   });
   c.querySelectorAll("[data-stop-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.stopEntry); if (e) { stopEntry(e); save(); render(); } });
   c.querySelectorAll("[data-add-ptask]").forEach((b) => b.onclick = () => {
-    state.tasks.push({ id: uid(), title: "", status: "aFaire", missionId: b.dataset.addPtask, section: b.dataset.section || "", assignee: "", progress: 0, origin: "manuel", dueDate: "", createdAt: Date.now() });
-    save(); render();
+    const t = { id: uid(), title: "", status: b.dataset.status || "aFaire", missionId: b.dataset.addPtask, section: b.dataset.section || "", assignee: "", progress: 0, origin: "manuel", dueDate: "", createdAt: Date.now(), priority: "moyenne", labels: [] };
+    state.tasks.push(t); ensureTaskKeys(); save();
+    // Dans les vues Backlog et Kanban du projet, l'intitulé se saisit sur la fiche : on l'ouvre.
+    if (view.section === "missions" && projectTab === "gestion" && pgView === "backlog") { openDetail("tasks", t.id); const inp = document.querySelector(".tk-title"); if (inp) inp.focus(); }
+    else render();
   });
   c.querySelectorAll("[data-import-tasks]").forEach((b) => b.onclick = () => importTasksClick(b.dataset.importTasks));
   c.querySelectorAll("[data-notify]").forEach((el) => el.onchange = () => {
@@ -8030,6 +8065,7 @@ function wire() {
   c.querySelectorAll("[data-task-clone]").forEach((b) => b.onclick = () => { const t = state.tasks.find((x) => x.id === b.dataset.taskClone); if (!t) return; const n = newTaskLike(t, { title: (t.title || "") + " (copie)", priority: t.priority || "moyenne", labels: taskLabels(t).slice(), notes: t.notes || "", estimationMin: t.estimationMin || null, dueDate: t.dueDate || "", parentId: t.parentId || null }); save(); openDetail("tasks", n.id); });
   c.querySelectorAll("[data-tkf]").forEach((el) => { const h = () => { taskFilter[el.dataset.tkf] = el.value; render(); const again = document.querySelector(`[data-tkf="${el.dataset.tkf}"]`); if (again && el.dataset.tkf === "q") { again.focus(); again.setSelectionRange(again.value.length, again.value.length); } }; el.addEventListener("change", h); if (el.dataset.tkf === "q") el.addEventListener("input", h); });
   c.querySelectorAll("[data-tkf-clear]").forEach((b) => b.onclick = () => { taskFilter = { q: "", mission: "", priority: "", label: "", assignee: "" }; render(); });
+  c.querySelectorAll("[data-pg-view]").forEach((b) => b.onclick = () => { pgView = b.dataset.pgView; try { localStorage.setItem(PG_VIEW_KEY, pgView); } catch (e) {} render(); });
   c.querySelectorAll("[data-task-view]").forEach((b) => b.onclick = () => { taskViewMode = b.dataset.taskView; try { localStorage.setItem(TASK_VIEW_KEY, taskViewMode); } catch (e) {} render(); });
   c.querySelectorAll("[data-bl-mission]").forEach((b) => b.onclick = () => { const v = b.dataset.blMission; taskFilter.mission = taskFilter.mission === v ? "" : v; render(); });
   c.querySelectorAll("[data-bl-toggle]").forEach((b) => b.onclick = () => { blCollapsed[b.dataset.blToggle] = !blCollapsed[b.dataset.blToggle]; render(); });
