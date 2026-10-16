@@ -809,3 +809,23 @@ label.field.inline-check > span { margin-bottom: 0; }
 .ov-legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; margin-top: 6px; color: var(--muted); }
 .ov-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
 .ov-act { font-size: 13px; padding: 4px 0; border-top: 1px solid var(--line); cursor: pointer; }
+
+/* Historique d'un projet : cartes ; le chrono en cours et la carte ouverte prennent plus de place */
+.entry { border: 1px solid var(--line); border-radius: 12px; background: var(--card); margin-bottom: 8px; transition: box-shadow .15s, border-color .15s; }
+.entry-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; }
+.entry-head .ic { font-size: 18px; }
+.entry-head .r-title { font-weight: 600; }
+.entry.open { border-color: var(--primary); box-shadow: 0 8px 24px rgba(0,0,0,.08); }
+.entry.open .entry-head { padding: 16px 18px 12px; }
+.entry.open .entry-head .r-title { font-size: 18px; }
+.entry.open .entry-head .ic { font-size: 24px; }
+.entry-body { padding: 10px 18px 16px; border-top: 1px solid var(--line); }
+.entry.running { border-color: #d23c3c; background: linear-gradient(90deg, rgba(210,60,60,.06), transparent 40%), var(--card); }
+.entry.running .entry-head { padding: 16px 18px; }
+.entry.running .entry-head .r-title { font-size: 18px; }
+.entry-big { display: flex; align-items: center; gap: 12px; }
+.entry-big .timer { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; color: #d23c3c; }
+.entry.running.open .entry-big .timer { font-size: 38px; }
+@media (max-width: 640px) { .entry-big .timer { font-size: 24px; } .entry.running.open .entry-big .timer { font-size: 30px; } .entry-big { gap: 8px; } }
+.entry-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #d23c3c; vertical-align: middle; margin: 0 2px; animation: entryPulse 1.2s ease-in-out infinite; }
+@keyframes entryPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }

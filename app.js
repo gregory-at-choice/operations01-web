@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v132";
+const APP_VERSION = "v133";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2323,7 +2323,7 @@ function renderProjectResume(m) {
   const prog = projectProgress(m);
   const mails = projectThreads(m).length;
   const stat = (n, lbl, color) => `<div class="cal-stat"${color ? ` style="border-left:4px solid ${color}"` : ""}><div class="cal-stat-n">${n}</div><div class="cal-stat-l">${lbl}</div></div>`;
-  const entries = [...(m.entries || [])].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
+  const entries = [...(m.entries || [])].sort((a, b) => (!!b.timerStartedAt - !!a.timerStartedAt) || (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
   const entriesHtml = entries.length ? entries.map((e) => renderEntry(m.id, e)).join("") : '<div class="muted" style="padding:8px 2px">Aucun élément.</div>';
   const kindButtons = KINDS.map((k) => `<button class="chip" data-add-entry="${k.code}" data-m="${m.id}">${k.ic} ${k.label}</button>`).join("");
   return `<div class="cal-stats">
@@ -4001,11 +4001,12 @@ function renderEntry(mid, e) {
   const k = kindMeta(e.kind), running = !!e.timerStartedAt;
   const urlLink = validURL(e.url) ? `<a class="btn ghost small" href="${esc(e.url)}" target="_blank" rel="noopener">↗ Ouvrir</a>` : (e.url ? '<span class="muted" style="font-size:13px">Lien invalide</span>' : "");
   const kindOpts = KINDS.map((x) => `<option value="${x.code}" ${x.code === e.kind ? "selected" : ""}>${x.ic} ${x.label}</option>`).join("");
-  return `<div class="entry">
+  return `<div class="entry ${running ? "running" : ""} ${e._open ? "open" : ""}">
     <div class="entry-head" data-toggle="${e.id}" data-m="${mid}">
       <span class="ic">${k.ic}</span>
       <div class="grow"><div class="r-title">${esc(e.title || k.label)}</div>
-        <div class="r-sub">${k.label} · ${fmtDate(e.date)}${entryElapsed(e) > 0 ? ` · ⏱ <span class="timer ${running ? "running" : ""}" data-entry-time="${e.id}">${fmtDuration(entryElapsed(e))}</span>` : ""}${running ? " 🔴" : ""}</div></div>
+        <div class="r-sub">${k.label} · ${fmtDate(e.date)}${!running && entryElapsed(e) > 0 ? ` · ⏱ <span class="timer" data-entry-time="${e.id}">${fmtDuration(entryElapsed(e))}</span>` : ""}${running ? ' · <span class="entry-dot"></span> chrono en cours' : ""}</div></div>
+      ${running ? `<div class="entry-big"><span class="timer running" data-entry-time="${e.id}">${fmtDuration(entryElapsed(e))}</span><button class="btn danger small" data-timer="${e.id}" data-m="${mid}">■ Arrêter</button></div>` : ""}
       <span class="muted">${e._open ? "▾" : "▸"}</span></div>
     <div class="entry-body" style="display:${e._open ? "block" : "none"}">
       <label class="field"><span>Type</span><select data-efield="kind" data-m="${mid}" data-e="${e.id}">${kindOpts}</select></label>
