@@ -76,6 +76,18 @@ Par défaut, les données sont dans le navigateur. Pour les stocker **sur votre 
 > crée**, rien d'autre dans votre Drive. Le navigateur garde une copie locale (hors ligne) ;
 > Drive est la copie durable et partagée entre navigateurs.
 
+**Où sont les fichiers.** L'app crée ses fichiers à la racine du Drive ; le script
+`appsscript-mails.gs` les range ensuite dans le dossier `soft/src-json` (constante `DOSSIER_JSON`),
+l'app les retrouve par leur nom quel que soit le dossier. On y trouve `operations01-data.json`
+(sociétés, contacts, projets, tâches, factures, temps), `operations01-evenements.json` (messages à
+traiter, décisions, demandes), `operations01-assistant.json` (classements et propositions du Mac
+mini), `operations01-mails.json` (index des mails et des correspondances) et
+`operations01-banque.json` (mouvements bancaires), plus les copies de sûreté :
+`operations01-backup-<jour>.json` (une par jour et par appareil, 14 conservées) et
+`operations01-conflit-<horodatage>[-local].json` (les deux versions avant une fusion entre
+appareils, uniquement si cet appareil avait des modifications non écrites, au plus une paire par
+quart d'heure, 20 conservées). Une simple relecture périodique ne crée jamais de copie « conflit ».
+
 ## Banque : relevés et factures déjà sur le Drive (Finances → Banque)
 
 Un script Apps Script (`appsscript-banque.gs`) lit les relevés de compte PDF — Société Générale

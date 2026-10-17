@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v138";
+const APP_VERSION = "v139";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";

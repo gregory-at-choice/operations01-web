@@ -30,6 +30,10 @@
   const CONFLICT_PREFIX = "operations01-conflit-";
   const KEEP_BACKUPS = 14;
   const LAST_BACKUP_KEY = "op01_lastBackupDate";
+  // Copies « conflit » : au plus une paire par quart d'heure et par appareil, 20 fichiers conservés.
+  const KEEP_CONFLICTS = 20;
+  const LAST_CONFLICT_KEY = "op01_lastConflictAt";
+  const CONFLICT_MIN_GAP_MS = 15 * 60000;
 
   const SESSION_KEY = "op01_driveSession"; // mémorise qu'on a déjà autorisé l'app
 
@@ -856,12 +860,13 @@
     return j.files || [];
   }
 
-  // Supprime les sauvegardes quotidiennes au-delà des KEEP_BACKUPS plus récentes.
+  // Supprime les sauvegardes quotidiennes au-delà des KEEP_BACKUPS plus récentes et les copies « conflit » au-delà des KEEP_CONFLICTS.
   async function pruneBackups() {
     try {
       const all = await listBackups();
       const daily = all.filter((f) => f.name.indexOf(BACKUP_PREFIX) === 0);
-      const toDelete = daily.slice(KEEP_BACKUPS);
+      const conflicts = all.filter((f) => f.name.indexOf(CONFLICT_PREFIX) === 0);
+      const toDelete = daily.slice(KEEP_BACKUPS).concat(conflicts.slice(KEEP_CONFLICTS));
       for (const f of toDelete) { try { await deleteFile(f.id); } catch (e) {} }
     } catch (e) {}
   }
@@ -939,6 +944,7 @@
   // croissant — rien n'est perdu, plus besoin de relancer l'application.
   function push(state) {
     pending = state;
+    pullOnly = false;           // une vraie modification locale est en attente
     schedule(800);
   }
   // Quand Drive porte un état plus récent que le nôtre (autre appareil), on
@@ -966,10 +972,23 @@
     try { meta = await getMeta(fileId); } catch (e) { return false; }
     if (!meta.modifiedTime || meta.modifiedTime === lastModifiedTime) return false;
     pending = state;
+    pullOnly = true;            // simple relecture : pas de modification locale à protéger
     await flush();
     return true;
   }
   let flushing = false;
+  let pullOnly = false;
+  // Une paire de copies « conflit » n'a de sens que si cet appareil avait réellement des
+  // modifications locales non écrites ; et pas plus d'une paire par quart d'heure, sinon deux
+  // appareils ouverts en même temps en produisent une toutes les vingt secondes.
+  function conflictCopyAllowed() {
+    try {
+      const last = Number(localStorage.getItem(LAST_CONFLICT_KEY)) || 0;
+      if (Date.now() - last < CONFLICT_MIN_GAP_MS) return false;
+      localStorage.setItem(LAST_CONFLICT_KEY, String(Date.now()));
+    } catch (e) {}
+    return true;
+  }
   async function flush() {
     if (!pending) return;
     if (!hasSession()) return;
@@ -978,6 +997,7 @@
     try { await doFlush(); } finally { flushing = false; }
   }
   async function doFlush() {
+    const isPull = pullOnly; pullOnly = false;
     let content = JSON.stringify(pending);
     try {
       setStatus("sauvegarde…");
@@ -1003,10 +1023,13 @@
           try { remote = JSON.parse(remoteContent); } catch (e) {}
           if (remote) {
             if (changed) {
-              // Un autre appareil a écrit entre-temps : copies de sûreté des deux versions avant fusion.
               setStatus("fusion avec un autre appareil…");
-              try { await createNamed(CONFLICT_PREFIX + stampStr() + "-local.json", content); } catch (e) {}
-              try { await createNamed(CONFLICT_PREFIX + stampStr() + ".json", remoteContent); } catch (e) {}
+              if (!isPull && conflictCopyAllowed()) {
+                // Un autre appareil a écrit pendant que celui-ci avait des modifications : copies de sûreté des deux versions avant fusion.
+                try { await createNamed(CONFLICT_PREFIX + stampStr() + "-local.json", content); } catch (e) {}
+                try { await createNamed(CONFLICT_PREFIX + stampStr() + ".json", remoteContent); } catch (e) {}
+                pruneBackups();
+              }
             }
             const merged = merger ? merger(remote, pending)
               : ((remote.updatedAt || 0) > (pending.updatedAt || 0) ? remote : pending);
