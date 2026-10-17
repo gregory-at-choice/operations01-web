@@ -189,6 +189,27 @@ function rangerFichiersJson() {
     f.moveTo(dossier); n++;
   }
   if (n) Logger.log(n + " fichier(s) JSON rangé(s) dans « " + DOSSIER_JSON + " ».");
+  try { nettoyerCopies(60000); } catch (e) { Logger.log("Nettoyage des copies impossible : " + e); }
+}
+// Copies de sûreté conservées : les plus récentes seulement, le reste part à la corbeille (récupérable 30 jours).
+var GARDER_CONFLITS = 20;         // copies « operations01-conflit-… » (deux versions avant une fusion entre appareils)
+var GARDER_BACKUPS = 30;          // sauvegardes « operations01-backup-… »
+// Met à la corbeille les copies au-delà de ces quotas. À lancer à la main depuis l'éditeur pour un grand
+// ménage (budget 5 min, relancer jusqu'à « 0 copie ») ; appelé ensuite à chaque passage avec un budget court.
+function nettoyerCopies(budgetMs) {
+  if (FICHIER_MAILS_ID) return;
+  var debut = Date.now(), budget = budgetMs || 5 * 60000, n = 0, restant = 0;
+  [["operations01-conflit-", GARDER_CONFLITS], ["operations01-backup-", GARDER_BACKUPS]].forEach(function (p) {
+    var it = DriveApp.searchFiles("title contains '" + p[0] + "' and mimeType = 'application/json' and trashed = false and 'me' in owners");
+    var fichiers = [];
+    while (it.hasNext()) { var f = it.next(); if (f.getName().indexOf(p[0]) === 0) fichiers.push(f); }
+    fichiers.sort(function (a, b) { return b.getName().localeCompare(a.getName()); });   // horodatage dans le nom : plus récents d'abord
+    for (var i = p[1]; i < fichiers.length; i++) {
+      if (Date.now() - debut > budget) { restant += fichiers.length - i; break; }
+      try { fichiers[i].setTrashed(true); n++; } catch (e) {}
+    }
+  });
+  Logger.log(n + " copie(s) mise(s) à la corbeille" + (restant ? ", " + restant + " restante(s) : relancer nettoyerCopies." : "."));
 }
 // Dossier désigné par un chemin « a/b/c » depuis la racine du Drive ; créé s'il manque.
 function dossierParChemin(chemin) {
