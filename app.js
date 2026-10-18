@@ -39,14 +39,14 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v139";
+const APP_VERSION = "v140";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, evRequests: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], journalEntries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, evRequests: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -99,7 +99,7 @@ function adoptRemote(remote, why) {
 // distant qui ne fait que « revenir en arrière » (vieille copie poussée par un
 // appareil resté fermé) est reconnu à ses dates et ne fait rien perdre.
 const BASE_KEY = "operations01_base";
-const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals"];
+const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals", "journalEntries"];
 const SYNC_NESTED = { missions: "entries" };
 const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "evRequests", "bankMap", "bankSkip", "contactIgnore"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
@@ -692,6 +692,8 @@ async function refreshDocs(force) {
   readerBusy = true; readerFetched = true; if (view.section === "reader") render();
   try {
     const docs = await DriveSync.listDocs();
+    // Les journaux de bord des projets (fichiers au nom lisible, hors préfixe) sont ajoutés à la liste.
+    state.missions.forEach((m) => { const j = m.journal; if (j && j.fileId && !docs.some((d) => d.id === j.fileId)) docs.push({ id: j.fileId, name: j.name || `Journal de bord – ${m.title || "Projet"}`, size: 0, journal: true }); });
     const texts = {};
     docs.forEach((d) => { if (readerLib.texts[d.id]) texts[d.id] = readerLib.texts[d.id]; });
     readerLib = { docs, texts };
@@ -1157,7 +1159,7 @@ function renderMdReader() {
         <div class="md-item-s">${esc(fmtSize(d.size || (readerLib.texts[d.id] || "").length))}${readerLib.texts[d.id] != null ? "" : " · sur le Drive"}</div></div>
       <button class="btn ghost small" data-md-move="-1" data-d="${d.id}" ${i === 0 ? "disabled" : ""} title="Monter">↑</button>
       <button class="btn ghost small" data-md-move="1" data-d="${d.id}" ${i === docs.length - 1 ? "disabled" : ""} title="Descendre">↓</button>
-      <button class="btn ghost small" data-md-del="${d.id}" title="Retirer">✕</button>
+      ${d.journal ? '<span class="pm-tag" title="Journal de bord d\'un projet">📓</span>' : `<button class="btn ghost small" data-md-del="${d.id}" title="Retirer">✕</button>`}
     </div>`).join("");
 
   const nav = docs.length > 1 && idx > -1
@@ -2007,7 +2009,7 @@ try { doneOpen = localStorage.getItem("op01_doneOpen") === "1"; } catch (e) {}
 // ----------------------------- Projet : fiche à trois vues -----------------------------
 // Résumé · Gestion de projet (tâches par section) · Correspondance (mails liés).
 let projectTab = "resume", projectTabFor = null;
-const PROJECT_TABS = [["resume", "Résumé"], ["gestion", "Gestion de projet"], ["chrono", "Chronologie"], ["courrier", "Correspondance"]];
+const PROJECT_TABS = [["resume", "Résumé"], ["gestion", "Gestion de projet"], ["chrono", "Chronologie"], ["courrier", "Correspondance"], ["journal", "Journal de bord"]];
 
 function projectTasks(m) { return state.tasks.filter((t) => t.missionId === m.id); }
 // ---- Administration des tâches façon Jira : clé, priorité, type, sous-tâches, dépendances, étiquettes,
@@ -2048,6 +2050,8 @@ function setTaskField(t, field, value) {
   if (old === value || (old == null && (value === "" || value == null))) return false;
   t[field] = value;
   if (TASK_LOGGED.indexOf(field) > -1) logTask(t, field, old, value);
+  if (t.missionId && field === "status") journalLog(t.missionId, "tache", `${t.key ? t.key + " " : ""}« ${t.title || "Sans titre"} » → ${taskStatusLabel(value)}`, { kind: "task", id: t.id });
+  if (t.missionId && field === "title" && !old && value) journalLog(t.missionId, "tache", `Tâche créée : « ${value} »`, { kind: "task", id: t.id });
   if (field === "status" && value === "termine") afterTaskDone(t);
   return true;
 }
@@ -2264,10 +2268,13 @@ function taskOrigin(t) {
 }
 const taskSeconds = (m, t) => (m.entries || []).filter((e) => e.taskId === t.id).reduce((a, e) => a + entryElapsed(e), 0);
 const projectRunning = (m) => (m.entries || []).filter((e) => e.timerStartedAt);
-function stopEntry(e) {
+function stopEntry(e, m) {
   if (!e.timerStartedAt) return;
-  e.accumulatedSeconds = (e.accumulatedSeconds || 0) + (Date.now() - e.timerStartedAt) / 1000;
+  const session = (Date.now() - e.timerStartedAt) / 1000;
+  e.accumulatedSeconds = (e.accumulatedSeconds || 0) + session;
   e.timerStartedAt = null;
+  // Journal de bord : une séance d'au moins 30 s est consignée avec sa durée et le total de l'élément.
+  if (m && session >= 30) journalLog(m.id, "temps", `${e.title || "Suivi du projet"} · ${fmtDuration(session)} (total ${fmtDuration(e.accumulatedSeconds)})`, { kind: e.taskId ? "task" : "entry", id: e.taskId || e.id });
 }
 // Lance un chrono sur le projet (« suivi ») ou sur une tâche. On réutilise
 // l'élément du jour s'il existe, pour ne pas multiplier les lignes d'historique.
@@ -2301,6 +2308,173 @@ function projectSections(m) {
 const sortTasks = (ts) => [...ts].sort((a, b) => (taskDone(a) - taskDone(b))
   || (a.dueDate || "9999-12-31").localeCompare(b.dueDate || "9999-12-31") || (a.createdAt || 0) - (b.createdAt || 0));
 
+// ============================ Journal de bord d'un projet ============================
+// Chaque projet tient un journal : un fichier .md lisible dans Documents (et sur le Drive), nourri de deux
+// façons. 1) Operations01 y consigne automatiquement le suivi de temps, les tâches, les actions, les
+// messages classés ou répondus, les changements de statut. 2) Grégory y écrit ses propres notes.
+// Les entrées vivent dans l'état synchronisé (collection journalEntries, fusionnée entre appareils) ; le
+// fichier .md en est la mise en forme, réécrite au plus tard 15 s après un ajout. Le fichier est créé à la
+// racine du Drive (seul endroit accessible avec la portée drive.file), puis rangé dans le dossier choisi
+// par le script des mails (rangerJournaux), qui publie aussi la liste des dossiers du Drive.
+const JOURNAL_TYPES = [["note", "📝", "Notes"], ["temps", "⏱️", "Temps"], ["tache", "✅", "Tâches"], ["action", "📌", "Actions"], ["message", "✉️", "Messages"], ["rdv", "📅", "Rendez-vous"], ["projet", "📁", "Projet"], ["document", "📄", "Documents"]];
+const journalIcon = (type) => (JOURNAL_TYPES.find((x) => x[0] === type) || ["", "•"])[1];
+let journalFilter = "tous";
+const journalStatus = {};   // par projet : dernier résultat d'écriture du fichier et vérification du rangement
+const journalTimers = {};
+function journalEntries(mid) { return (state.journalEntries || []).filter((e) => e && e.missionId === mid).sort((a, b) => String(a.at).localeCompare(String(b.at)) || (a.createdAt || 0) - (b.createdAt || 0)); }
+function journalLog(mid, type, text, ref, opts) {
+  if (!mid || !text || !findMission(mid)) return null;
+  state.journalEntries = state.journalEntries || [];
+  const e = { id: uid(), missionId: mid, at: (opts && opts.at) || new Date().toISOString(), type: type || "note", text: String(text).trim(), auto: !(opts && opts.manual), ref: ref || null, createdAt: Date.now() };
+  state.journalEntries.push(e);
+  scheduleJournalWrite(mid);
+  return e;
+}
+// Jour et heure locaux d'une entrée (l'horodatage est en UTC).
+function journalDay(at) { const d = new Date(at); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function journalTime(at) { const d = new Date(at); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; }
+function journalLongDay(iso) { const s = new Date(iso + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }); return s.charAt(0).toUpperCase() + s.slice(1); }
+function journalMarkdown(m) {
+  const es = journalEntries(m.id);
+  const comp = m.companyId ? (state.companies || []).find((c) => c.id === m.companyId) : null;
+  const lines = [`# Journal de bord — ${m.title || "Projet"}`, ""];
+  lines.push([comp ? `Société : ${comp.name || ""}` : "", `Statut : ${statusLabel(m.statusCode)}`, m.startDate ? `Début : ${fmtDate(m.startDate)}` : ""].filter(Boolean).join(" · "), "");
+  lines.push(`_Tenu par Operations01 (temps, tâches, actions, messages, statut) et à la main (notes). Mis à jour le ${fmtDateTimeISO(new Date().toISOString())} · ${es.length} entrée${es.length > 1 ? "s" : ""}._`, "");
+  let day = null;
+  es.forEach((e) => {
+    const d = journalDay(e.at);
+    if (d !== day) { day = d; lines.push(`## ${journalLongDay(d)}`, ""); }
+    const txt = String(e.text || "").split("\n");
+    lines.push(`- **${journalTime(e.at)}** ${journalIcon(e.type)} ${txt[0]}${e.auto ? "" : " _(note)_"}`);
+    txt.slice(1).forEach((l) => lines.push(`  ${l}`));
+  });
+  if (!es.length) lines.push("_Aucune entrée pour l'instant._");
+  return lines.join("\n") + "\n";
+}
+function scheduleJournalWrite(mid) {
+  const m = findMission(mid); if (!m || !m.journal || !m.journal.fileId) return;
+  clearTimeout(journalTimers[mid]);
+  journalTimers[mid] = setTimeout(() => { writeJournal(mid); }, 15000);
+}
+async function writeJournal(mid) {
+  const m = findMission(mid); if (!m || !m.journal || !m.journal.fileId) return false;
+  const st = journalStatus[mid] || (journalStatus[mid] = {});
+  if (!(window.DriveSync && DriveSync.isConnected())) { st.ok = false; st.err = "hors connexion Drive"; return false; }
+  clearTimeout(journalTimers[mid]);
+  const md = journalMarkdown(m);
+  try {
+    await DriveSync.updateTextFile(m.journal.fileId, md);
+    readerLib.texts[m.journal.fileId] = md; saveCache();
+    st.ok = true; st.at = Date.now(); st.err = "";
+  } catch (e) { st.ok = false; st.err = (e && e.message) || String(e); }
+  if (view.section === "missions" && view.detailId === mid && projectTab === "journal") render();
+  return true;
+}
+// Rangement : le script des mails déplace le fichier dans le dossier demandé ; on le constate au parent.
+async function checkJournalPlace(m) {
+  const j = m.journal, st = journalStatus[m.id] || (journalStatus[m.id] = {});
+  if (!j || !j.fileId || st.checking || (st.placeAt && Date.now() - st.placeAt < 120000)) return;
+  if (!(window.DriveSync && DriveSync.isConnected())) return;
+  st.checking = true;
+  try { const meta = await DriveSync.fileParents(j.fileId); const p = (meta.parents || [])[0] || ""; st.parent = p; st.placed = !!(p && j.parentInitial && p !== j.parentInitial); st.trashed = !!meta.trashed; }
+  catch (e) { st.placed = null; }
+  st.placeAt = Date.now(); st.checking = false;
+  if (view.section === "missions" && view.detailId === m.id && projectTab === "journal") render();
+}
+function journalFolders() { const d = mailStore.main; return d && Array.isArray(d.dossiers) ? d.dossiers.map((x) => (typeof x === "string" ? x : x.chemin)).filter(Boolean) : []; }
+// Dossier suggéré : celui dont le chemin contient le nom de la société ou un mot du titre du projet.
+function journalSuggestFolder(m) {
+  const folders = journalFolders(); if (!folders.length) return "";
+  const comp = m.companyId ? (state.companies || []).find((c) => c.id === m.companyId) : null;
+  const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const keys = [comp && comp.name].concat(String(m.title || "").split(/[\s\-–—:·]+/)).filter((k) => k && k.length >= 4).map(norm);
+  let best = "", bestScore = 0;
+  folders.forEach((f) => { const nf = norm(f); const score = keys.reduce((a, k) => a + (nf.indexOf(k) > -1 ? k.length : 0), 0); if (score > bestScore || (score === bestScore && score && f.length < best.length)) { best = f; bestScore = score; } });
+  return bestScore ? best : "";
+}
+function openJournalDialog(m, mode) {
+  const j = m.journal || {};
+  const folders = journalFolders();
+  const defName = j.name || `Journal de bord – ${m.title || "Projet"}.md`;
+  const folder = j.dossier || journalSuggestFolder(m);
+  showModal(`<div class="modal-head"><strong class="grow">${mode === "move" ? "Classer le journal" : "Créer le journal de bord"}</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    ${mode === "move" ? "" : `<label class="field"><span>Nom du fichier</span><input data-jn-name value="${esc(defName)}"/></label>`}
+    <label class="field"><span>Dossier du Drive où le classer</span><input data-jn-folder list="jnFolders" value="${esc(folder)}" placeholder="ex. 5_Clients/MSVL/3-pilotage" autocomplete="off"/></label>
+    <datalist id="jnFolders">${folders.map((f) => `<option value="${esc(f)}">`).join("")}</datalist>
+    <div class="muted" style="font-size:12px;line-height:1.4">${folders.length ? `${folders.length} dossiers de ton Drive sont proposés (liste tenue à jour par le script des mails) : tape quelques lettres pour filtrer. Un chemin inconnu sera créé.` : "La liste des dossiers du Drive n'est pas encore disponible : tape le chemin depuis la racine (il sera créé s'il n'existe pas)."}
+      ${mode === "move" ? "Le déplacement est fait par le script des mails à son prochain passage (15 min au plus)." : "Le fichier est créé tout de suite à la racine du Drive, puis rangé dans ce dossier par le script des mails à son prochain passage (15 min au plus). Les entrées déjà consignées y figureront."}</div>
+    <div class="inline" style="justify-content:flex-end;margin-top:12px;gap:8px"><button class="btn secondary" data-jn-cancel>Annuler</button><button class="btn" data-jn-ok>${mode === "move" ? "Enregistrer" : "Créer le journal"}</button></div>`);
+  document.querySelector("[data-modal-close]").onclick = closeModal;
+  document.querySelector("[data-jn-cancel]").onclick = closeModal;
+  const fi = document.querySelector("[data-jn-folder]"); fi.focus();
+  document.querySelector("[data-jn-ok]").onclick = () => {
+    const dossier = fi.value.trim().replace(/^\/+|\/+$/g, "");
+    if (mode === "move") {
+      if (m.journal) { const old = m.journal.dossier || ""; m.journal.dossier = dossier; if (old !== dossier) journalLog(m.id, "projet", `Journal à classer dans « ${dossier || "racine du Drive"} »`); const st = journalStatus[m.id]; if (st) st.placeAt = 0; save(); }
+      closeModal(); render(); return;
+    }
+    const nameEl = document.querySelector("[data-jn-name]"); let name = ((nameEl && nameEl.value) || defName).trim() || defName; if (!/\.md$/i.test(name)) name += ".md";
+    closeModal(); createJournal(m, name, dossier);
+  };
+}
+async function createJournal(m, name, dossier) {
+  if (!(window.DriveSync && DriveSync.isConnected())) { toast("Connecte-toi à Google Drive pour créer le journal"); return; }
+  journalStatus[m.id] = { creating: true }; render();
+  try {
+    const id = await DriveSync.createTextFile(name, journalMarkdown(m));
+    let parentInitial = ""; try { parentInitial = ((await DriveSync.fileParents(id)).parents || [])[0] || ""; } catch (e) {}
+    m.journal = { fileId: id, name, dossier: dossier || "", parentInitial, createdAt: Date.now() };
+    journalLog(m.id, "projet", `Journal de bord créé${dossier ? ` · à classer dans « ${dossier} »` : ""}`);
+    journalStatus[m.id] = { ok: true, at: Date.now() };
+    save();
+    readerLib.texts[id] = journalMarkdown(m); if (!readerLib.docs.some((d) => d.id === id)) readerLib.docs.push({ id, name, size: 0, journal: true }); saveCache();
+    toast("Journal de bord créé ✓");
+    writeJournal(m.id);
+  } catch (e) { journalStatus[m.id] = { ok: false, err: (e && e.message) || String(e) }; toast("Création impossible : " + ((e && e.message) || e)); }
+  render();
+}
+function renderProjectJournal(m) {
+  const j = m.journal, st = journalStatus[m.id] || {};
+  const all = journalEntries(m.id);
+  if (j && j.fileId) checkJournalPlace(m);
+  const present = JOURNAL_TYPES.filter((t) => all.some((e) => e.type === t[0]));
+  const chips = [`<button class="chip ${journalFilter === "tous" ? "active" : ""}" data-jn-filter="tous">Tout <span class="pm-tag">${all.length}</span></button>`]
+    .concat(present.map((t) => `<button class="chip ${journalFilter === t[0] ? "active" : ""}" data-jn-filter="${t[0]}">${t[1]} ${t[2]} <span class="pm-tag">${all.filter((e) => e.type === t[0]).length}</span></button>`)).join("");
+  const list = (journalFilter === "tous" ? all : all.filter((e) => e.type === journalFilter)).slice().reverse();
+  let html = "", day = null;
+  list.forEach((e) => {
+    const d = journalDay(e.at);
+    if (d !== day) { day = d; html += `<div class="jn-day">${esc(journalLongDay(d))}</div>`; }
+    const ref = e.ref && e.ref.kind ? ` data-jn-open="${esc(e.ref.kind)}" data-jn-id="${esc(e.ref.id || "")}"` : "";
+    html += `<div class="jn-row ${e.auto ? "auto" : "manual"}"${ref}>
+      <span class="jn-time">${journalTime(e.at)}</span><span class="jn-ic">${journalIcon(e.type)}</span>
+      <div class="grow jn-text">${esc(e.text)}</div>
+      <span class="pm-tag jn-tag">${e.auto ? "auto" : "note"}</span>
+      ${e.auto ? "" : `<button class="btn ghost small" data-jn-edit="${e.id}" title="Modifier">✎</button>`}
+      <button class="btn ghost small" data-jn-del="${e.id}" title="Retirer du journal">✕</button></div>`;
+  });
+  const placeTxt = !j ? "" : st.trashed ? `<span style="color:#d23c3c">Le fichier est à la corbeille du Drive.</span>`
+    : !j.dossier ? "À la racine du Drive (aucun dossier demandé)."
+    : st.placed === true ? `Rangé dans « ${esc(j.dossier)} ».`
+    : st.placed === false ? `À classer dans « ${esc(j.dossier)} » · déplacement par le script des mails à son prochain passage (15 min au plus).`
+    : `Dossier demandé : « ${esc(j.dossier)} ».`;
+  const head = j && j.fileId
+    ? `<div class="card jn-head"><div class="inline" style="flex-wrap:wrap;gap:8px"><span style="font-size:22px">📓</span><div class="grow" style="min-width:200px"><div style="font-weight:700">${esc(j.name || "Journal de bord")}</div><div class="muted" style="font-size:12px">${placeTxt} ${st.ok === false && st.err ? `<span style="color:#d23c3c">Dernière écriture impossible : ${esc(st.err)}</span>` : st.at ? `Fichier mis à jour à ${journalTime(new Date(st.at).toISOString())}.` : ""}</div></div>
+        <button class="btn ghost small" data-jn-read="${j.fileId}">📖 Lire</button>
+        <a class="btn ghost small" href="https://drive.google.com/file/d/${esc(j.fileId)}/view" target="_blank" rel="noopener">↗ Drive</a>
+        <button class="btn ghost small" data-jn-regen="${m.id}" title="Réécrire le fichier .md à partir des entrées">↻ Régénérer</button>
+        <button class="btn ghost small" data-jn-move="${m.id}" title="Changer le dossier de classement">📁 Classer…</button></div></div>`
+    : `<div class="card jn-head"><div class="inline" style="flex-wrap:wrap;gap:10px"><span style="font-size:22px">📓</span><div class="grow" style="min-width:200px"><div style="font-weight:700">Pas encore de fichier journal</div><div class="muted" style="font-size:13px">${all.length ? `${all.length} entrée${all.length > 1 ? "s" : ""} déjà consignée${all.length > 1 ? "s" : ""} ci-dessous : elles iront dans le fichier dès sa création.` : "Les entrées automatiques (temps, tâches, actions, messages) et tes notes s'accumuleront ici."} Le fichier .md se lit dans Documents et sur le Drive, dans le dossier de ton choix.</div></div>
+        <button class="btn" data-jn-create="${m.id}" ${st.creating ? "disabled" : ""}>${st.creating ? "Création…" : "Créer le journal de bord"}</button></div></div>`;
+  const now = new Date(); const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const form = `<div class="card jn-form"><div class="section-h" style="margin-top:0">Nouvelle entrée</div>
+      <textarea data-jn-text rows="3" placeholder="Ce que je veux consigner : décision, appel, point d'étape, idée…"></textarea>
+      <div class="inline" style="flex-wrap:wrap;gap:8px;margin-top:8px"><input type="datetime-local" data-jn-at value="${local}" style="width:auto"/><span class="grow"></span><button class="btn" data-jn-add="${m.id}">📝 Consigner</button></div></div>`;
+  return `${head}${form}
+    <div class="chip-row" style="margin:12px 0">${chips}</div>
+    <div class="jn-list">${html || `<div class="center-empty">Aucune entrée${journalFilter !== "tous" ? " de ce type" : ""}.</div>`}</div>`;
+}
+
 function renderMissionDetail(id) {
   const m = state.missions.find((x) => x.id === id);
   if (!m) return renderMissions();
@@ -2315,7 +2489,7 @@ function renderMissionDetail(id) {
         <button class="btn" data-project-timer="${m.id}">▶ Suivi du projet</button>
         <span class="muted" style="font-size:13px">Temps total : <span class="timer" data-total="${m.id}">${fmtDuration(missionTotal(m))}</span> · cette semaine : ${fmtDuration(projectWeekSeconds(m))}</span></div>`;
   const tabs = PROJECT_TABS.map(([tid, lbl]) => `<button class="chip ${projectTab === tid ? "active" : ""}" data-projtab="${tid}">${lbl}</button>`).join("");
-  const body = projectTab === "gestion" ? renderProjectGestion(m) : projectTab === "chrono" ? renderProjectChrono(m) : projectTab === "courrier" ? renderProjectCourrier(m) : renderProjectResume(m);
+  const body = projectTab === "gestion" ? renderProjectGestion(m) : projectTab === "chrono" ? renderProjectChrono(m) : projectTab === "courrier" ? renderProjectCourrier(m) : projectTab === "journal" ? renderProjectJournal(m) : renderProjectResume(m);
   return `<button class="back" data-back>‹ Projets</button>
     <div class="toolbar">
       <input class="grow" data-bind="missions|${m.id}|title" value="${esc(m.title)}" placeholder="Intitulé du projet" style="font-size:21px;font-weight:700"/>
@@ -3030,6 +3204,8 @@ function saveEventReply(ev, text) {
   const p = ev.proposition || {};
   if (String(text || "").trim() === String(p.reponse || "").trim()) delete state.evEdits[ev.id];
   else state.evEdits[ev.id] = { reponse: text, original: p.reponse || "", genereePar: p.genereePar || "", at: new Date().toISOString(), sujet: ev.sujet || "", expediteur: eventSenderKey(ev), source: ev.source || "", compte: ev.compte || "" };
+  const g = String(text || "").trim() ? guessMissionFor(ev) : null;
+  if (g && g.id) journalLog(g.id, "message", `Réponse préparée à ${eventSenderName(ev) || "?"}${ev.sujet ? " · " + ev.sujet : ""}`, { kind: "event", id: ev.id });
   save();
 }
 // ---- Réponse à la demande : « ✨ Proposer une réponse » enregistre une demande (synchronisée, exportée
@@ -3164,6 +3340,7 @@ function createTasksFromDialog(ev, f, p) {
     missionId: f.missionId || null, missionTitle: (findMission(f.missionId) || {}).title || "", dueDate: f.due || "", estimationMin: f.est || 0, perStep: !!(f.perStep && steps.length), title: f.title, steps: steps.map((x) => x.etape),
     proposed: { title: p.titre || "", echeance: p.echeance ? String(p.echeance).slice(0, 10) : "", estimationMin: Math.round(Number(p.estimationMin) || 0), steps: eventSteps(ev).map((x) => x.etape) } };
   if (k && f.missionId) { state.evLearn = state.evLearn || {}; state.evLearn.senderMission = state.evLearn.senderMission || {}; state.evLearn.senderMission[k] = f.missionId; }
+  if (f.missionId) journalLog(f.missionId, "message", `Message de ${eventSenderName(ev) || "?"}${ev.sujet ? " « " + ev.sujet + " »" : ""} → ${made.length > 1 ? made.length + " tâches créées" : "tâche « " + (made[0] ? made[0].title : f.title) + " »"}`, { kind: "event", id: ev.id });
   save();
   return made;
 }
@@ -5055,7 +5232,8 @@ function nextOccurrence(dateStr, freq) {
 }
 function materializeRecurrence(rec, date) {
   if (rec.kind === "task") {
-    state.tasks.push({ id: uid(), title: rec.title || "Tâche récurrente", status: "aFaire", missionId: rec.missionId || null, dueDate: date, createdAt: Date.now(), recurrenceId: rec.id });
+    const rt = { id: uid(), title: rec.title || "Tâche récurrente", status: "aFaire", missionId: rec.missionId || null, dueDate: date, createdAt: Date.now(), recurrenceId: rec.id };
+    state.tasks.push(rt); if (rt.missionId) journalLog(rt.missionId, "tache", `Tâche récurrente créée : « ${rt.title} » (échéance ${fmtDate(date)})`, { kind: "task", id: rt.id });
   } else {
     state.invoices.push({ id: uid(), title: rec.title || "Facture récurrente", reference: "", direction: rec.direction || "depense", status: rec.direction === "recette" ? "aEmettre" : "aPayer", amount: Number(rec.amount) || 0, vatRate: rec.vatRate == null ? 20 : Number(rec.vatRate), startDate: date, hasDueDate: false, dueDate: "", paymentDate: "", companyId: rec.companyId || null, contactId: null, categoryName: rec.categoryName || "", recurrenceId: rec.id });
   }
@@ -7487,7 +7665,7 @@ function wire() {
   // liaison générique des champs top-niveau : data-bind="collection|id|field"
   c.querySelectorAll("[data-bind]").forEach((el) => {
     const [coll, id, field] = el.dataset.bind.split("|");
-    const h = () => { const o = (state[coll] || []).find((x) => x.id === id); if (!o) return; o[field] = el.type === "number" ? (parseFloat(el.value) || 0) : el.value; save(); if (el.dataset.rerender !== undefined) render(); };
+    const h = () => { const o = (state[coll] || []).find((x) => x.id === id); if (!o) return; const nv = el.type === "number" ? (parseFloat(el.value) || 0) : el.value; if (coll === "missions" && field === "statusCode" && o[field] !== nv) journalLog(id, "projet", `Statut du projet : ${statusLabel(nv)}`); o[field] = nv; save(); if (el.dataset.rerender !== undefined) render(); };
     el.addEventListener("change", h); el.addEventListener("blur", h);
   });
 
@@ -7923,15 +8101,25 @@ function wire() {
   // Attribut distinct de celui des onglets de Planning : les deux gestionnaires
   // écrivaient sinon sur le même onclick, et le dernier l'emportait.
   c.querySelectorAll("[data-projtab]").forEach((b) => b.onclick = () => { projectTab = b.dataset.projtab; render(); });
+  // Journal de bord
+  c.querySelectorAll("[data-jn-filter]").forEach((b) => b.onclick = () => { journalFilter = b.dataset.jnFilter; render(); });
+  c.querySelectorAll("[data-jn-create]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.jnCreate); if (m) openJournalDialog(m, "create"); });
+  c.querySelectorAll("[data-jn-move]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.jnMove); if (m) openJournalDialog(m, "move"); });
+  c.querySelectorAll("[data-jn-regen]").forEach((b) => b.onclick = () => { writeJournal(b.dataset.jnRegen); toast("Fichier en cours de réécriture…"); });
+  c.querySelectorAll("[data-jn-read]").forEach((b) => b.onclick = () => { const id = b.dataset.jnRead; state.readerCurrent = id; reader.kind = "md"; saveReader(); save({ silent: true }); go("reader"); ensureDocText(id); });
+  c.querySelectorAll("[data-jn-add]").forEach((b) => b.onclick = () => { const ta = c.querySelector("[data-jn-text]"), at = c.querySelector("[data-jn-at]"); const txt = ((ta && ta.value) || "").trim(); if (!txt) { toast("Écris d'abord ta note"); if (ta) ta.focus(); return; } const when = at && at.value ? new Date(at.value).toISOString() : new Date().toISOString(); journalLog(b.dataset.jnAdd, "note", txt, null, { manual: true, at: when }); save(); render(); toast("Consigné ✓"); });
+  c.querySelectorAll("[data-jn-del]").forEach((b) => b.onclick = () => { const i = (state.journalEntries || []).findIndex((e) => e.id === b.dataset.jnDel); if (i < 0) return; if (!confirm("Retirer cette entrée du journal ?")) return; const e = state.journalEntries.splice(i, 1)[0]; scheduleJournalWrite(e.missionId); save(); render(); });
+  c.querySelectorAll("[data-jn-edit]").forEach((b) => b.onclick = () => { const e = (state.journalEntries || []).find((x) => x.id === b.dataset.jnEdit); if (!e) return; const v = prompt("Modifier la note", e.text); if (v == null || !v.trim()) return; e.text = v.trim(); scheduleJournalWrite(e.missionId); save(); render(); });
+  c.querySelectorAll("[data-jn-open]").forEach((r) => r.onclick = (ev) => { if (ev.target.closest("button, a")) return; const k = r.dataset.jnOpen, id = r.dataset.jnId; if (k === "task" && state.tasks.some((t) => t.id === id)) openTask(id); else if (k === "action" && state.actions.some((a) => a.id === id)) openDetail("actions", id); else if (k === "event") go("atraiter"); });
   c.querySelectorAll("[data-goto-gestion]").forEach((r) => r.onclick = () => { projectTab = "gestion"; render(); });
   c.querySelectorAll("[data-project-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.projectTimer); if (!m) return; startProjectTimer(m, null); save(); render(); toast("Chrono lancé sur le projet ▶"); });
   c.querySelectorAll("[data-task-timer]").forEach((b) => b.onclick = () => {
     const m = findMission(b.dataset.m); if (!m) return;
     const run = (m.entries || []).find((e) => e.taskId === b.dataset.taskTimer && e.timerStartedAt);
-    if (run) { stopEntry(run); toast("Chrono arrêté ■"); } else { startProjectTimer(m, b.dataset.taskTimer); toast("Chrono lancé sur la tâche ▶"); }
+    if (run) { stopEntry(run, m); toast("Chrono arrêté ■"); } else { startProjectTimer(m, b.dataset.taskTimer); toast("Chrono lancé sur la tâche ▶"); }
     save(); render();
   });
-  c.querySelectorAll("[data-stop-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.stopEntry); if (e) { stopEntry(e); save(); render(); } });
+  c.querySelectorAll("[data-stop-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.stopEntry); if (e) { stopEntry(e, m); save(); render(); } });
   c.querySelectorAll("[data-add-ptask]").forEach((b) => b.onclick = () => {
     const t = { id: uid(), title: "", status: b.dataset.status || "aFaire", missionId: b.dataset.addPtask, section: b.dataset.section || "", assignee: "", progress: 0, origin: "manuel", dueDate: "", createdAt: Date.now(), priority: "moyenne", labels: [] };
     state.tasks.push(t); ensureTaskKeys(); save();
@@ -7971,7 +8159,8 @@ function wire() {
   c.querySelectorAll("[data-task-mission]").forEach((el) => el.onchange = () => { const t = state.tasks.find((x) => x.id === el.dataset.taskMission); if (t) { t.key = ""; setTaskField(t, "missionId", el.value || null); ensureTaskKeys(); save(); render(); } });
   c.querySelectorAll("[data-mail-task]").forEach((b) => b.onclick = () => {
     const m = findMission(b.dataset.m); const th = mailThreads().find((x) => x.id === b.dataset.mailTask); if (!m || !th) return;
-    state.tasks.push({ id: uid(), title: th.subject || "Mail", status: "aFaire", missionId: m.id, section: "", assignee: "", progress: 0, origin: "mail", mailLink: th.link || "", mailThreadId: th.id, mailSubject: th.subject || "", dueDate: "", createdAt: Date.now() });
+    const nt = { id: uid(), title: th.subject || "Mail", status: "aFaire", missionId: m.id, section: "", assignee: "", progress: 0, origin: "mail", mailLink: th.link || "", mailThreadId: th.id, mailSubject: th.subject || "", dueDate: "", createdAt: Date.now() };
+    state.tasks.push(nt); journalLog(m.id, "tache", `Tâche créée depuis le mail « ${nt.title} »${th.fromName ? " de " + th.fromName : ""}`, { kind: "task", id: nt.id });
     save(); projectTab = "gestion"; render(); toast("Tâche créée à partir du mail ✓");
   });
   c.querySelectorAll("[data-mail-entry]").forEach((b) => b.onclick = () => {
@@ -7984,7 +8173,7 @@ function wire() {
     const v = el.value; if (!v) return;
     const id = el.dataset.mailAssign;
     if (v === "none") { setMailLink(id, ""); toast("Fil écarté de tous les projets"); }
-    else { setMailLink(id, v); const target = findMission(v); toast(v === el.dataset.m ? "Fil classé dans ce projet ✓" : `Fil classé dans « ${target ? target.title : "?"} »`); }
+    else { setMailLink(id, v); const target = findMission(v); const th = mailThreads().find((x) => x.id === id); if (th) journalLog(v, "message", `Fil classé : « ${th.subject || "Sans objet"} »${th.fromName ? " · " + th.fromName : ""}`, { kind: "mail", id }); toast(v === el.dataset.m ? "Fil classé dans ce projet ✓" : `Fil classé dans « ${target ? target.title : "?"} »`); }
     save(); render();
   });
   c.querySelectorAll("[data-mail-addemail]").forEach((b) => b.onclick = () => {
@@ -8052,7 +8241,7 @@ function wire() {
   c.querySelectorAll("[data-add-entry]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); if (!m) return; m.entries.push({ id: uid(), kind: b.dataset.addEntry, title: "", content: "", date: todayISO(), url: "", accumulatedSeconds: 0, timerStartedAt: null, createdAt: Date.now() }); entryOpen[m.entries[m.entries.length - 1].id] = true; save(); render(); });
   c.querySelectorAll("[data-toggle]").forEach((h) => h.onclick = (ev) => { if (ev.target.closest("a,button,input,select,textarea")) return; const m = findMission(h.dataset.m); const e = findEntry(m, h.dataset.toggle); if (e) { entryOpen[e.id] = !entryOpen[e.id]; render(); } });
   c.querySelectorAll("[data-efield]").forEach((el) => { const h = () => { const m = findMission(el.dataset.m); const e = findEntry(m, el.dataset.e); if (!e) return; e[el.dataset.efield] = el.value; save(); if (el.dataset.efield === "kind") render(); }; el.addEventListener("change", h); el.addEventListener("blur", h); });
-  c.querySelectorAll("[data-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.timer); if (!e) return; if (e.timerStartedAt) { e.accumulatedSeconds = (e.accumulatedSeconds || 0) + (Date.now() - e.timerStartedAt) / 1000; e.timerStartedAt = null; } else { e.timerStartedAt = Date.now(); } save(); render(); });
+  c.querySelectorAll("[data-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.m); const e = findEntry(m, b.dataset.timer); if (!e) return; if (e.timerStartedAt) { stopEntry(e, m); } else { e.timerStartedAt = Date.now(); } save(); render(); });
 
   // Saisie / correction manuelle du temps d'un élément d'historique
   const durInputs = (el) => {
@@ -8163,7 +8352,7 @@ function wire() {
   c.querySelectorAll("[data-add-action]").forEach((b) => b.onclick = () => { const x = { id: uid(), title: "", projectName: "", missionId: null, request: "", contactId: null, recipientName: "", recipientEmail: "", dueDate: "", reminderDaily: true, closed: false, closedAt: null, createdAt: Date.now() }; state.actions.push(x); save(); openDetail("actions", x.id); });
   c.querySelectorAll("[data-action-contact]").forEach((sel) => sel.onchange = () => { const a = state.actions.find((x) => x.id === sel.dataset.actionContact); if (!a) return; a.contactId = sel.value || null; const ct = state.contacts.find((x) => x.id === a.contactId); if (ct) { a.recipientName = contactName(ct); if (ct.email) a.recipientEmail = ct.email; } save(); render(); });
   c.querySelectorAll("[data-action-reminder]").forEach((cb) => cb.onchange = () => { const a = state.actions.find((x) => x.id === cb.dataset.actionReminder); if (a) { a.reminderDaily = cb.checked; save(); render(); } });
-  c.querySelectorAll("[data-close-action]").forEach((b) => b.onclick = () => { const a = state.actions.find((x) => x.id === b.dataset.closeAction); if (a) { a.closed = true; a.closedAt = Date.now(); save(); render(); } });
+  c.querySelectorAll("[data-close-action]").forEach((b) => b.onclick = () => { const a = state.actions.find((x) => x.id === b.dataset.closeAction); if (a) { a.closed = true; a.closedAt = Date.now(); if (a.missionId) journalLog(a.missionId, "action", `Action clôturée : « ${a.title || "Sans titre"} »${a.recipientName ? " · " + a.recipientName : ""}`, { kind: "action", id: a.id }); save(); render(); } });
   c.querySelectorAll("[data-reopen-action]").forEach((b) => b.onclick = () => { const a = state.actions.find((x) => x.id === b.dataset.reopenAction); if (a) { a.closed = false; a.closedAt = null; save(); render(); } });
   c.querySelectorAll("[data-del-action]").forEach((b) => b.onclick = () => { if (confirm("Supprimer cette action ?")) { state.actions = state.actions.filter((x) => x.id !== b.dataset.delAction); save(); view.detailId = null; go("actions"); } });
 

@@ -246,6 +246,30 @@ recherche (clé, intitulé, notes), projet, priorité, étiquette, personne.
 - **Partager** : depuis la fiche d'une tâche (« Partager ») ou la chronologie d'un projet (« Partager
   le planning »), un texte brut à copier, envoyer par mail ou via la feuille de partage de l'appareil.
 
+## Journal de bord : un fichier .md par projet
+
+Chaque projet a un onglet **Journal de bord**. Le journal est un fichier `.md` sur le Drive, lisible
+dans **Documents** (avec la lecture à voix haute) et avec n'importe quel éditeur.
+
+- **Création** : « Créer le journal de bord » demande le nom du fichier et le **dossier du Drive où le
+  classer** (liste des dossiers du Drive tenue par le script des mails, filtrable en tapant ; un chemin
+  inconnu est créé). L'app crée le fichier tout de suite à la racine du Drive (sa portée `drive.file`
+  ne lui permet pas d'écrire ailleurs), puis le script des mails le **range dans le dossier demandé** à
+  son prochain passage (`rangerJournaux`, 15 min au plus). L'onglet indique « À classer dans … » puis
+  « Rangé dans … ». « Classer… » change le dossier à tout moment.
+- **Deux sortes d'entrées.** 1) Les entrées **automatiques** d'Operations01 : séance de suivi de temps
+  à l'arrêt du chrono (durée et total), tâche créée ou changement de statut, action clôturée, fil de
+  mails classé dans le projet, réponse préparée à un message, tâches créées depuis un message,
+  changement de statut du projet. 2) Les **notes** écrites à la main dans l'onglet (texte libre,
+  date et heure modifiables), modifiables et supprimables ensuite.
+- **Le fichier** est regroupé par jour (ordre chronologique), une ligne par entrée avec l'heure et une
+  icône par type, les notes sur plusieurs lignes conservées. Il est réécrit au plus tard 15 s après
+  chaque ajout, et « Régénérer » le réécrit à la demande. Les entrées vivent dans les données
+  synchronisées (`journalEntries`) : elles sont fusionnées entre appareils et s'accumulent même avant
+  la création du fichier.
+- **Lecture** : « Lire » ouvre le journal dans Documents ; il y figure dans la liste de lecture,
+  marqué 📓, sans bouton de suppression. « ↗ Drive » l'ouvre sur le Drive.
+
 ## Correspondances : un fichier par interlocuteur sur le Drive, réponses étayées
 
 Le dossier **Correspondances/** du Drive (racine de « Mon Drive ») contient **un `.md` par

@@ -166,8 +166,12 @@ function analyserMails() {
 
   var out = { updatedAt: Date.now(), generatedAt: new Date().toISOString(), mailbox: moi,
     unread: unread, relance: relance, nouveau: nouveau, rdvPrep: rdvPrep, threads: threads };
-  if (!FICHIER_MAILS_ID) { try { out.correspondances = indexCorrespondances(); } catch (e) { Logger.log("Index des correspondances illisible : " + e); } }
+  if (!FICHIER_MAILS_ID) {
+    try { out.correspondances = indexCorrespondances(); } catch (e) { Logger.log("Index des correspondances illisible : " + e); }
+    try { out.dossiers = listerDossiers(); } catch (e) { Logger.log("Liste des dossiers impossible : " + e); }
+  }
   cible.setContent(JSON.stringify(out));
+  if (!FICHIER_MAILS_ID) { try { rangerJournaux(data); } catch (e) { Logger.log("Rangement des journaux impossible : " + e); } }
   Logger.log(unread.length + " non lus, " + relance.length + " à relancer, " + nouveau.length + " nouveaux, " + rdvPrep.length + " RDV, " + threads.length + " fils indexés (" + relus + " relus" + (complet ? ", index complet" : "") + ").");
   try { rangerFichiersJson(); } catch (e) { Logger.log("Rangement des JSON impossible : " + e); }
 }
@@ -210,6 +214,52 @@ function nettoyerCopies(budgetMs) {
     }
   });
   Logger.log(n + " copie(s) mise(s) à la corbeille" + (restant ? ", " + restant + " restante(s) : relancer nettoyerCopies." : "."));
+}
+// ---- Journaux de bord des projets ----
+// L'app crée le fichier .md du journal à la racine du Drive (sa portée drive.file ne lui permet pas
+// mieux) et note dans la fiche du projet le dossier souhaité : data.missions[].journal = { fileId, dossier }.
+// À chaque passage, les journaux qui ne sont pas dans leur dossier y sont déplacés (dossier créé s'il manque).
+function rangerJournaux(data) {
+  var n = 0;
+  ((data && data.missions) || []).forEach(function (m) {
+    var j = m && m.journal; if (!j || !j.fileId || !j.dossier) return;
+    var f = fichierParId(j.fileId); if (!f || f.isTrashed()) return;
+    var dossier = dossierParChemin(j.dossier);
+    var parents = f.getParents(), deja = false;
+    while (parents.hasNext()) { if (parents.next().getId() === dossier.getId()) { deja = true; break; } }
+    if (deja) return;
+    f.moveTo(dossier); n++;
+    Logger.log("Journal « " + f.getName() + " » rangé dans « " + j.dossier + " ».");
+  });
+  if (n) Logger.log(n + " journal/journaux rangé(s).");
+}
+// Liste des dossiers du Drive (chemins depuis la racine, DOSSIERS_PROFONDEUR niveaux), proposée dans l'app
+// pour choisir où classer un journal. Calculée au plus une fois par DOSSIERS_CACHE_MIN minutes.
+var DOSSIERS_PROFONDEUR = 4;
+var DOSSIERS_MAX = 1500;
+var DOSSIERS_CACHE_MIN = 360;
+var DOSSIERS_IGNORER = /^(soft|\.|_|Correspondances$)/;   // dossiers techniques
+function listerDossiers() {
+  var cache = CacheService.getScriptCache(), brut = cache.get("op01_dossiers");
+  if (brut) { try { return JSON.parse(brut); } catch (e) {} }
+  var out = [], debut = Date.now();
+  function parcourir(dossier, chemin, niveau) {
+    if (niveau > DOSSIERS_PROFONDEUR || out.length >= DOSSIERS_MAX || Date.now() - debut > 60000) return;
+    var it = dossier.getFolders();
+    while (it.hasNext()) {
+      var d = it.next(), nom = d.getName();
+      if (niveau === 1 && DOSSIERS_IGNORER.test(nom)) continue;
+      var c = chemin ? chemin + "/" + nom : nom;
+      out.push(c);
+      if (out.length >= DOSSIERS_MAX) return;
+      parcourir(d, c, niveau + 1);
+    }
+  }
+  parcourir(DriveApp.getRootFolder(), "", 1);
+  out.sort(function (a, b) { return a.localeCompare(b, "fr"); });
+  try { cache.put("op01_dossiers", JSON.stringify(out), DOSSIERS_CACHE_MIN * 60); } catch (e) {}
+  Logger.log(out.length + " dossiers listés pour le classement des journaux.");
+  return out;
 }
 // Dossier désigné par un chemin « a/b/c » depuis la racine du Drive ; créé s'il manque.
 function dossierParChemin(chemin) {

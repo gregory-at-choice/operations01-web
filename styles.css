@@ -844,3 +844,15 @@ label.field.inline-check > span { margin-bottom: 0; }
 .gt-canvas, .gt-months, .gt-days, .gt-load { min-width: 100%; }
 .gt-row { right: 0; }
 .gt-ld.thin { border-left: none; }
+/* v140 : journal de bord d'un projet */
+.jn-head { margin-bottom: 10px; }
+.jn-form textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.jn-day { font-weight: 700; font-size: 13px; color: var(--muted); margin: 14px 0 6px; text-transform: none; }
+.jn-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); margin-bottom: 6px; font-size: 14px; }
+.jn-row[data-jn-open] { cursor: pointer; }
+.jn-row.manual { border-left: 3px solid var(--primary); }
+.jn-time { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; min-width: 38px; padding-top: 2px; }
+.jn-ic { width: 20px; text-align: center; }
+.jn-text { white-space: pre-wrap; word-break: break-word; }
+.jn-tag { flex: none; }
+.jn-row .btn.small { padding: 2px 6px; }

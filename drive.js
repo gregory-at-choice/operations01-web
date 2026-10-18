@@ -1097,6 +1097,14 @@
   }
   const readDoc = (id) => download(id);
   const deleteDoc = (id) => deleteFile(id);
+  // --- Journal de bord d'un projet : un .md au nom lisible, créé à la racine (le script des mails le
+  //     range ensuite dans le dossier choisi ; l'app garde l'accès au fichier qu'elle a créé). ---
+  async function createTextFile(name, text, mime) { const f = await createNamed(name, text, mime || "text/markdown"); return f.id; }
+  async function updateTextFile(id, text, mime) {
+    const r = await api(`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media&fields=modifiedTime`, { method: "PATCH", headers: { "Content-Type": mime || "text/markdown" }, body: text });
+    return await r.json();
+  }
+  async function fileParents(id) { const r = await api(`https://www.googleapis.com/drive/v3/files/${id}?fields=id,name,parents,trashed`); return await r.json(); }
 
   // --- Fichiers binaires (PDF) : multipart avec contenu encodé en base64 ---
   function bytesToBase64(bytes) {
@@ -1197,6 +1205,9 @@
     uploadDoc,
     readDoc,
     deleteDoc,
+    createTextFile,
+    updateTextFile,
+    fileParents,
     listPdfs,
     uploadPdf,
     readBinary
