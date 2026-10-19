@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v140";
+const APP_VERSION = "v141";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2382,6 +2382,13 @@ async function checkJournalPlace(m) {
   if (view.section === "missions" && view.detailId === m.id && projectTab === "journal") render();
 }
 function journalFolders() { const d = mailStore.main; return d && Array.isArray(d.dossiers) ? d.dossiers.map((x) => (typeof x === "string" ? x : x.chemin)).filter(Boolean) : []; }
+// Le dossier peut être un chemin (« 5_Clients/MSVL »), un lien de dossier Drive ou son identifiant.
+function journalFolderId(v) { const m = /folders\/([A-Za-z0-9_-]{15,})/.exec(String(v || "")) || /^([A-Za-z0-9_-]{25,})$/.exec(String(v || "").trim()); return m ? m[1] : ""; }
+function journalFolderLabel(v) {
+  const id = journalFolderId(v); if (!id) return String(v || "");
+  const d = mailStore.main, hit = d && Array.isArray(d.dossiers) ? d.dossiers.find((x) => x && typeof x === "object" && x.id === id) : null;
+  return hit ? hit.chemin : `dossier Drive …${id.slice(-6)}`;
+}
 // Dossier suggéré : celui dont le chemin contient le nom de la société ou un mot du titre du projet.
 function journalSuggestFolder(m) {
   const folders = journalFolders(); if (!folders.length) return "";
@@ -2399,9 +2406,9 @@ function openJournalDialog(m, mode) {
   const folder = j.dossier || journalSuggestFolder(m);
   showModal(`<div class="modal-head"><strong class="grow">${mode === "move" ? "Classer le journal" : "Créer le journal de bord"}</strong><button class="btn ghost small" data-modal-close>✕</button></div>
     ${mode === "move" ? "" : `<label class="field"><span>Nom du fichier</span><input data-jn-name value="${esc(defName)}"/></label>`}
-    <label class="field"><span>Dossier du Drive où le classer</span><input data-jn-folder list="jnFolders" value="${esc(folder)}" placeholder="ex. 5_Clients/MSVL/3-pilotage" autocomplete="off"/></label>
+    <label class="field"><span>Dossier du Drive où le classer</span><input data-jn-folder list="jnFolders" value="${esc(folder)}" placeholder="ex. 5_Clients/MSVL/3-pilotage, ou un lien de dossier Drive" autocomplete="off"/></label>
     <datalist id="jnFolders">${folders.map((f) => `<option value="${esc(f)}">`).join("")}</datalist>
-    <div class="muted" style="font-size:12px;line-height:1.4">${folders.length ? `${folders.length} dossiers de ton Drive sont proposés (liste tenue à jour par le script des mails) : tape quelques lettres pour filtrer. Un chemin inconnu sera créé.` : "La liste des dossiers du Drive n'est pas encore disponible : tape le chemin depuis la racine (il sera créé s'il n'existe pas)."}
+    <div class="muted" style="font-size:12px;line-height:1.4">${folders.length ? `${folders.length} dossiers de ton Drive sont proposés (liste tenue à jour par le script des mails) : tape quelques lettres pour filtrer. Un chemin inconnu sera créé. Tu peux aussi coller le lien d'un dossier Drive.` : "La liste des dossiers du Drive n'est pas encore disponible : tape le chemin depuis la racine (il sera créé s'il n'existe pas) ou colle le lien d'un dossier Drive."}
       ${mode === "move" ? "Le déplacement est fait par le script des mails à son prochain passage (15 min au plus)." : "Le fichier est créé tout de suite à la racine du Drive, puis rangé dans ce dossier par le script des mails à son prochain passage (15 min au plus). Les entrées déjà consignées y figureront."}</div>
     <div class="inline" style="justify-content:flex-end;margin-top:12px;gap:8px"><button class="btn secondary" data-jn-cancel>Annuler</button><button class="btn" data-jn-ok>${mode === "move" ? "Enregistrer" : "Créer le journal"}</button></div>`);
   document.querySelector("[data-modal-close]").onclick = closeModal;
@@ -2410,7 +2417,7 @@ function openJournalDialog(m, mode) {
   document.querySelector("[data-jn-ok]").onclick = () => {
     const dossier = fi.value.trim().replace(/^\/+|\/+$/g, "");
     if (mode === "move") {
-      if (m.journal) { const old = m.journal.dossier || ""; m.journal.dossier = dossier; if (old !== dossier) journalLog(m.id, "projet", `Journal à classer dans « ${dossier || "racine du Drive"} »`); const st = journalStatus[m.id]; if (st) st.placeAt = 0; save(); }
+      if (m.journal) { const old = m.journal.dossier || ""; m.journal.dossier = dossier; if (old !== dossier) journalLog(m.id, "projet", `Journal à classer dans « ${journalFolderLabel(dossier) || "racine du Drive"} »`); const st = journalStatus[m.id]; if (st) st.placeAt = 0; save(); }
       closeModal(); render(); return;
     }
     const nameEl = document.querySelector("[data-jn-name]"); let name = ((nameEl && nameEl.value) || defName).trim() || defName; if (!/\.md$/i.test(name)) name += ".md";
@@ -2424,7 +2431,7 @@ async function createJournal(m, name, dossier) {
     const id = await DriveSync.createTextFile(name, journalMarkdown(m));
     let parentInitial = ""; try { parentInitial = ((await DriveSync.fileParents(id)).parents || [])[0] || ""; } catch (e) {}
     m.journal = { fileId: id, name, dossier: dossier || "", parentInitial, createdAt: Date.now() };
-    journalLog(m.id, "projet", `Journal de bord créé${dossier ? ` · à classer dans « ${dossier} »` : ""}`);
+    journalLog(m.id, "projet", `Journal de bord créé${dossier ? ` · à classer dans « ${journalFolderLabel(dossier)} »` : ""}`);
     journalStatus[m.id] = { ok: true, at: Date.now() };
     save();
     readerLib.texts[id] = journalMarkdown(m); if (!readerLib.docs.some((d) => d.id === id)) readerLib.docs.push({ id, name, size: 0, journal: true }); saveCache();
@@ -2455,9 +2462,9 @@ function renderProjectJournal(m) {
   });
   const placeTxt = !j ? "" : st.trashed ? `<span style="color:#d23c3c">Le fichier est à la corbeille du Drive.</span>`
     : !j.dossier ? "À la racine du Drive (aucun dossier demandé)."
-    : st.placed === true ? `Rangé dans « ${esc(j.dossier)} ».`
-    : st.placed === false ? `À classer dans « ${esc(j.dossier)} » · déplacement par le script des mails à son prochain passage (15 min au plus).`
-    : `Dossier demandé : « ${esc(j.dossier)} ».`;
+    : st.placed === true ? `Rangé dans « ${esc(journalFolderLabel(j.dossier))} ».`
+    : st.placed === false ? `À classer dans « ${esc(journalFolderLabel(j.dossier))} » · déplacement par le script des mails à son prochain passage (15 min au plus).`
+    : `Dossier demandé : « ${esc(journalFolderLabel(j.dossier))} ».`;
   const head = j && j.fileId
     ? `<div class="card jn-head"><div class="inline" style="flex-wrap:wrap;gap:8px"><span style="font-size:22px">📓</span><div class="grow" style="min-width:200px"><div style="font-weight:700">${esc(j.name || "Journal de bord")}</div><div class="muted" style="font-size:12px">${placeTxt} ${st.ok === false && st.err ? `<span style="color:#d23c3c">Dernière écriture impossible : ${esc(st.err)}</span>` : st.at ? `Fichier mis à jour à ${journalTime(new Date(st.at).toISOString())}.` : ""}</div></div>
         <button class="btn ghost small" data-jn-read="${j.fileId}">📖 Lire</button>
@@ -2468,7 +2475,7 @@ function renderProjectJournal(m) {
         <button class="btn" data-jn-create="${m.id}" ${st.creating ? "disabled" : ""}>${st.creating ? "Création…" : "Créer le journal de bord"}</button></div></div>`;
   const now = new Date(); const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   const form = `<div class="card jn-form"><div class="section-h" style="margin-top:0">Nouvelle entrée</div>
-      <textarea data-jn-text rows="3" placeholder="Ce que je veux consigner : décision, appel, point d'étape, idée…"></textarea>
+      <textarea data-jn-text data-autogrow rows="5" placeholder="Ce que je veux consigner : décision, appel, point d'étape, idée…"></textarea>
       <div class="inline" style="flex-wrap:wrap;gap:8px;margin-top:8px"><input type="datetime-local" data-jn-at value="${local}" style="width:auto"/><span class="grow"></span><button class="btn" data-jn-add="${m.id}">📝 Consigner</button></div></div>`;
   return `${head}${form}
     <div class="chip-row" style="margin:12px 0">${chips}</div>
@@ -8102,6 +8109,7 @@ function wire() {
   // écrivaient sinon sur le même onclick, et le dernier l'emportait.
   c.querySelectorAll("[data-projtab]").forEach((b) => b.onclick = () => { projectTab = b.dataset.projtab; render(); });
   // Journal de bord
+  c.querySelectorAll("textarea[data-autogrow]").forEach((ta) => { const fit = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; }; ta.addEventListener("input", fit); fit(); });
   c.querySelectorAll("[data-jn-filter]").forEach((b) => b.onclick = () => { journalFilter = b.dataset.jnFilter; render(); });
   c.querySelectorAll("[data-jn-create]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.jnCreate); if (m) openJournalDialog(m, "create"); });
   c.querySelectorAll("[data-jn-move]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.jnMove); if (m) openJournalDialog(m, "move"); });

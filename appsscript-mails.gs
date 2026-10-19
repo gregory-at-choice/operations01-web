@@ -224,7 +224,7 @@ function rangerJournaux(data) {
   ((data && data.missions) || []).forEach(function (m) {
     var j = m && m.journal; if (!j || !j.fileId || !j.dossier) return;
     var f = fichierParId(j.fileId); if (!f || f.isTrashed()) return;
-    var dossier = dossierParChemin(j.dossier);
+    var dossier = dossierDepuisChoix(j.dossier); if (!dossier) { Logger.log("Journal « " + f.getName() + " » : dossier introuvable (" + j.dossier + ")."); return; }
     var parents = f.getParents(), deja = false;
     while (parents.hasNext()) { if (parents.next().getId() === dossier.getId()) { deja = true; break; } }
     if (deja) return;
@@ -233,10 +233,16 @@ function rangerJournaux(data) {
   });
   if (n) Logger.log(n + " journal/journaux rangé(s).");
 }
+// Le choix de l'app est un chemin depuis la racine, un lien de dossier Drive ou son identifiant.
+function dossierDepuisChoix(choix) {
+  var m = /folders\/([A-Za-z0-9_-]{15,})/.exec(String(choix || "")) || /^([A-Za-z0-9_-]{25,})$/.exec(String(choix || "").trim());
+  if (m) { try { return DriveApp.getFolderById(m[1]); } catch (e) { return null; } }
+  return dossierParChemin(choix);
+}
 // Liste des dossiers du Drive (chemins depuis la racine, DOSSIERS_PROFONDEUR niveaux), proposée dans l'app
 // pour choisir où classer un journal. Calculée au plus une fois par DOSSIERS_CACHE_MIN minutes.
 var DOSSIERS_PROFONDEUR = 4;
-var DOSSIERS_MAX = 1500;
+var DOSSIERS_MAX = 900;             // le cache de script n'accepte que 100 Ko
 var DOSSIERS_CACHE_MIN = 360;
 var DOSSIERS_IGNORER = /^(soft|\.|_|Correspondances$)/;   // dossiers techniques
 function listerDossiers() {
@@ -250,13 +256,13 @@ function listerDossiers() {
       var d = it.next(), nom = d.getName();
       if (niveau === 1 && DOSSIERS_IGNORER.test(nom)) continue;
       var c = chemin ? chemin + "/" + nom : nom;
-      out.push(c);
+      out.push({ chemin: c, id: d.getId() });
       if (out.length >= DOSSIERS_MAX) return;
       parcourir(d, c, niveau + 1);
     }
   }
   parcourir(DriveApp.getRootFolder(), "", 1);
-  out.sort(function (a, b) { return a.localeCompare(b, "fr"); });
+  out.sort(function (a, b) { return a.chemin.localeCompare(b.chemin, "fr"); });
   try { cache.put("op01_dossiers", JSON.stringify(out), DOSSIERS_CACHE_MIN * 60); } catch (e) {}
   Logger.log(out.length + " dossiers listés pour le classement des journaux.");
   return out;

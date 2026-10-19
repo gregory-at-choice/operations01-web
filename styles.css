@@ -856,3 +856,4 @@ label.field.inline-check > span { margin-bottom: 0; }
 .jn-text { white-space: pre-wrap; word-break: break-word; }
 .jn-tag { flex: none; }
 .jn-row .btn.small { padding: 2px 6px; }
+.jn-form textarea[data-autogrow] { overflow-y: hidden; min-height: 0; }
