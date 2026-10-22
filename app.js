@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v141";
+const APP_VERSION = "v142";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -414,12 +414,16 @@ function render() {
   // Une erreur dans le dessin d'un écran ne doit jamais figer l'app : on l'affiche
   // (message + où), on la garde en mémoire (menu Plus → « Dernière erreur ») et
   // les autres écrans restent accessibles.
+  // Saisie en cours dans la zone de note du journal : on la retrouve au même endroit après le redessin
+  // (le texte lui-même est restauré depuis le brouillon conservé sur l'appareil).
+  const ae0 = document.activeElement, keepNote = ae0 && ae0.dataset && ae0.dataset.jnText !== undefined ? { sel: [ae0.selectionStart, ae0.selectionEnd], top: ae0.scrollTop } : null;
   try {
     renderNav();
     content.innerHTML = sec.fn();
     wire();
     renderNotifBell();
     applyFocus(content);
+    if (keepNote) { const ta = content.querySelector("[data-jn-text]"); if (ta) { try { ta.focus({ preventScroll: true }); ta.setSelectionRange(keepNote.sel[0], keepNote.sel[1]); ta.scrollTop = keepNote.top; } catch (e) {} } }
   } catch (e) {
     reportError(e, "affichage de « " + sec.label + " »");
     try { renderNav(); } catch (e2) {}
@@ -2319,6 +2323,17 @@ const sortTasks = (ts) => [...ts].sort((a, b) => (taskDone(a) - taskDone(b))
 const JOURNAL_TYPES = [["note", "📝", "Notes"], ["temps", "⏱️", "Temps"], ["tache", "✅", "Tâches"], ["action", "📌", "Actions"], ["message", "✉️", "Messages"], ["rdv", "📅", "Rendez-vous"], ["projet", "📁", "Projet"], ["document", "📄", "Documents"]];
 const journalIcon = (type) => (JOURNAL_TYPES.find((x) => x[0] === type) || ["", "•"])[1];
 let journalFilter = "tous";
+// Brouillon de note en cours de saisie, par projet : enregistré sur l'appareil à chaque frappe, remis en
+// place après un redessin de l'écran, un rechargement de la page ou un retour depuis une autre app. Une
+// note de réunion ne se perd donc jamais avant « Consigner ».
+const JN_DRAFT_KEY = "op01_jn_drafts";
+function journalDrafts() { try { return JSON.parse(localStorage.getItem(JN_DRAFT_KEY) || "{}") || {}; } catch (e) { return {}; } }
+function journalDraft(mid) { return journalDrafts()[mid] || null; }
+function saveJournalDraft(mid, text, at) {
+  const all = journalDrafts();
+  if (String(text || "").trim()) all[mid] = { text, at: at || "", savedAt: Date.now() }; else delete all[mid];
+  try { localStorage.setItem(JN_DRAFT_KEY, JSON.stringify(all)); } catch (e) {}
+}
 const journalStatus = {};   // par projet : dernier résultat d'écriture du fichier et vérification du rangement
 const journalTimers = {};
 function journalEntries(mid) { return (state.journalEntries || []).filter((e) => e && e.missionId === mid).sort((a, b) => String(a.at).localeCompare(String(b.at)) || (a.createdAt || 0) - (b.createdAt || 0)); }
@@ -2474,9 +2489,10 @@ function renderProjectJournal(m) {
     : `<div class="card jn-head"><div class="inline" style="flex-wrap:wrap;gap:10px"><span style="font-size:22px">📓</span><div class="grow" style="min-width:200px"><div style="font-weight:700">Pas encore de fichier journal</div><div class="muted" style="font-size:13px">${all.length ? `${all.length} entrée${all.length > 1 ? "s" : ""} déjà consignée${all.length > 1 ? "s" : ""} ci-dessous : elles iront dans le fichier dès sa création.` : "Les entrées automatiques (temps, tâches, actions, messages) et tes notes s'accumuleront ici."} Le fichier .md se lit dans Documents et sur le Drive, dans le dossier de ton choix.</div></div>
         <button class="btn" data-jn-create="${m.id}" ${st.creating ? "disabled" : ""}>${st.creating ? "Création…" : "Créer le journal de bord"}</button></div></div>`;
   const now = new Date(); const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  const form = `<div class="card jn-form"><div class="section-h" style="margin-top:0">Nouvelle entrée</div>
-      <textarea data-jn-text data-autogrow rows="5" placeholder="Ce que je veux consigner : décision, appel, point d'étape, idée…"></textarea>
-      <div class="inline" style="flex-wrap:wrap;gap:8px;margin-top:8px"><input type="datetime-local" data-jn-at value="${local}" style="width:auto"/><span class="grow"></span><button class="btn" data-jn-add="${m.id}">📝 Consigner</button></div></div>`;
+  const draft = journalDraft(m.id);
+  const form = `<div class="card jn-form"><div class="section-h" style="margin-top:0">Nouvelle entrée${draft ? ` <span class="muted" style="font-weight:400;font-size:12px">· brouillon conservé (${esc(journalTime(new Date(draft.savedAt).toISOString()))})</span>` : ""}</div>
+      <textarea data-jn-text data-autogrow data-m="${m.id}" rows="5" placeholder="Ce que je veux consigner : décision, appel, point d'étape, idée…">${draft ? esc(draft.text) : ""}</textarea>
+      <div class="inline" style="flex-wrap:wrap;gap:8px;margin-top:8px"><input type="datetime-local" data-jn-at value="${esc((draft && draft.at) || local)}" style="width:auto"/><span class="muted" style="font-size:12px">Le texte est gardé sur cet appareil jusqu'à « Consigner », même si l'écran se redessine.</span><span class="grow"></span>${draft ? `<button class="btn ghost small" data-jn-discard="${m.id}">Effacer le brouillon</button>` : ""}<button class="btn" data-jn-add="${m.id}">📝 Consigner</button></div></div>`;
   return `${head}${form}
     <div class="chip-row" style="margin:12px 0">${chips}</div>
     <div class="jn-list">${html || `<div class="center-empty">Aucune entrée${journalFilter !== "tous" ? " de ce type" : ""}.</div>`}</div>`;
@@ -8115,7 +8131,9 @@ function wire() {
   c.querySelectorAll("[data-jn-move]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.jnMove); if (m) openJournalDialog(m, "move"); });
   c.querySelectorAll("[data-jn-regen]").forEach((b) => b.onclick = () => { writeJournal(b.dataset.jnRegen); toast("Fichier en cours de réécriture…"); });
   c.querySelectorAll("[data-jn-read]").forEach((b) => b.onclick = () => { const id = b.dataset.jnRead; state.readerCurrent = id; reader.kind = "md"; saveReader(); save({ silent: true }); go("reader"); ensureDocText(id); });
-  c.querySelectorAll("[data-jn-add]").forEach((b) => b.onclick = () => { const ta = c.querySelector("[data-jn-text]"), at = c.querySelector("[data-jn-at]"); const txt = ((ta && ta.value) || "").trim(); if (!txt) { toast("Écris d'abord ta note"); if (ta) ta.focus(); return; } const when = at && at.value ? new Date(at.value).toISOString() : new Date().toISOString(); journalLog(b.dataset.jnAdd, "note", txt, null, { manual: true, at: when }); save(); render(); toast("Consigné ✓"); });
+  c.querySelectorAll("[data-jn-text]").forEach((ta) => { const keep = () => { const at = c.querySelector("[data-jn-at]"); saveJournalDraft(ta.dataset.m, ta.value, at ? at.value : ""); }; ta.addEventListener("input", keep); const at = c.querySelector("[data-jn-at]"); if (at) at.addEventListener("change", keep); });
+  c.querySelectorAll("[data-jn-discard]").forEach((b) => b.onclick = () => { if (!confirm("Effacer le brouillon non consigné ?")) return; saveJournalDraft(b.dataset.jnDiscard, "", ""); render(); });
+  c.querySelectorAll("[data-jn-add]").forEach((b) => b.onclick = () => { const ta = c.querySelector("[data-jn-text]"), at = c.querySelector("[data-jn-at]"); const txt = ((ta && ta.value) || "").trim(); if (!txt) { toast("Écris d'abord ta note"); if (ta) ta.focus(); return; } const when = at && at.value ? new Date(at.value).toISOString() : new Date().toISOString(); journalLog(b.dataset.jnAdd, "note", txt, null, { manual: true, at: when }); saveJournalDraft(b.dataset.jnAdd, "", ""); save(); render(); toast("Consigné ✓"); });
   c.querySelectorAll("[data-jn-del]").forEach((b) => b.onclick = () => { const i = (state.journalEntries || []).findIndex((e) => e.id === b.dataset.jnDel); if (i < 0) return; if (!confirm("Retirer cette entrée du journal ?")) return; const e = state.journalEntries.splice(i, 1)[0]; scheduleJournalWrite(e.missionId); save(); render(); });
   c.querySelectorAll("[data-jn-edit]").forEach((b) => b.onclick = () => { const e = (state.journalEntries || []).find((x) => x.id === b.dataset.jnEdit); if (!e) return; const v = prompt("Modifier la note", e.text); if (v == null || !v.trim()) return; e.text = v.trim(); scheduleJournalWrite(e.missionId); save(); render(); });
   c.querySelectorAll("[data-jn-open]").forEach((r) => r.onclick = (ev) => { if (ev.target.closest("button, a")) return; const k = r.dataset.jnOpen, id = r.dataset.jnId; if (k === "task" && state.tasks.some((t) => t.id === id)) openTask(id); else if (k === "action" && state.actions.some((a) => a.id === id)) openDetail("actions", id); else if (k === "event") go("atraiter"); });

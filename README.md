@@ -261,7 +261,10 @@ dans **Documents** (avec la lecture à voix haute) et avec n'importe quel édite
   à l'arrêt du chrono (durée et total), tâche créée ou changement de statut, action clôturée, fil de
   mails classé dans le projet, réponse préparée à un message, tâches créées depuis un message,
   changement de statut du projet. 2) Les **notes** écrites à la main dans l'onglet (texte libre,
-  date et heure modifiables), modifiables et supprimables ensuite.
+  date et heure modifiables), modifiables et supprimables ensuite. Le texte en cours de saisie est
+  un **brouillon conservé sur l'appareil à chaque frappe** : il est remis en place après un redessin
+  de l'écran, un rechargement de la page ou un retour depuis une autre app, avec le curseur au même
+  endroit, jusqu'à « Consigner » (ou « Effacer le brouillon »).
 - **Le fichier** est regroupé par jour (ordre chronologique), une ligne par entrée avec l'heure et une
   icône par type, les notes sur plusieurs lignes conservées. Il est réécrit au plus tard 15 s après
   chaque ajout, et « Régénérer » le réécrit à la demande. Les entrées vivent dans les données
