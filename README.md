@@ -246,6 +246,23 @@ recherche (clé, intitulé, notes), projet, priorité, étiquette, personne.
 - **Partager** : depuis la fiche d'une tâche (« Partager ») ou la chronologie d'un projet (« Partager
   le planning »), un texte brut à copier, envoyer par mail ou via la feuille de partage de l'appareil.
 
+## Notifications poussées : bannière et pastille, téléphone et Mac
+
+La cloche → « Notifications poussées » → **« Activer sur cet appareil »** abonne l'appareil (Web Push).
+L'app n'a pas de serveur : c'est le Mac mini qui envoie (bibliothèque web-push, clés VAPID, voir
+`ASSISTANT-REPONSES.md` section 6), d'après les abonnements enregistrés dans les données
+(`pushSubscriptions`, exportés par le relais v12). Le bouton reste inactif tant que le Mac mini n'a pas
+publié sa clé publique dans le fichier assistant (`push.publicKey`).
+
+- **Bannière** système même app fermée, **pastille** sur l'icône = nombre de messages urgents (1–2)
+  non traités (l'app la recalcule à chaque ouverture, le Mac mini l'envoie avec chaque notification).
+- Un clic ouvre l'écran visé (`./?go=atraiter&id=…`), dans l'app déjà ouverte s'il y en a une.
+- **iPhone** : nécessite l'app installée sur l'écran d'accueil (Partager → Sur l'écran d'accueil, iOS 16.4
+  ou plus), et l'activation depuis l'app installée. **Mac** : Safari (macOS 13 ou plus) ou Chrome ;
+  la pastille sur le Dock demande l'app ajoutée au Dock (Safari → Fichier → Ajouter au Dock).
+- « Tester » affiche une bannière locale ; « Désactiver ici » retire l'appareil ; les autres appareils
+  abonnés sont listés et peuvent être retirés.
+
 ## Journal de bord : un fichier .md par projet
 
 Chaque projet a un onglet **Journal de bord**. Le journal est un fichier `.md` sur le Drive, lisible

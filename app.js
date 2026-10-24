@@ -39,14 +39,14 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v142";
+const APP_VERSION = "v143";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], journalEntries: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, evRequests: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], journalEntries: [], pushSubscriptions: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, evRequests: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -99,7 +99,7 @@ function adoptRemote(remote, why) {
 // distant qui ne fait que « revenir en arrière » (vieille copie poussée par un
 // appareil resté fermé) est reconnu à ses dates et ne fait rien perdre.
 const BASE_KEY = "operations01_base";
-const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals", "journalEntries"];
+const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals", "journalEntries", "pushSubscriptions"];
 const SYNC_NESTED = { missions: "entries" };
 const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "evRequests", "bankMap", "bankSkip", "contactIgnore"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
@@ -2786,8 +2786,9 @@ function showNotifPanel() {
   showModal(`<div class="modal-head"><strong class="grow">${icon("bell")} Notifications${list.length ? ` (${list.length})` : ""}</strong>
       ${list.length ? '<button class="btn ghost small" data-notif-clear>Tout effacer</button>' : ""}<button class="btn ghost small" data-modal-close>✕</button></div>
     ${list.length ? `<div class="list">${rows}</div>` : '<div class="center-empty">Aucune notification.<br><span style="font-size:13px">Active-les projet par projet, dans le résumé du projet.</span></div>'}
-    <div style="margin-top:12px">${sys}</div>`);
+    <div style="margin-top:12px">${sys}</div><div style="margin-top:12px">${pushPanelHtml()}</div>`);
   document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
+  wirePushPanel();
   document.querySelectorAll("[data-notif-open]").forEach((r) => r.onclick = () => openNotif(r.dataset.notifOpen));
   const clr = document.querySelector("[data-notif-clear]");
   if (clr) clr.onclick = () => { dismissAllNotifs(); save(); closeModal(); renderNotifBell(); toast("Notifications effacées"); };
@@ -3031,6 +3032,7 @@ async function loadEvenements() {
     if (d) { repairEvents(d); applyEventDecisions(d); eventStore = d; eventError = ""; } else eventError = "absent";
   } catch (e) { eventError = e.message || "erreur"; }
   eventLoading = false;
+  updateAppBadge();
   if (eventVisible()) render(); else renderNav();
 }
 // Changement de statut. L'app n'écrit jamais une liste d'événements construite
@@ -3057,6 +3059,7 @@ function setEventStatuts(ids, statut) {
     const local = all.find((e) => e.id === id);
     if (local) { local.statut = statut; local.traiteLe = when; }
   });
+  updateAppBadge();
   render();
   if (!eventsReady()) return Promise.resolve(false);
   eventWriteChain = eventWriteChain.then(flushEventDecisions);
@@ -3731,6 +3734,7 @@ async function loadAssistant() {
   if (!assistantReady() || assistantLoading) return;
   assistantLoadedAt = Date.now(); assistantLoading = true;
   try { const d = await DriveSync.readAssistant(); if (d) assistantStore = d; } catch (e) {}
+  try { syncPushSubscription(); } catch (e) {}
   assistantLoading = false;
   // Les estimations et le brief s'affichent dans plusieurs vues : on redessine,
   // sauf pendant une saisie.
@@ -9208,6 +9212,106 @@ function openVoice(initialQuestion) {
   else if (voiceRecognitionAvailable() && !voiceIOSStandalone()) voiceStart();
   else voiceKeyboardDictation();
 }
+// ============================ Notifications poussées (téléphone et Mac) ============================
+// L'app n'a pas de serveur : c'est le Mac mini qui envoie les notifications (bibliothèque web-push,
+// clés VAPID), d'après les abonnements que chaque appareil enregistre ici (state.pushSubscriptions,
+// exportés par le relais). La clé publique VAPID est publiée par le Mac mini dans le fichier assistant
+// (push.publicKey) ; les abonnements qu'il ne peut plus joindre sont listés dans push.invalides.
+// Le service worker affiche la bannière et pose la pastille ; un clic ouvre l'écran visé.
+function pushSupported() { return !!(("serviceWorker" in navigator) && ("PushManager" in window) && ("Notification" in window)); }
+function pushPublicKey() { const p = assistantStore && assistantStore.push; return (p && p.publicKey) || ""; }
+function pushStandalone() { return !!navigator.standalone || !!(window.matchMedia && matchMedia("(display-mode: standalone)").matches); }
+function pushDeviceLabel() {
+  const ua = navigator.userAgent || "";
+  const dev = /iPad/.test(ua) ? "iPad" : /iPhone/.test(ua) ? "iPhone" : /Macintosh/.test(ua) ? "Mac" : /Windows/.test(ua) ? "PC" : /Android/.test(ua) ? "Android" : "Appareil";
+  const nav = /CriOS|Chrome/.test(ua) && !/Edg/.test(ua) ? "Chrome" : /Edg/.test(ua) ? "Edge" : /Firefox|FxiOS/.test(ua) ? "Firefox" : /Safari/.test(ua) ? "Safari" : "navigateur";
+  return `${dev} · ${nav}${pushStandalone() ? " (app installée)" : ""}`;
+}
+function b64ToBytes(s) { const pad = "=".repeat((4 - s.length % 4) % 4); const b = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(b, (c) => c.charCodeAt(0)); }
+function bytesToB64url(buf) { return btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+const PUSH_ID_KEY = "op01_push_id";
+function pushLocalId() { try { let v = localStorage.getItem(PUSH_ID_KEY); if (!v) { v = uid(); localStorage.setItem(PUSH_ID_KEY, v); } return v; } catch (e) { return "local"; } }
+function pushRecord() { return (state.pushSubscriptions || []).find((s) => s.id === pushLocalId()) || null; }
+async function pushCurrentSubscription() { try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch (e) { return null; } }
+function storePushSubscription(sub) {
+  state.pushSubscriptions = state.pushSubscriptions || [];
+  const j = sub.toJSON ? sub.toJSON() : sub, id = pushLocalId();
+  const rec = { id, endpoint: j.endpoint, keys: j.keys || {}, appareil: pushDeviceLabel(), createdAt: (pushRecord() || {}).createdAt || Date.now(), vuLe: Date.now() };
+  const i = state.pushSubscriptions.findIndex((s) => s.id === id); if (i > -1) state.pushSubscriptions[i] = rec; else state.pushSubscriptions.push(rec);
+  save();
+}
+async function enablePush() {
+  if (!pushSupported()) { toast("Notifications poussées indisponibles dans ce navigateur"); return false; }
+  const key = pushPublicKey(); if (!key) { toast("La clé du Mac mini n'est pas encore publiée"); return false; }
+  let perm = Notification.permission; if (perm !== "granted") perm = await Notification.requestPermission();
+  if (perm !== "granted") { toast("Permission refusée"); return false; }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (sub && sub.options && sub.options.applicationServerKey && bytesToB64url(sub.options.applicationServerKey) !== key) { await sub.unsubscribe(); sub = null; }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+    storePushSubscription(sub); toast("Notifications activées sur cet appareil ✓"); return true;
+  } catch (e) { reportError(e, "abonnement aux notifications"); toast("Activation impossible : " + ((e && e.message) || e)); return false; }
+}
+async function disablePush() {
+  try { const sub = await pushCurrentSubscription(); if (sub) await sub.unsubscribe(); } catch (e) {}
+  state.pushSubscriptions = (state.pushSubscriptions || []).filter((s) => s.id !== pushLocalId()); save(); toast("Notifications désactivées sur cet appareil");
+}
+async function testPush() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification("choice · test", { body: "Les notifications fonctionnent sur cet appareil.", icon: "icon-192.png", tag: "test" });
+    if (navigator.setAppBadge) { await navigator.setAppBadge(1); setTimeout(updateAppBadge, 4000); }
+  } catch (e) { toast("Test impossible : " + ((e && e.message) || e)); }
+}
+// Après lecture du fichier assistant : abonnements invalidés par le Mac mini retirés, abonnement local
+// réconcilié (le navigateur peut le renouveler de lui-même).
+async function syncPushSubscription() {
+  if (!pushSupported() || !(window.DriveSync && DriveSync.isConnected())) return;
+  const inval = (assistantStore && assistantStore.push && assistantStore.push.invalides) || [];
+  if (inval.length) { const before = (state.pushSubscriptions || []).length; state.pushSubscriptions = (state.pushSubscriptions || []).filter((s) => inval.indexOf(s.id) < 0 && inval.indexOf(s.endpoint) < 0); if (state.pushSubscriptions.length !== before) save(); }
+  const rec = pushRecord(); if (!rec) return;
+  const sub = await pushCurrentSubscription(); if (!sub) return;
+  const j = sub.toJSON();
+  if (j.endpoint !== rec.endpoint) storePushSubscription(sub);
+  else if (Date.now() - (rec.vuLe || 0) > 7 * 864e5) { rec.vuLe = Date.now(); save({ silent: true }); }
+}
+// Pastille sur l'icône de l'app : messages urgents (1–2) non traités.
+function urgentCount() { try { return eventsNew().filter((e) => eventUrgence(e) <= 2).length; } catch (e) { return 0; } }
+function updateAppBadge() { if (!navigator.setAppBadge) return; const n = urgentCount(); try { const p = n ? navigator.setAppBadge(n) : navigator.clearAppBadge(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
+function pushPanelHtml() {
+  const rec = pushRecord(), others = (state.pushSubscriptions || []).filter((s) => s.id !== pushLocalId());
+  const ios = /iPhone|iPad/.test(navigator.userAgent || "");
+  let status;
+  if (!pushSupported()) status = ios && !pushStandalone() ? "Sur iPhone, les notifications poussées demandent l'app installée sur l'écran d'accueil (bouton Partager → « Sur l'écran d'accueil »), puis l'activation depuis l'app installée." : "Notifications poussées indisponibles dans ce navigateur.";
+  else if (Notification.permission === "denied") status = "Notifications refusées dans les réglages du navigateur pour ce site : à réactiver là-bas, puis revenir ici.";
+  else if (!pushPublicKey()) status = "En attente de la clé publique du Mac mini (contrat, section 6). En attendant, les notifications fonctionnent quand l'app est ouverte.";
+  else if (rec) status = `Activées sur cet appareil (${esc(rec.appareil || "")}) : bannière et pastille, même app fermée.`;
+  else status = "Désactivées sur cet appareil.";
+  const btns = pushSupported() && pushPublicKey() && Notification.permission !== "denied"
+    ? (rec ? `<button class="btn ghost small" data-push-test>Tester</button><button class="btn ghost small" data-push-off>Désactiver ici</button>` : `<button class="btn secondary small" data-push-on>Activer sur cet appareil</button>`) : "";
+  return `<div class="section-h">Notifications poussées · téléphone et Mac</div><div class="muted" style="font-size:13px">${status}</div>
+    <div class="inline" style="gap:6px;margin-top:6px;flex-wrap:wrap">${btns}</div>
+    ${others.length ? `<div class="muted" style="font-size:12px;margin-top:6px">Autres appareils abonnés : ${others.map((s) => `${esc(s.appareil || "appareil")} <button class="btn ghost small" data-push-forget="${s.id}" title="Retirer cet appareil">✕</button>`).join(" · ")}</div>` : ""}`;
+}
+function wirePushPanel() {
+  const on = document.querySelector("[data-push-on]"); if (on) on.onclick = () => enablePush().then(() => showNotifPanel());
+  const off = document.querySelector("[data-push-off]"); if (off) off.onclick = () => disablePush().then(() => showNotifPanel());
+  const test = document.querySelector("[data-push-test]"); if (test) test.onclick = testPush;
+  document.querySelectorAll("[data-push-forget]").forEach((b) => b.onclick = () => { state.pushSubscriptions = (state.pushSubscriptions || []).filter((s) => s.id !== b.dataset.pushForget); save(); showNotifPanel(); });
+}
+// Clic sur une notification : le service worker demande l'écran visé (page ouverte) ou ouvre l'app avec ?go=…
+if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) navigator.serviceWorker.addEventListener("message", (ev) => { const d = ev.data || {}; if (d.type === "ouvrir" && d.section) { if (d.id) openDetail(d.section, d.id); else go(d.section); } });
+(function openFromUrl() {
+  try {
+    const u = new URL(location.href), s = u.searchParams.get("go"); if (!s) return;
+    const id = u.searchParams.get("id");
+    setTimeout(() => { if (id) openDetail(s, id); else go(s); }, 0);
+    u.searchParams.delete("go"); u.searchParams.delete("id");
+    history.replaceState(null, "", u.pathname + (u.searchParams.toString() ? "?" + u.searchParams.toString() : "") + u.hash);
+  } catch (e) {}
+})();
+
 (function wireVoiceFab() {
   const b = document.getElementById("voiceFab"); if (!b) return;
   b.innerHTML = icon("mic"); b.onclick = () => openVoice();

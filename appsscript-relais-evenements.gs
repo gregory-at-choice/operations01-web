@@ -44,11 +44,11 @@
  *     tache: {…}, processus: [...] }   ← inchangés
  */
 var SECRET = "";
-var VERSION = 11;
+var VERSION = 12;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
-var EXPORT_CLES = ["missions", "tasks", "actions", "rendezvous", "recurrences", "slots"];
+var EXPORT_CLES = ["missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "pushSubscriptions"];   // v12 : abonnements aux notifications poussées
 var EXPORT_OBJETS = ["evEdits", "evDecisions", "evLearn", "evSteps", "evRequests"];   // corrections et décisions de Grégory (apprentissage)
 var CONSERVER_JOURS = 30;
 var MAX_EVENEMENTS = 3000;   // ~95 événements par jour : 1000 ne couvrait que dix jours
@@ -163,6 +163,11 @@ function posterAssistant(corps) {
     var data; try { data = JSON.parse(fichier.getBlob().getDataAsString() || "{}"); } catch (err) { data = {}; }
     var maintenant = new Date().toISOString();
     if (corps.brief) { data.brief = corps.brief; data.brief.recuLe = maintenant; }
+    // v12 : notifications poussées — clé publique VAPID du Mac mini et abonnements qu'il ne peut plus joindre.
+    if (corps.push && typeof corps.push === "object") {
+      var dejaPush = data.push || {};
+      data.push = { publicKey: corps.push.publicKey || dejaPush.publicKey || "", invalides: Array.isArray(corps.push.invalides) ? corps.push.invalides : (dejaPush.invalides || []), majLe: maintenant };
+    }
     var n = 0;
     if (corps.estimations && typeof corps.estimations === "object") {
       data.estimations = data.estimations || {};
@@ -176,7 +181,7 @@ function posterAssistant(corps) {
     }
     data.updatedAt = Date.now(); data.generatedAt = maintenant;
     fichier.setContent(JSON.stringify(data));
-    return reponse({ ok: true, brief: !!corps.brief, estimations: n });
+    return reponse({ ok: true, brief: !!corps.brief, estimations: n, push: !!corps.push });
   } finally { verrou.releaseLock(); }
 }
 

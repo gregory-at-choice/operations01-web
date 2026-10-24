@@ -276,6 +276,59 @@ s'exprime dans les propositions suivantes. Journaliser chaque nuit dans `apprent
 de corrections lues, distance moyenne, ratios de temps, projets appris. Mettre dans le brief du matin
 une ligne « L'assistant a appris : … » quand quelque chose a changé.
 
+## 6. Notifications poussées : bannière et pastille sur l'iPhone et le Mac (v143, relais v12)
+
+L'app n'a pas de serveur. C'est **le Mac mini qui envoie les notifications** (Web Push), d'après les
+abonnements que chaque appareil enregistre dans l'app. Grégory les active depuis la cloche →
+« Notifications poussées » → « Activer sur cet appareil » (sur iPhone, depuis l'app installée sur
+l'écran d'accueil). Le service worker de l'app affiche la bannière, pose la pastille et ouvre l'écran
+visé au clic.
+
+**Clés VAPID (une fois).** `npx web-push generate-vapid-keys` → garder les deux clés dans
+`~/.assistants/vapid.json` (`{ "publicKey", "privateKey" }`, privée jamais exportée). Publier la clé
+publique dans le fichier assistant via le relais :
+`POST { secret, action: "assistant", push: { publicKey: "<clé publique>" } }` (à chaque démarrage, c'est
+idempotent). Tant que `push.publicKey` n'est pas publié, le bouton « Activer » de l'app reste inactif.
+
+**Abonnements.** L'export du relais (`GET ?action=export`, v12) contient `data.pushSubscriptions` :
+`[{ id, endpoint, keys: { p256dh, auth }, appareil: "iPhone · Safari (app installée)", createdAt, vuLe }]`.
+Un abonnement = un appareil. Les relire à chaque cycle (ils changent quand Grégory active ou désactive
+un appareil).
+
+**Envoi.** Bibliothèque `web-push` (Node) :
+```js
+webpush.sendNotification({ endpoint, keys }, JSON.stringify(charge), {
+  vapidDetails: { subject: "mailto:gregory.arbia@choicefinance.fr", publicKey, privateKey },
+  TTL: 3600, urgency: "high" });
+```
+Charge utile (JSON) : `{ titre, corps, url, section, id, tag, urgence, badge }`.
+- `titre` court (« Urgence 1 · Éric Chenneveau »), `corps` ≤ 150 caractères (sujet ou première phrase du
+  résumé) ; pas de contenu sensible au-delà (la bannière s'affiche sur l'écran verrouillé).
+- `url` : `./?go=atraiter&id=<id de l'événement>` ouvre le message dans l'app ; `./?go=home` pour le brief.
+  `section` et `id` servent quand l'app est déjà ouverte (le service worker lui demande d'y aller).
+- `tag` = id de l'événement (une bannière remplacée, jamais dupliquée) ; `urgence` 1 garde la bannière à
+  l'écran jusqu'au clic.
+- `badge` = nombre d'événements **nouveaux d'urgence 1 ou 2** à l'instant de l'envoi : c'est la pastille
+  sur l'icône. L'app la recalcule elle-même à chaque ouverture.
+
+**Quoi envoyer.**
+1. Un événement nouveau classé **urgence 1 ou 2** → envoi immédiat, une seule fois par événement
+   (journal des envois `~/.assistants/push-envoyes.json`, id → date).
+2. **Brief du matin à 8 h** (jours ouvrés) : titre « Brief du jour », corps « N urgents · N échéances
+   aujourd'hui · N rendez-vous », `url` `./?go=home`.
+3. **Rappel de rendez-vous 30 min avant** (agenda via `?action=agenda&jours=1`) : titre = intitulé,
+   corps = heure et lieu.
+4. Silence entre 22 h et 7 h, sauf urgence 1. Jamais plus de 6 envois par heure : au-delà, un seul
+   envoi « N nouveaux messages urgents ».
+
+**Abonnements morts.** Réponse 404 ou 410 du service de push → l'abonnement n'existe plus : ajouter son
+`id` à `push.invalides` via `POST { action: "assistant", push: { invalides: [id, …] } }` ; l'app le
+retire de sa liste à sa prochaine ouverture. 401/403 → clé VAPID incohérente avec celle publiée
+(republier la clé publique, Grégory devra réactiver les appareils).
+
+**Test.** `node push.js --test` envoie « choice · test » à tous les abonnements et affiche le code de
+chaque réponse (201 = livré au service de push).
+
 ## 5. Vérifier de bout en bout
 
 1. Envoyer une entrée de test au relais (`action: "correspondance"`) → le fichier
