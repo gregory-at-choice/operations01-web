@@ -343,16 +343,20 @@ function ecrireIndex(donnees, index) {
 }
 // Reconstruit index.json à partir de tous les fichiers _données/<clé>.json (à lancer à la main une fois,
 // ou après un incident). Les clés déjà présentes et lisibles sont conservées puis mises à jour.
-function reconstruireIndex() {
+// Une relance ne relit que les fichiers absents de l'index (reconstruireIndexComplet() relit tout).
+function reconstruireIndexComplet() { reconstruireIndex(true); }
+function reconstruireIndex(complet) {
   var dossier = dossierCorrespondances(); if (!dossier) { Logger.log("Dossier des correspondances introuvable."); return; }
   var donnees = sousDossier(dossier, "_données"), debut = Date.now();
   var f = fichierDans(donnees, "index.json"), lu = f ? lireJsonDe(f) : null, cles = (lu && lu.cles) || {};
-  var avant = Object.keys(cles).length, n = 0, sansMd = 0;
+  var avant = Object.keys(cles).length, n = 0, sansMd = 0, sautes = 0, restants = 0;
+  var dejaNoms = {}; Object.keys(cles).forEach(function (k) { dejaNoms[k.replace(/[\\\/:*?"<>|]/g, "_") + ".json"] = 1; });
   var it = donnees.getFiles();
   while (it.hasNext()) {
-    if (Date.now() - debut > 5 * 60000) { Logger.log("Temps écoulé : relancer reconstruireIndex() pour la suite."); break; }
     var fj = it.next(), nomF = fj.getName();
     if (!/\.json$/i.test(nomF) || nomF === "index.json" || nomF.indexOf("_etat-") === 0) continue;
+    if (!complet && dejaNoms[nomF]) { sautes++; continue; }
+    if (Date.now() - debut > 5 * 60000) { restants++; continue; }
     var j = lireJsonDe(fj); if (!j || !j.cle || !Array.isArray(j.entrees)) continue;
     var nom = j.nom || j.cle, fMd = null;
     if (cles[j.cle] && cles[j.cle].fichierId) { try { fMd = DriveApp.getFileById(cles[j.cle].fichierId); if (fMd.isTrashed()) fMd = null; } catch (e) { fMd = null; } }
@@ -365,7 +369,7 @@ function reconstruireIndex() {
   }
   var contenu = JSON.stringify({ version: VERSION, misAJour: new Date().toISOString(), cles: cles });
   if (f) f.setContent(contenu); else donnees.createFile("index.json", contenu, "application/json");
-  Logger.log("Index reconstruit : " + n + " fichier(s) lus, " + Object.keys(cles).length + " clé(s) (" + avant + " avant), " + sansMd + " sans fichier .md.");
+  Logger.log("Index reconstruit : " + n + " fichier(s) lus, " + sautes + " déjà indexés, " + Object.keys(cles).length + " clé(s) (" + avant + " avant), " + sansMd + " sans fichier .md" + (restants ? ", " + restants + " restant(s) : relancer reconstruireIndex()." : "."));
 }
 // (copie à l'identique de appsscript-correspondances.gs — garder les deux fichiers synchrones)
 function nomFichierSur(nom) {
