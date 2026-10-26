@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v144";
+const APP_VERSION = "v145";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3224,7 +3224,17 @@ function toggleStep(evId, i) {
 // ---- Réponse modifiée par Grégory : mémorisée par événement, synchronisée entre appareils, et exportée
 //      au Mac mini (relais) pour qu'il apprenne de la correction. ----
 const evEditOf = (id) => ((state.evEdits || {})[id] || null);
-function eventReply(ev) { const e = evEditOf(ev.id); return e && e.reponse != null ? e.reponse : ((ev.proposition && ev.proposition.reponse) || ""); }
+const isFallbackReply = (p) => /repli/i.test((p && p.genereePar) || "");
+// Réponse affichée : la version retouchée par Grégory, sauf si elle portait sur un repli et qu'Opus a
+// depuis réécrit la réponse (genereeLe plus récent, plus de « repli ») : la nouvelle version l'emporte.
+function eventReply(ev) {
+  const e = evEditOf(ev.id), p = ev.proposition || {};
+  if (e && e.reponse != null) {
+    if (/repli/i.test(e.genereePar || "") && !isFallbackReply(p) && p.genereeLe && e.at && p.genereeLe > e.at) return p.reponse || "";
+    return e.reponse;
+  }
+  return p.reponse || "";
+}
 function saveEventReply(ev, text) {
   state.evEdits = state.evEdits || {};
   const p = ev.proposition || {};
@@ -3419,7 +3429,7 @@ function eventProposal(ev, open) {
   const ctx = Array.isArray(p.contexte) ? p.contexte.filter((x) => x && (x.titre || x.extrait)) : [];
   const ctxHtml = ctx.length ? `<details class="ev-ctx"><summary class="muted">${icon("search")} Éléments de contexte pris en compte (${ctx.length})</summary>
       ${ctx.map((x) => `<div class="ev-ctx-item"><span class="pm-tag">${esc(CTX_SOURCES[x.source] || x.source || "source")}</span><div class="grow"><div><strong>${esc(x.titre || "")}</strong>${x.date ? ` <span class="muted">· ${esc(fmtDate(String(x.date).slice(0, 10)))}</span>` : ""}</div>${x.extrait ? `<div class="muted ev-ctx-x">${esc(x.extrait)}</div>` : ""}</div>${x.lien ? `<a class="btn ghost small" href="${esc(x.lien)}" target="_blank" rel="noopener">Ouvrir</a>` : ""}</div>`).join("")}</details>` : "";
-  return `<details class="ev-prop" ${open ? "open" : ""}><summary>${icon("lightbulb")} Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}${ctx.length ? ` <span class="muted" title="Réponse étayée par ${ctx.length} élément(s) d'archives">· étayée</span>` : ""}</summary>
+  return `<details class="ev-prop" ${open ? "open" : ""}><summary>${icon("lightbulb")} Proposition de l'assistant${p.genereePar ? ` <span class="muted">(${esc(p.genereePar)})</span>` : ""}${isFallbackReply(p) ? ` <span class="pm-tag" style="background:#fde8c8;color:#8a4b00" title="Forfait Claude en pause : réponse du modèle local, Opus la réécrira après la pause">repli · Opus réécrira après la pause</span>` : ""}${ctx.length ? ` <span class="muted" title="Réponse étayée par ${ctx.length} élément(s) d'archives">· étayée</span>` : ""}</summary>
     ${editing ? `<textarea class="ev-draft-edit" data-ev-reply-text="${ev.id}" rows="9">${esc(evDraft[ev.id] != null ? evDraft[ev.id] : reply)}</textarea>
       <div class="ev-actions"><button class="btn small" data-ev-save="${ev.id}">Enregistrer</button><button class="btn ghost small" data-ev-cancel="${ev.id}">Annuler</button>${edited || (p.reponse && evDraft[ev.id] != null && evDraft[ev.id] !== p.reponse) ? `<button class="btn ghost small" data-ev-reset="${ev.id}" title="Reprendre le texte proposé par l'assistant">Revenir à la proposition</button>` : ""}</div>`
     : reply ? `<div class="ev-draft">${esc(reply)}</div>

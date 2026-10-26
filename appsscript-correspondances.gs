@@ -51,7 +51,7 @@ var MAX_FILS_PAR_PASSAGE = 60;         // historique : fils relus par passage (q
 var MAX_FILS_RECENTS = 150;            // fils ayant bougé depuis le dernier passage
 var MAX_CARACTERES = 4000;             // longueur maximale conservée par message
 var DUREE_MAX_MS = 4.5 * 60 * 1000;    // garde-fou : Apps Script coupe à 6 minutes
-var VERSION = 1;
+var VERSION = 2;
 
 var MOI = "";          // adresse du compte courant
 var MES_ADRESSES = {}; // adresse → true (compte + alias)
@@ -312,10 +312,41 @@ function lireIndex(donnees) { var f = fichierDans(donnees, "index.json"); var j 
 function ecrireIndex(donnees, index) {
   var f = fichierDans(donnees, "index.json");
   // Un autre compte a pu écrire entre-temps : on repart de sa version et on y pose nos clés.
-  var actuel = f ? ((lireJsonDe(f) || {}).cles || {}) : {};
+  // Un index présent mais illisible (lecture tronquée, écriture concurrente) n'est JAMAIS écrasé :
+  // on le laisse tel quel, on le signale, et reconstruireIndex() le refait à partir des fichiers.
+  var lu = f ? lireJsonDe(f) : null;
+  if (f && (!lu || typeof lu.cles !== "object")) { Logger.log("index.json présent mais illisible : non réécrit (lancer reconstruireIndex())."); return false; }
+  var actuel = (lu && lu.cles) || {};
   Object.keys(index).forEach(function (k) { actuel[k] = index[k]; });
   var contenu = JSON.stringify({ version: VERSION, misAJour: new Date().toISOString(), cles: actuel });
   if (f) f.setContent(contenu); else donnees.createFile("index.json", contenu, "application/json");
+  return true;
+}
+// Reconstruit index.json à partir de tous les fichiers _données/<clé>.json (à lancer à la main une fois,
+// ou après un incident). Les clés déjà présentes et lisibles sont conservées puis mises à jour.
+function reconstruireIndex() {
+  var dossier = dossierCorrespondances(); if (!dossier) { Logger.log("Dossier des correspondances introuvable."); return; }
+  var donnees = sousDossier(dossier, "_données"), debut = Date.now();
+  var f = fichierDans(donnees, "index.json"), lu = f ? lireJsonDe(f) : null, cles = (lu && lu.cles) || {};
+  var avant = Object.keys(cles).length, n = 0, sansMd = 0;
+  var it = donnees.getFiles();
+  while (it.hasNext()) {
+    if (Date.now() - debut > 5 * 60000) { Logger.log("Temps écoulé : relancer reconstruireIndex() pour la suite."); break; }
+    var fj = it.next(), nomF = fj.getName();
+    if (!/\.json$/i.test(nomF) || nomF === "index.json" || nomF.indexOf("_etat-") === 0) continue;
+    var j = lireJsonDe(fj); if (!j || !j.cle || !Array.isArray(j.entrees)) continue;
+    var nom = j.nom || j.cle, fMd = null;
+    if (cles[j.cle] && cles[j.cle].fichierId) { try { fMd = DriveApp.getFileById(cles[j.cle].fichierId); if (fMd.isTrashed()) fMd = null; } catch (e) { fMd = null; } }
+    if (!fMd) fMd = fichierDans(dossier, nomFichierSur(nom) + ".md");
+    if (!fMd) { sansMd++; continue; }
+    var canaux = {}; j.entrees.forEach(function (e) { if (e && e.canal) canaux[e.canal] = 1; });
+    cles[j.cle] = { nom: nom, fichierId: fMd.getId(), url: "https://drive.google.com/file/d/" + fMd.getId() + "/view", n: j.entrees.length,
+      dernier: j.entrees.length ? j.entrees[j.entrees.length - 1].date : "", canaux: Object.keys(canaux), misAJour: j.misAJour || "" };
+    n++;
+  }
+  var contenu = JSON.stringify({ version: VERSION, misAJour: new Date().toISOString(), cles: cles });
+  if (f) f.setContent(contenu); else donnees.createFile("index.json", contenu, "application/json");
+  Logger.log("Index reconstruit : " + n + " fichier(s) lus, " + Object.keys(cles).length + " clé(s) (" + avant + " avant), " + sansMd + " sans fichier .md.");
 }
 function dossierCorrespondances() {
   if (DOSSIER_CORRESPONDANCES_ID) {

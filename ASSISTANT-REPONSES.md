@@ -167,13 +167,17 @@ résumé d'une phrase), les tâches proposées et les notifications poussées co
   `{ idEvt: { type: "reponse", mode: "detaillee", modele: "claude-opus-5-5-extra", at, note, expediteur, source, sujet, urgence } }`.
   **Interroger l'export toutes les 60 secondes** ; servir chaque demande dont `at` est postérieur au
   `genereeLe` de la proposition existante, **avant tout autre travail**, avec **Claude Opus 5.5
-  « Extra »** : le modèle `claude-opus-5-5` à l'effort maximal (Claude Code `--effort max`, ou
-  `/effort max` ; à défaut `xhigh`), réflexion étendue, et **toutes** les communications précédentes
+  « Extra »** : le modèle `claude-opus-5-5` en effort Extra, Claude Code `--effort xhigh` (le niveau
+  juste en dessous de max), réflexion étendue, et **toutes** les communications précédentes
   avec l'interlocuteur (le `.md` complet, pas seulement les derniers messages), le ton et les
   habitudes, les lieux, les dates, l'agenda si un créneau est en jeu, le projet et son journal de bord.
 - La proposition ainsi produite porte `surDemande: true` et `genereePar: "claude-opus-5-5 (extra)"` :
   l'app n'affiche **que** les propositions demandées. Une proposition écrite sans demande n'est pas
-  affichée (et consomme le forfait pour rien). `note` est une consigne de Grégory à respecter mot pour mot (« réponse courte, je décline »,
+  affichée (et consomme le forfait pour rien).
+- **Repli** : l'app reconnaît un repli au mot « repli » dans `genereePar`, quel que soit le modèle,
+  et l'affiche avec l'étiquette « repli · Opus réécrira après la pause ». Quand Opus réécrit la réponse
+  après la pause (`genereeLe` plus récent), le relais la remplace et l'app affiche la nouvelle version,
+  y compris si Grégory avait retouché le texte du repli. `note` est une consigne de Grégory à respecter mot pour mot (« réponse courte, je décline »,
   « en anglais », « propose un créneau la semaine prochaine »). Poster la proposition avec
   `genereeLe` = maintenant : l'app efface la demande dès qu'elle la voit. Objectif : moins de trois
   minutes entre la demande et l'affichage.
@@ -229,11 +233,12 @@ Limites du forfait et repli :
 
 - Le forfait a une **fenêtre de 5 heures** et un **plafond hebdomadaire**, partagés avec mes
   propres sessions Claude et Claude Code. **Aucune génération d'avance** : réponses à la demande
-  seulement (section ci-dessus), à l'effort maximal puisqu'elles sont rares et voulues.
+  seulement (section ci-dessus), en effort Extra (xhigh) puisqu'elles sont rares et voulues.
 - Quand Claude Code répond par une erreur de limite d'usage (sortie JSON avec `is_error: true` ou
   code de retour non nul mentionnant « usage limit » / « rate limit »), **ne pas réessayer** avant
   la fin de la fenêtre : basculer sur le modèle local pour ce message, avec
-  `genereePar: "qwen2.5:14b (repli, forfait épuisé)"`, et remettre l'événement dans la file pour
+  `genereePar: "qwen3:8b (repli, forfait épuisé)"` (ou `"qwen3:8b (repli)"` après deux échecs
+  d'Opus), toujours avec `surDemande: true`, et remettre l'événement dans la file pour
   régénération par Opus au passage suivant.
 - Renouveler le jeton avant son échéance (un an) : noter la date dans le brief du matin un mois
   avant.
