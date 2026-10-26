@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v143";
+const APP_VERSION = "v144";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -101,7 +101,7 @@ function adoptRemote(remote, why) {
 const BASE_KEY = "operations01_base";
 const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals", "journalEntries", "pushSubscriptions"];
 const SYNC_NESTED = { missions: "entries" };
-const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "evRequests", "bankMap", "bankSkip", "contactIgnore"];
+const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "evRequests", "evRequested", "bankMap", "bankSkip", "contactIgnore"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
 let syncBase = (() => { try { const r = localStorage.getItem(BASE_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } })();
 function setSyncBase(obj) {
@@ -3248,10 +3248,14 @@ function evRequestOf(ev) {
 }
 function requestReply(ev, note) {
   state.evRequests = state.evRequests || {};
-  state.evRequests[ev.id] = { type: "reponse", at: new Date().toISOString(), note: String(note || "").trim(), expediteur: eventSenderKey(ev), source: ev.source || "", sujet: ev.sujet || "", urgence: eventUrgence(ev) };
+  const at = new Date().toISOString();
+  state.evRequests[ev.id] = { type: "reponse", mode: "detaillee", modele: "claude-opus-5-5-extra", at, note: String(note || "").trim(), expediteur: eventSenderKey(ev), source: ev.source || "", sujet: ev.sujet || "", urgence: eventUrgence(ev) };
+  state.evRequested = state.evRequested || {}; state.evRequested[ev.id] = at;   // trace durable : la proposition s'affichera
   save(); scheduleRequestPoll(); render();
-  toast("Demande envoyée : Opus prépare une réponse, elle apparaîtra ici dans quelques minutes");
+  toast("Demande envoyée : Opus 5.5 Extra prépare une réponse détaillée, elle apparaîtra ici dans quelques minutes");
 }
+// Une proposition ne s'affiche que si Grégory l'a demandée (ou si le Mac mini la marque « surDemande »).
+function proposalWanted(ev) { const p = ev.proposition || {}; const at = (state.evRequested || {})[ev.id]; return !!(p.surDemande || (at && p.genereeLe && p.genereeLe >= at)); }
 let evRequestTimer = null;
 function pendingRequests() { return Object.keys(state.evRequests || {}).filter((id) => { const r = state.evRequests[id]; return r && Date.now() - new Date(r.at).getTime() < EV_REQUEST_MAX_MS; }); }
 function scheduleRequestPoll() {
@@ -3262,9 +3266,9 @@ function scheduleRequestPoll() {
   }, 30000);
 }
 function openReplyRequestDialog(ev) {
-  const has = !!eventReply(ev);
-  showModal(`<div class="modal-head"><strong class="grow">${has ? "Nouvelle proposition de réponse" : "Proposer une réponse"}</strong><button class="btn ghost small" data-modal-close>✕</button></div>
-    <div class="muted" style="font-size:13px;margin-bottom:10px">Opus 5.5 relit l'historique avec ${esc(eventSenderName(ev) || "cet interlocuteur")}, votre ton habituel, les lieux, les dates et ton agenda, puis rédige. Compte quelques minutes.</div>
+  const has = proposalWanted(ev) && !!eventReply(ev);
+  showModal(`<div class="modal-head"><strong class="grow">${has ? "Nouvelle réponse détaillée" : "Réponse détaillée basée sur les communications précédentes"}</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <div class="muted" style="font-size:13px;margin-bottom:10px">Claude Opus 5.5 Extra relit toutes les communications précédentes avec ${esc(eventSenderName(ev) || "cet interlocuteur")}, ton ton habituel, les lieux, les dates et ton agenda, puis rédige. Compte quelques minutes.</div>
     <label class="field"><span>Précision pour l'assistant (facultatif)</span><textarea data-rq-note rows="3" placeholder="Ex. : réponse courte, je décline poliment · propose un créneau la semaine prochaine · en anglais"></textarea></label>
     <div class="inline" style="margin-top:10px"><span class="grow"></span><button class="btn" data-rq-send>✨ Demander</button></div>`);
   document.querySelector("[data-modal-close]").onclick = closeModal;
@@ -3273,12 +3277,12 @@ function openReplyRequestDialog(ev) {
 }
 // Bouton et état de la demande, pour la ligne et la page du message.
 function replyRequestHtml(ev, compact) {
-  const r = evRequestOf(ev), has = !!eventReply(ev);
+  const r = evRequestOf(ev), has = proposalWanted(ev) && !!eventReply(ev);
   if (r && !r.expired) {
     const min = Math.max(0, Math.round((Date.now() - new Date(r.at).getTime()) / 60000));
-    return `<span class="pm-tag rq-pending" title="Le Mac mini prépare la réponse avec Opus 5.5">⏳ Réponse en préparation${min ? ` · demandée il y a ${min} min` : ""}</span>`;
+    return `<span class="pm-tag rq-pending" title="Le Mac mini prépare la réponse détaillée avec Claude Opus 5.5 Extra">⏳ Réponse détaillée en préparation${min ? ` · demandée il y a ${min} min` : ""}</span>`;
   }
-  return `<button class="btn ${has || compact ? "ghost" : "secondary"} small" data-ev-request="${ev.id}" title="${has ? "Demander une nouvelle proposition, avec une précision si besoin" : "Opus 5.5 rédige une réponse à partir de l'historique, du ton, des lieux et des dates"}">${has ? "↻ Nouvelle proposition" : "✨ Proposer une réponse"}</button>`;
+  return `<button class="btn ${has || compact ? "ghost" : "secondary"} small" data-ev-request="${ev.id}" title="${has ? "Demander une nouvelle réponse détaillée, avec une précision si besoin" : "Claude Opus 5.5 Extra rédige une réponse détaillée à partir de toutes les communications précédentes, du ton, des lieux et des dates"}">${has ? "↻ Nouvelle réponse détaillée" : "✨ Réponse détaillée basée sur les communications précédentes"}</button>`;
 }
 let evEditing = null;      // événement dont la réponse est en cours de modification
 const evDraft = {};        // texte en cours de frappe (survit aux rafraîchissements de l'écran)
@@ -3403,6 +3407,7 @@ function eventToStepTasks(ev) {
 function eventProposal(ev, open) {
   const p = ev.proposition;
   if (!p || (!p.reponse && !p.tache)) return "";
+  if (!proposalWanted(ev)) return "";   // par défaut, rien n'est proposé : la réponse se demande
   const compose = eventComposeLink(ev), reply = eventReply(ev), edited = !!evEditOf(ev.id), editing = evEditing === ev.id;
   const t = p.tache, steps = eventSteps(ev), done = stepsDone(ev.id);
   const complex = !!(t && (t.complexe || steps.length));

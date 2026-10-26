@@ -66,12 +66,13 @@ et `_données/*.json` : les lire directement est plus rapide que le relais.
 ## 2. Proposition de réponse étayée : ce que le Mac mini écrit dans l'événement
 
 Le champ `proposition` d'un événement (POST habituel `{ evenements:[…] }`, le relais ne met à jour
-que ce champ sur un événement existant) devient, **pour toutes les urgences** :
+que ce champ sur un événement existant) est écrit **uniquement sur demande de Grégory** (v144,
+« Quand rédiger » ci-dessous) :
 
 ```json
 "proposition": {
   "reponse": "Bonjour Éric, oui, 14 h sur place demain me convient. J'apporte la v2.2 …",
-  "genereePar": "claude-opus-5-5", "genereeLe": "2026-10-10T07:05:00Z",
+  "genereePar": "claude-opus-5-5 (extra)", "genereeLe": "2026-10-10T07:05:00Z", "surDemande": true,
   "contexte": [
     { "source": "correspondance", "titre": "Éric Chenneveau · 28/09 · Point d'étape chantier",
       "date": "2026-09-28", "extrait": "« Première réunion de chantier le 28, visite SDIS dans la semaine. »",
@@ -154,20 +155,25 @@ semaine dispo un midi pour déjeuner ? » reçu un lundi : « Yes avec plaisir �
    (`https://drive.google.com/file/d/<id>/view` si l'identifiant est connu).
 4. **Événements précédents du même expéditeur** et leurs propositions acceptées (`statut: traite`).
 
-### Quand rédiger : d'avance pour l'urgent, à la demande pour le reste
+### Quand rédiger : jamais d'avance, uniquement à la demande (v144)
 
-Beaucoup de messages n'appellent pas de réponse rédigée. La règle :
+**Par défaut, aucune réponse n'est rédigée.** Ni pour les urgences 1 et 2, ni pour les demandes de
+créneau : plus aucune génération d'avance, plus de lot de nuit. Le classement (urgence, action,
+résumé d'une phrase), les tâches proposées et les notifications poussées continuent comme avant.
 
-- **D'avance** (dès la réception) : urgences 1 et 2 **dont l'action est « répondre »**, et toute
-  demande de rendez-vous / créneau. Rien d'autre n'est rédigé automatiquement : plus de lot de nuit
-  pour les urgences 3 et 4.
-- **À la demande** : dans l'app, « ✨ Proposer une réponse » (ou « ↻ Nouvelle proposition » quand une
-  existe) écrit une demande dans `data.evRequests` de l'export du relais (v10) :
-  `{ idEvt: { type: "reponse", at, note, expediteur, source, sujet, urgence } }`. **Interroger l'export
-  toutes les 60 secondes** ; servir chaque demande dont `at` est postérieur au `genereeLe` de la
-  proposition existante, **avant tout autre travail**, avec Opus 5.5 et le contexte complet
-  (historique de l'interlocuteur, ton et habitudes, lieux, dates, agenda si un créneau est en jeu,
-  projet). `note` est une consigne de Grégory à respecter mot pour mot (« réponse courte, je décline »,
+- **À la demande seulement** : dans l'app, « ✨ Réponse détaillée basée sur les communications
+  précédentes » (ou « ↻ Nouvelle réponse détaillée » quand une existe) écrit une demande dans
+  `data.evRequests` de l'export du relais :
+  `{ idEvt: { type: "reponse", mode: "detaillee", modele: "claude-opus-5-5-extra", at, note, expediteur, source, sujet, urgence } }`.
+  **Interroger l'export toutes les 60 secondes** ; servir chaque demande dont `at` est postérieur au
+  `genereeLe` de la proposition existante, **avant tout autre travail**, avec **Claude Opus 5.5
+  « Extra »** : le modèle `claude-opus-5-5` à l'effort maximal (Claude Code `--effort max`, ou
+  `/effort max` ; à défaut `xhigh`), réflexion étendue, et **toutes** les communications précédentes
+  avec l'interlocuteur (le `.md` complet, pas seulement les derniers messages), le ton et les
+  habitudes, les lieux, les dates, l'agenda si un créneau est en jeu, le projet et son journal de bord.
+- La proposition ainsi produite porte `surDemande: true` et `genereePar: "claude-opus-5-5 (extra)"` :
+  l'app n'affiche **que** les propositions demandées. Une proposition écrite sans demande n'est pas
+  affichée (et consomme le forfait pour rien). `note` est une consigne de Grégory à respecter mot pour mot (« réponse courte, je décline »,
   « en anglais », « propose un créneau la semaine prochaine »). Poster la proposition avec
   `genereeLe` = maintenant : l'app efface la demande dès qu'elle la voit. Objectif : moins de trois
   minutes entre la demande et l'affichage.
@@ -222,8 +228,8 @@ Claude Code (part de la fenêtre de 5 heures et de la semaine), et à reporter d
 Limites du forfait et repli :
 
 - Le forfait a une **fenêtre de 5 heures** et un **plafond hebdomadaire**, partagés avec mes
-  propres sessions Claude et Claude Code. Génération d'avance pour les **urgences 1 et 2 à
-  répondre** seulement ; le reste à la demande (section ci-dessus). Plus de lot de nuit.
+  propres sessions Claude et Claude Code. **Aucune génération d'avance** : réponses à la demande
+  seulement (section ci-dessus), à l'effort maximal puisqu'elles sont rares et voulues.
 - Quand Claude Code répond par une erreur de limite d'usage (sortie JSON avec `is_error: true` ou
   code de retour non nul mentionnant « usage limit » / « rate limit »), **ne pas réessayer** avant
   la fin de la fenêtre : basculer sur le modèle local pour ce message, avec
