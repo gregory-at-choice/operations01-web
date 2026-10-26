@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v145";
+const APP_VERSION = "v146";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -9305,11 +9305,16 @@ function pushPanelHtml() {
   else status = "Désactivées sur cet appareil.";
   const btns = pushSupported() && pushPublicKey() && Notification.permission !== "denied"
     ? (rec ? `<button class="btn ghost small" data-push-test>Tester</button><button class="btn ghost small" data-push-off>Désactiver ici</button>` : `<button class="btn secondary small" data-push-on>Activer sur cet appareil</button>`) : "";
-  return `<div class="section-h">Notifications poussées · téléphone et Mac</div><div class="muted" style="font-size:13px">${status}</div>
+  return `<div class="section-h" id="pushPanel">Notifications poussées · téléphone et Mac</div><div class="muted" style="font-size:13px">${status}${!pushSupported() || pushPublicKey() || Notification.permission === "denied" ? "" : ` <span data-push-wait>· vérification…</span>`}</div>
     <div class="inline" style="gap:6px;margin-top:6px;flex-wrap:wrap">${btns}</div>
     ${others.length ? `<div class="muted" style="font-size:12px;margin-top:6px">Autres appareils abonnés : ${others.map((s) => `${esc(s.appareil || "appareil")} <button class="btn ghost small" data-push-forget="${s.id}" title="Retirer cet appareil">✕</button>`).join(" · ")}</div>` : ""}`;
 }
 function wirePushPanel() {
+  // Clé publique absente : relire le fichier assistant (le Mac mini a pu la publier depuis), puis rafraîchir le panneau.
+  if (pushSupported() && !pushPublicKey() && Notification.permission !== "denied" && typeof assistantReady === "function" && assistantReady() && !assistantLoading) {
+    assistantLoadedAt = 0;
+    loadAssistant().then(() => { if (document.getElementById("pushPanel")) { if (pushPublicKey()) showNotifPanel(); else { const w = document.querySelector("[data-push-wait]"); if (w) w.textContent = "· toujours absente du fichier assistant."; } } });
+  }
   const on = document.querySelector("[data-push-on]"); if (on) on.onclick = () => enablePush().then(() => showNotifPanel());
   const off = document.querySelector("[data-push-off]"); if (off) off.onclick = () => disablePush().then(() => showNotifPanel());
   const test = document.querySelector("[data-push-test]"); if (test) test.onclick = testPush;
