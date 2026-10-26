@@ -144,8 +144,10 @@ semaine dispo un midi pour déjeuner ? » reçu un lundi : « Yes avec plaisir �
 
 ### Sources de contexte à interroger (dans cet ordre)
 
-1. **Correspondance avec l'interlocuteur** : les 30 dernières entrées de son fichier (relais ou
-   Drive local), plus une recherche plein texte sur les mots-clés du message dans tout son fichier.
+1. **Correspondance avec l'interlocuteur** : **tout** son fichier (relais ou Drive local), pas
+   seulement les dernières entrées : une réponse détaillée se demande rarement, elle mérite
+   l'historique complet. Si le fichier dépasse ce que le prompt accepte, garder l'intégralité des
+   douze derniers mois et résumer le reste par trimestre.
 2. **Projet concerné** : le projet dans lequel l'événement a été classé (export du relais,
    `data.missions`) ; ses tâches ouvertes et leurs échéances (`data.tasks` avec `missionId`), ses
    actions en attente (`data.actions`), ses rendez-vous à venir (`data.rendezvous`).
@@ -207,7 +209,7 @@ Appel type (un message = un appel, prompt et contexte sur l'entrée standard) :
 ```bash
 cd /Users/choice/assistants/claude-vide && env -u ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN="$(cat ~/.assistants/claude-token)" \
   claude -p "$(cat /tmp/prompt-$ID.md)" \
-    --model claude-opus-5-5 --effort medium \
+    --model claude-opus-5-5 --effort xhigh \
     --tools "" --disallowedTools "mcp__*" \
     --system-prompt-file /Users/choice/assistants/prompts/reponse-etayee.md \
     --output-format json --json-schema "$(cat /Users/choice/assistants/prompts/proposition.schema.json)" \
@@ -217,17 +219,15 @@ cd /Users/choice/assistants/claude-vide && env -u ANTHROPIC_API_KEY CLAUDE_CODE_
 - `proposition.schema.json` décrit exactement l'objet `proposition` de la section 2 (`reponse`,
   `contexte[]`). Le résultat validé est dans `structured_output` de la sortie JSON ; `result` et
   `session_id` peuvent être ignorés.
-- Le prompt contient : le message reçu, les 30 dernières entrées de la correspondance, les extraits
-  du projet et des tâches présélectionnés localement, et trois de mes réponses réelles au même
-  interlocuteur (pour le ton). Viser 6 000 à 10 000 jetons, pas plus : le forfait se compte en
-  volume.
-- `--effort medium` suffit pour une réponse ; `high` pour les urgences 1 et 2 si le résultat semble
-  court.
+- Le prompt contient : le message reçu, la correspondance complète avec l'interlocuteur, les
+  extraits du projet, de ses tâches et de son journal de bord présélectionnés localement, l'agenda si
+  un créneau est en jeu, et mes réponses réelles au même interlocuteur (pour le ton). Pas de plafond
+  de jetons serré : les demandes sont rares et voulues, la qualité prime.
+- `--effort xhigh` (« Extra ») pour toutes les réponses demandées ; aucune génération sans demande.
 
-Forfait : **Max 20x**. Consommation attendue de la génération : 1 700 messages par mois, environ
-4 millions de jetons par semaine (un quart en cache), soit l'équivalent de 2 à 4 heures d'Opus par
-semaine, **5 à 12 % du plafond hebdomadaire**. À mesurer après deux nuits de lots avec `/usage` dans
-Claude Code (part de la fenêtre de 5 heures et de la semaine), et à reporter dans le brief du matin.
+Forfait : **Max 20x**. Depuis la v144, seules mes demandes déclenchent Opus : quelques réponses
+par jour au plus, soit une fraction du plafond hebdomadaire. À mesurer avec `/usage` dans Claude
+Code (part de la fenêtre de 5 heures et de la semaine) et à reporter dans le brief du matin.
 
 Limites du forfait et repli :
 
