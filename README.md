@@ -262,7 +262,12 @@ relais v14). Pause et reprise possibles ; l'écran reste allumé pendant l'enreg
   transcription complète. La réunion est consignée dans le **journal de bord** du projet dès que le
   résumé arrive.
 - **iPhone** : garder l'app au premier plan pendant l'enregistrement (en arrière-plan, iOS coupe le
-  micro). Un envoi raté se relance depuis la fiche (« Renvoyer sur le Drive »).
+  micro ; une coupure clôt l'enregistrement avec ce qui a été capté, et un enregistrement interrompu
+  par une fermeture de l'app est récupéré au lancement suivant). Pour enregistrer **écran éteint ou en
+  faisant autre chose**, utiliser **Dictaphone** puis Partager → Drive → dossier « Enregistrements
+  choice » : le Mac mini liste ce dossier (relais v15, `action=audios`), transcrit le fichier, et la
+  fiche apparaît dans Réunions (lecture dans Drive, projet à choisir). Un envoi raté se relance depuis
+  la fiche (« Renvoyer sur le Drive »).
 
 ## Notifications poussées : bannière et pastille, téléphone et Mac
 

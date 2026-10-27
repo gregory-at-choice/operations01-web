@@ -348,6 +348,15 @@ l'appareil, 64 kbit/s), et l'enregistrement est décrit dans `data.recordings` d
 `{ id, title, kind: "reunion"|"note", missionId, startedAt, durationSec, mime, size, fileId, fileName, statut }`.
 `statut: "envoye"` = audio disponible, transcription attendue. **Le Mac mini transcrit, résume et poste.**
 
+**Fichiers déposés directement dans le dossier (v149, relais v15).** Sur iPhone, l'app web ne peut pas
+enregistrer en arrière-plan ; Grégory utilise alors Dictaphone puis Partager → Drive → dossier
+« Enregistrements choice ». `GET ?action=audios` liste les fichiers audio du dossier
+(`{ id, nom, mime, taille, creeLe }`). Tout fichier absent de `data.recordings` (par `fileId`) et des
+transcriptions est à traiter comme un enregistrement : poster la transcription avec
+`id: "drive:<fileId>"`, `fileId`, `titre` (nom sans extension), `nom`, `mime`, `taille`, `enregistreLe`
+(= `creeLe`), `dureeSec` (mesurée), `kind: "reunion"` (ou `"note"` si moins de 3 minutes). L'app crée
+alors la fiche d'elle-même ; Grégory lui attribue un projet.
+
 **Cycle (toutes les 60 secondes, avec les demandes de réponse).**
 1. Lire l'export ; pour chaque enregistrement `statut: "envoye"` absent de `GET ?action=transcriptions`
    (ids déjà traités), télécharger l'audio : `GET ?action=audio&id=<fileId>` → `{ nom, mime, taille, base64 }`
