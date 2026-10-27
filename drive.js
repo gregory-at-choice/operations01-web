@@ -1154,6 +1154,16 @@
     return { id: out && out.id, size: blob.size, folderId: parent };
   }
   async function readBlob(id) { const r = await api(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`); return await r.blob(); }
+  // Documents livrés par le Mac mini (notes de lecture, comptes rendus) : fichier créé par l'app, tenu par le relais ;
+  // l'app en fait des documents du lecteur (fichiers à elle, donc lisibles avec la portée drive.file).
+  const DELIVERIES_FILE = "operations01-livraisons.json";
+  const EMPTY_DELIVERIES = () => JSON.stringify({ updatedAt: 0, documents: {} });
+  async function readLivraisons() {
+    if (!accessToken) return null;
+    const f = await findByName(DELIVERIES_FILE);
+    if (!f) { try { await createNamed(DELIVERIES_FILE, EMPTY_DELIVERIES()); } catch (e) {} return null; }
+    try { const j = JSON.parse(await download(f.id)); j._fileId = f.id; return j; } catch (e) { return null; }
+  }
   // Transcriptions écrites par le relais (Mac mini) : fichier créé par l'app (portée drive.file), tenu par le relais.
   const TRANSCRIPTS_FILE = "operations01-transcriptions.json";
   const EMPTY_TRANSCRIPTS = () => JSON.stringify({ updatedAt: 0, transcriptions: {} });
@@ -1244,6 +1254,7 @@
     readBinary,
     uploadBlobToFolder,
     readBlob,
-    readTranscriptions
+    readTranscriptions,
+    readLivraisons
   };
 })();

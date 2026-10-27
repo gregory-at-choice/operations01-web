@@ -405,6 +405,18 @@ disponible moins de dix minutes après la fin d'une réunion d'une heure.
 `resume` vide. Texte des transcriptions et résumés : jamais envoyé à un service tiers autre que Claude
 (forfait) ; Whisper tourne en local.
 
+## 8. Documents livrés à l'app (v151, relais v17)
+
+Tout traitement autonome qui produit un document pour Grégory (notes de lecture du New York Times,
+compte rendu, synthèse) le livre à l'app par le relais :
+`POST { secret, action: "document", cle, titre, nom: "<fichier>.md", texte, message, tache, compteRendu, genereLe }`.
+Le relais l'écrit dans `operations01-livraisons.json` (fichier créé par l'app à l'ouverture de Documents ;
+45 jours conservés, 400 000 caractères par document au plus). L'app en fait un **document du lecteur**
+(lisible à voix haute), le met en tête de la liste et l'ouvre, affiche `message` dans la cloche, et coche la
+tâche ouverte dont le titre commence par `tache`. Envoyer aussi `message` en notification poussée
+(section 6, `url: ./?go=reader`). Le contrat du New York Times (`CONTRAT-NYT.md`, § 10) en est le
+premier usage : `cle: "nyt-<date>"`, `tache: "New York Times du JJ/MM/AAAA"`, lancement à 10 h 45.
+
 ## 5. Vérifier de bout en bout
 
 1. Envoyer une entrée de test au relais (`action: "correspondance"`) → le fichier

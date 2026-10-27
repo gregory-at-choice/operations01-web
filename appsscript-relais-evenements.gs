@@ -47,7 +47,7 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 16;
+var VERSION = 17;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -60,6 +60,9 @@ var MAX_CARACTERES = 4000;
 var MAX_CONTENU = 3000;        // texte conservé pour un SMS / iMessage / WhatsApp
 var FICHIER_TRANSCRIPTIONS = "operations01-transcriptions.json";   // v14 : créé par l'app, tenu par le relais
 var AUDIO_MAX_OCTETS = 45 * 1024 * 1024;
+var FICHIER_LIVRAISONS = "operations01-livraisons.json";   // v17 : documents livrés à l'app (notes de lecture, comptes rendus)
+var LIVRAISONS_JOURS = 45;
+var LIVRAISON_MAX_CARACTERES = 400000;
 var DOSSIER_ENREGISTREMENTS = "Enregistrements choice";   // v15 : créé par l'app ; Dictaphone y dépose aussi des fichiers
 
 function doGet(e) {
@@ -100,6 +103,7 @@ function doPost(e) {
   if (corps.action === "retirer") return posterRetrait(corps);
   if (corps.action === "transcription") return posterTranscription(corps);
   if (corps.action === "audio") return posterAudio(corps);
+  if (corps.action === "document") return posterDocument(corps);
   return posterEvenements(corps);
 }
 
@@ -139,6 +143,27 @@ function posterAudio(corps) {
   if (deja.hasNext()) { var f0 = deja.next(); return reponse({ ok: true, id: f0.getId(), deja: true }); }
   var f = d.createFile(Utilities.newBlob(octets, corps.mime || "audio/mp4", corps.nom));
   return reponse({ ok: true, id: f.getId(), taille: octets.length });
+}
+// v17 : un document produit par le Mac mini (Markdown) ; l'app en fait un document du lecteur et prévient.
+// { cle: "nyt-2026-10-27", titre, nom: "….md", texte, message, tache, compteRendu, genereLe }
+function posterDocument(corps) {
+  if (!corps.cle || !corps.texte) return reponse({ ok: false, erreur: "cle et texte requis" });
+  if (String(corps.texte).length > LIVRAISON_MAX_CARACTERES) return reponse({ ok: false, erreur: "texte trop long" });
+  var fichier = trouver(FICHIER_LIVRAISONS);
+  if (!fichier) return reponse({ ok: false, erreur: "fichier absent : ouvrir une fois « Documents » dans Operations01" });
+  var verrou = LockService.getScriptLock(); verrou.waitLock(20000);
+  try {
+    var data; try { data = JSON.parse(fichier.getBlob().getDataAsString() || "{}"); } catch (err) { data = {}; }
+    data.documents = data.documents || {};
+    var maintenant = new Date().toISOString();
+    data.documents[corps.cle] = { cle: corps.cle, titre: corps.titre || corps.cle, nom: corps.nom || (corps.cle + ".md"), texte: String(corps.texte), message: corps.message || "", tache: corps.tache || "",
+      compteRendu: corps.compteRendu || null, genereLe: corps.genereLe || maintenant, recuLe: maintenant };
+    var horizon = Date.now() - LIVRAISONS_JOURS * 86400000;
+    Object.keys(data.documents).forEach(function (k) { var x = data.documents[k]; if (x && x.recuLe && new Date(x.recuLe).getTime() < horizon) delete data.documents[k]; });
+    data.updatedAt = Date.now();
+    fichier.setContent(JSON.stringify(data));
+    return reponse({ ok: true, cle: corps.cle });
+  } finally { verrou.releaseLock(); }
 }
 function listerTranscriptions() {
   var fichier = trouver(FICHIER_TRANSCRIPTIONS); if (!fichier) return { ok: true, transcriptions: {} };

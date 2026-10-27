@@ -246,6 +246,15 @@ recherche (clé, intitulé, notes), projet, priorité, étiquette, personne.
 - **Partager** : depuis la fiche d'une tâche (« Partager ») ou la chronologie d'un projet (« Partager
   le planning »), un texte brut à copier, envoyer par mail ou via la feuille de partage de l'appareil.
 
+## Documents livrés par le Mac mini (notes de lecture du New York Times…)
+
+Un traitement autonome du Mac mini peut livrer un document Markdown à l'app (relais v17, action
+`document`, fichier `operations01-livraisons.json`). L'app en fait un document de **Documents** (lecture
+à voix haute), le met en tête de la liste de lecture et l'ouvre, prévient par la cloche (et par
+notification poussée via le Mac mini), et coche la tâche dont le titre commence par celui indiqué.
+Premier usage : les notes de lecture quotidiennes du New York Times (`CONTRAT-NYT.md`), qui cochent la
+tâche récurrente « New York Times du JJ/MM/AAAA » du projet Veille.
+
 ## Réunions et notes vocales : enregistrer, transcrire, résumer
 
 Rubrique **Réunions** (menu Plus) : un titre, un type (réunion ou note vocale), un projet, puis le

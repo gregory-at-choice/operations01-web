@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v150";
+const APP_VERSION = "v151";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -101,7 +101,7 @@ function adoptRemote(remote, why) {
 const BASE_KEY = "operations01_base";
 const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals", "journalEntries", "pushSubscriptions", "recordings"];
 const SYNC_NESTED = { missions: "entries" };
-const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "evRequests", "evRequested", "bankMap", "bankSkip", "contactIgnore"];
+const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "evRequests", "evRequested", "livraisonsVues", "bankMap", "bankSkip", "contactIgnore"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
 let syncBase = (() => { try { const r = localStorage.getItem(BASE_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } })();
 function setSyncBase(obj) {
@@ -697,6 +697,7 @@ async function refreshDocs(force) {
   readerBusy = true; readerFetched = true; if (view.section === "reader") render();
   try {
     const docs = await DriveSync.listDocs();
+    loadLivraisons(false);
     // Les journaux de bord des projets (fichiers au nom lisible, hors préfixe) sont ajoutés à la liste.
     state.missions.forEach((m) => { const j = m.journal; if (j && j.fileId && !docs.some((d) => d.id === j.fileId)) docs.push({ id: j.fileId, name: j.name || `Journal de bord – ${m.title || "Projet"}`, size: 0, journal: true }); });
     const texts = {};
@@ -2758,6 +2759,7 @@ function openNotif(id) {
   const n = (state.notifs || []).find((x) => x.id === id); if (!n) return;
   dismissNotif(id); save(); closeModal();
   if (n.section === "missions" && n.detailId && findMission(n.detailId)) { projectTab = n.tab || "resume"; projectTabFor = n.detailId; openDetail("missions", n.detailId); }
+  else if (n.section === "reader" && n.docId) { state.readerCurrent = n.docId; reader.kind = "md"; saveReader(); go("reader"); ensureDocText(n.docId); }
   else go(n.section || "missions");
   renderNotifBell();
 }
@@ -8902,6 +8904,7 @@ if (pendingRequests().length) scheduleRequestPoll();
 setInterval(() => {
   if (eventsReady() && Date.now() - eventLoadedAt > EVENT_FRESH) loadEvenements();
   if (assistantReady() && Date.now() - assistantLoadedAt > EVENT_FRESH) loadAssistant();
+  loadLivraisons(false);
 }, 60000);
 setInterval(() => {
   document.querySelectorAll("[data-entry-time]").forEach((span) => {
@@ -9590,6 +9593,38 @@ function createTasksFromRecording(id, idx) {
     if (r.missionId) journalLog(r.missionId, "tache", `Tâche créée depuis la réunion « ${r.title} » : « ${task.title} »`, { kind: "task", id: task.id });
   });
   if (n) { ensureTaskKeys(); save(); render(); toast(`${n} tâche${n > 1 ? "s" : ""} créée${n > 1 ? "s" : ""} ✓`); }
+}
+
+// ============================ Documents livrés par le Mac mini ============================
+// Un traitement autonome du Mac mini (notes de lecture du New York Times, comptes rendus…) poste son
+// résultat au relais (action « document ») ; le relais l'écrit dans operations01-livraisons.json. L'app en
+// fait un document du lecteur (fichier à elle, lisible à voix haute), prévient par la cloche, et coche la
+// tâche désignée (ex. « New York Times du 27/10/2026 » du projet Veille).
+let livraisonStore = {}, livraisonLoadedAt = 0;
+async function loadLivraisons(force) {
+  if (!(window.DriveSync && DriveSync.readLivraisons && DriveSync.isConnected())) return;
+  if (!force && Date.now() - livraisonLoadedAt < 10 * 60000) return;
+  livraisonLoadedAt = Date.now();
+  let d = null; try { d = await DriveSync.readLivraisons(); } catch (e) {}
+  if (!d || !d.documents) return;
+  livraisonStore = d.documents;
+  state.livraisonsVues = state.livraisonsVues || {};
+  const keys = Object.keys(livraisonStore).filter((k) => !state.livraisonsVues[k]).sort();
+  const fresh = [];
+  for (const k of keys) {
+    const doc = livraisonStore[k]; if (!doc || !doc.texte) continue;
+    try {
+      const name = String(doc.nom || (k + ".md")).replace(/[\\\/:*?"<>|]+/g, " ").trim();
+      const id = await DriveSync.uploadDoc(name, doc.texte);
+      readerLib.docs.push({ id, name, size: doc.texte.length }); readerLib.texts[id] = doc.texte; saveCache();
+      readerOrder().unshift(id); state.readerCurrent = id;
+      state.livraisonsVues[k] = { docId: id, at: Date.now() };
+      const n = { kind: "livraison", key: "livraison:" + k, title: doc.titre || "Document livré", body: doc.message || name, section: "reader", docId: id };
+      if (pushNotif(n)) fresh.push(n);
+      if (doc.tache) { const t = state.tasks.find((x) => !taskDone(x) && String(x.title || "").indexOf(doc.tache) === 0); if (t) setTaskField(t, "status", "termine"); }
+    } catch (e) { reportError(e, "import d'un document livré"); }
+  }
+  if (fresh.length) { save(); renderNotifBell(); notifySystem(fresh); if (view.section === "reader") render(); toast(fresh[0].title); }
 }
 
 (function wireVoiceFab() {
