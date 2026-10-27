@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v147";
+const APP_VERSION = "v148";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -9360,6 +9360,28 @@ function audioDB() {
 function audioPut(id, blob, mime) { return audioDB().then((db) => new Promise((res, rej) => { const tx = db.transaction("blobs", "readwrite"); tx.objectStore("blobs").put({ id, blob, mime, at: Date.now() }); tx.oncomplete = res; tx.onerror = () => rej(tx.error); })); }
 function audioGet(id) { return audioDB().then((db) => new Promise((res, rej) => { const q = db.transaction("blobs").objectStore("blobs").get(id); q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error); })).catch(() => null); }
 function audioDel(id) { return audioDB().then((db) => new Promise((res) => { const tx = db.transaction("blobs", "readwrite"); tx.objectStore("blobs").delete(id); tx.oncomplete = res; tx.onerror = res; })).catch(() => {}); }
+function audioAll() { return audioDB().then((db) => new Promise((res, rej) => { const q = db.transaction("blobs").objectStore("blobs").getAll(); q.onsuccess = () => res(q.result || []); q.onerror = () => rej(q.error); })).catch(() => []); }
+// Pendant l'enregistrement, chaque morceau (10 s) est écrit sur l'appareil : si iOS ferme l'app (écran
+// verrouillé, mémoire), rien n'est perdu, et l'enregistrement interrompu est proposé au prochain lancement.
+function audioPutPart(live, n, blob, meta) { return audioDB().then((db) => new Promise((res, rej) => { const tx = db.transaction("blobs", "readwrite"); tx.objectStore("blobs").put({ id: `${live}#${String(n).padStart(5, "0")}`, live, n, blob, meta, at: Date.now() }); tx.oncomplete = res; tx.onerror = () => rej(tx.error); })).catch(() => {}); }
+async function audioDelParts(live) { const all = await audioAll(); await Promise.all(all.filter((x) => x.live === live).map((x) => audioDel(x.id))); }
+async function recoverLiveRecordings() {
+  const all = await audioAll(); const byLive = {};
+  all.forEach((x) => { if (x.live && x.blob) (byLive[x.live] = byLive[x.live] || []).push(x); });
+  const lives = Object.keys(byLive).filter((l) => !(rec.active && rec.liveId === l));
+  for (const live of lives) {
+    const parts = byLive[live].sort((a, b) => a.n - b.n), meta = parts[0].meta || {};
+    const blob = new Blob(parts.map((x) => x.blob), { type: meta.mime || "audio/webm" });
+    const sec = Math.round(((parts[parts.length - 1].at || Date.now()) - (meta.startedAt || parts[0].at)) / 1000);
+    if (blob.size < 2000) { await audioDelParts(live); continue; }
+    const r = { id: uid(), title: (meta.title || "").trim() || `${recKindLabel(meta.kind)} interrompue du ${fmtDate(new Date(meta.startedAt || Date.now()).toISOString().slice(0, 10))}`, kind: meta.kind || "reunion", missionId: meta.missionId || null, startedAt: new Date(meta.startedAt || parts[0].at).toISOString(), durationSec: Math.max(sec, parts.length * 10), mime: blob.type, size: blob.size, fileId: "", fileName: "", statut: "local", interrompu: true, createdAt: Date.now() };
+    state.recordings = state.recordings || []; state.recordings.push(r);
+    await audioPut(r.id, blob, blob.type); await audioDelParts(live);
+    save(); toast(`Enregistrement interrompu récupéré : « ${r.title} » (${fmtDuration(r.durationSec)})`);
+    uploadRecording(r.id);
+  }
+  if (lives.length && view.section === "reunions") render();
+}
 // --- Enregistreur ---
 function recSupported() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder); }
 function recMime() {
@@ -9378,14 +9400,23 @@ async function startRecording(opts) {
   let media;
   try { media = mime ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 64000 }) : new MediaRecorder(stream); }
   catch (e) { try { media = new MediaRecorder(stream); } catch (e2) { toast("Enregistreur indisponible : " + (e2.message || e2)); stream.getTracks().forEach((t) => t.stop()); return; } }
-  Object.assign(rec, { active: true, paused: false, media, stream, chunks: [], mime: media.mimeType || mime || "audio/webm", startedAt: Date.now(), pausedTotal: 0, pauseAt: 0, title: (opts && opts.title) || "", kind: (opts && opts.kind) || "reunion", missionId: (opts && opts.missionId) || "" });
-  media.ondataavailable = (e) => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+  Object.assign(rec, { active: true, paused: false, media, stream, chunks: [], mime: media.mimeType || mime || "audio/webm", startedAt: Date.now(), pausedTotal: 0, pauseAt: 0, title: (opts && opts.title) || "", kind: (opts && opts.kind) || "reunion", missionId: (opts && opts.missionId) || "", liveId: uid(), n: 0 });
+  const meta = { title: rec.title, kind: rec.kind, missionId: rec.missionId, startedAt: rec.startedAt, mime: rec.mime };
+  media.ondataavailable = (e) => { if (e.data && e.data.size) { rec.chunks.push(e.data); audioPutPart(rec.liveId, rec.n++, e.data, meta); } };
   media.onstop = () => finishRecording();
+  // Micro coupé par le système (écran verrouillé, appel entrant) : on clôt proprement avec ce qui est capté.
+  try { stream.getAudioTracks().forEach((t) => { t.onended = () => { if (rec.active) { toast("Micro coupé par le système : enregistrement clôturé"); stopRecording(); } }; }); } catch (e) {}
   media.start(10000);   // un morceau toutes les 10 s : rien n'est perdu si l'onglet s'interrompt
   try { if (navigator.wakeLock) { rec.wake = await navigator.wakeLock.request("screen"); } } catch (e) { rec.wake = null; }
   rec.timer = setInterval(() => { const el = document.getElementById("recTimer"); if (el) el.textContent = fmtDuration(recElapsed()); }, 1000);
   render(); toast("Enregistrement en cours ●");
 }
+document.addEventListener("visibilitychange", () => {
+  if (!rec.active || document.visibilityState !== "visible") return;
+  try { if (navigator.wakeLock && !rec.wake) navigator.wakeLock.request("screen").then((w) => { rec.wake = w; }).catch(() => {}); } catch (e) {}
+  const st = rec.media && rec.media.state;
+  if (st === "inactive") { toast("L'enregistrement a été interrompu pendant la mise en veille : clôturé avec ce qui a été capté"); finishRecording(); }
+});
 function pauseRecording() { if (!rec.active || rec.paused) return; try { rec.media.pause(); } catch (e) {} rec.paused = true; rec.pauseAt = Date.now(); render(); }
 function resumeRecording() { if (!rec.active || !rec.paused) return; try { rec.media.resume(); } catch (e) {} rec.pausedTotal += Date.now() - rec.pauseAt; rec.paused = false; render(); }
 function stopRecording() { if (!rec.active) return; if (rec.paused) { rec.pausedTotal += Date.now() - rec.pauseAt; rec.paused = false; } try { rec.media.stop(); } catch (e) { finishRecording(); } }
@@ -9398,10 +9429,10 @@ async function finishRecording() {
   const blob = new Blob(rec.chunks, { type: rec.mime });
   const title = rec.title.trim() || `${recKindLabel(rec.kind)} du ${fmtDate(todayISO())}`;
   const r = { id: uid(), title, kind: rec.kind, missionId: rec.missionId || null, startedAt: new Date(rec.startedAt).toISOString(), durationSec, mime: rec.mime, size: blob.size, fileId: "", fileName: "", statut: "local", createdAt: Date.now() };
-  rec.active = false; rec.chunks = [];
-  if (!blob.size) { toast("Enregistrement vide"); render(); return; }
+  const live = rec.liveId; rec.active = false; rec.chunks = [];
+  if (!blob.size) { toast("Enregistrement vide"); audioDelParts(live); render(); return; }
   state.recordings = state.recordings || []; state.recordings.push(r);
-  try { await audioPut(r.id, blob, rec.mime); } catch (e) { reportError(e, "stockage local de l'audio"); }
+  try { await audioPut(r.id, blob, rec.mime); await audioDelParts(live); } catch (e) { reportError(e, "stockage local de l'audio"); }
   save(); render();
   toast(`Enregistré · ${fmtDuration(durationSec)} · envoi vers le Drive…`);
   uploadRecording(r.id);
@@ -9457,6 +9488,7 @@ function recStatusHtml(r) {
 function renderReunions() {
   if (view.detailId) return renderRecordingDetail(view.detailId);
   loadTranscriptions(false); if (transcriptPending().length) scheduleTranscriptPoll();
+  if (!rec.recoveryChecked) { rec.recoveryChecked = true; recoverLiveRecordings(); }
   const missions = sortedMissions().filter((m) => (m.statusCode || "") !== "terminee");
   const missionOpts = `<option value="">Sans projet</option>` + missions.map((m) => `<option value="${m.id}" ${rec.missionId === m.id ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`).join("");
   const kinds = REC_KINDS.map(([k, ic, lbl]) => `<button class="chip ${rec.kind === k ? "active" : ""}" data-rec-kind="${k}" ${rec.active ? "disabled" : ""}>${ic} ${lbl}</button>`).join("");
@@ -9466,7 +9498,7 @@ function renderReunions() {
         <div class="grow"><div><span class="rec-live ${rec.paused ? "paused" : ""}"></span><span class="rec-timer" id="recTimer">${fmtDuration(recElapsed())}</span></div>
         <div class="muted" style="font-size:13px">${esc(rec.title || recKindLabel(rec.kind))}${rec.missionId && findMission(rec.missionId) ? " · " + esc(findMission(rec.missionId).title) : ""} · ${rec.paused ? "en pause" : "enregistrement"}</div></div>
         <button class="btn secondary" ${rec.paused ? "data-rec-resume" : "data-rec-pause"}>${rec.paused ? "▶ Reprendre" : "⏸ Pause"}</button></div>
-        <div class="muted" style="font-size:12px;margin-top:8px">Garde l'app au premier plan${ios ? " et l'écran allumé (l'app s'en charge)" : ""} : en arrière-plan, le navigateur coupe le micro.</div></div>`
+        <div class="muted" style="font-size:12px;margin-top:8px">Garde l'app au premier plan${ios ? " ; l'app maintient l'écran allumé" : ""}. Si le système coupe le micro (écran verrouillé, appel), l'enregistrement est clôturé avec ce qui a été capté, rien n'est perdu${rec.wake ? "" : " · verrou d'écran non obtenu : désactive le verrouillage automatique le temps de la réunion"}.</div></div>`
     : `<div class="card rec-card"><div class="section-h" style="margin-top:0">Nouvel enregistrement</div>
         <div class="chip-row" style="margin-bottom:8px">${kinds}</div>
         <div class="inline" style="gap:8px;flex-wrap:wrap"><input class="grow" data-rec-title placeholder="Titre (ex. Point hebdo Icarus, Note après l'appel DRARI)" value="${esc(rec.title)}" style="min-width:200px"/>
