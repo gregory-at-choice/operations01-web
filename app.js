@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v148";
+const APP_VERSION = "v149";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -9448,6 +9448,7 @@ async function uploadRecording(id) {
     const res = await DriveSync.uploadBlobToFolder(name, local.blob, r.mime || "audio/webm", REC_FOLDER, (p) => { rec.uploading[id] = p; const el = document.querySelector(`[data-rec-progress="${id}"]`); if (el) el.textContent = `envoi ${Math.round(p * 100)} %`; });
     if (!res || !res.id) throw new Error("identifiant Drive absent");
     r.fileId = res.id; r.fileName = name; r.statut = "envoye"; r.sentAt = Date.now();
+    if (res.folderId) state.recFolderId = res.folderId;
     delete rec.uploading[id]; save(); audioDel(id);
     toast("Audio sur le Drive ✓ · transcription à venir sur le Mac mini"); scheduleTranscriptPoll();
   } catch (e) { delete rec.uploading[id]; reportError(e, "envoi de l'enregistrement"); toast("Envoi impossible : " + ((e && e.message) || e) + " · l'audio reste sur l'appareil"); }
@@ -9462,6 +9463,16 @@ async function loadTranscriptions(force) {
   transcriptLoadedAt = Date.now();
   try { const d = await DriveSync.readTranscriptions(); if (d && d.transcriptions) transcriptStore = d.transcriptions; } catch (e) {}
   let changed = false;
+  // Fichiers déposés directement dans le dossier Drive (Dictaphone, app Drive) : le Mac mini les transcrit
+  // sous l'id « drive:<fileId> » ; l'app crée alors la fiche, sans projet tant que Grégory n'en choisit pas.
+  Object.keys(transcriptStore).forEach((tid) => {
+    const t = transcriptStore[tid]; if (!t || !(t.fileId || tid.indexOf("drive:") === 0)) return;
+    const fileId = t.fileId || tid.slice(6);
+    if ((state.recordings || []).some((r) => r.id === tid || r.fileId === fileId)) return;
+    state.recordings = state.recordings || [];
+    state.recordings.push({ id: tid, title: String(t.titre || t.nom || "Enregistrement").replace(/\.[a-z0-9]{2,4}$/i, ""), kind: t.kind === "note" ? "note" : "reunion", missionId: null, startedAt: t.enregistreLe || t.genereeLe || new Date().toISOString(), durationSec: Number(t.dureeSec) || 0, mime: t.mime || "", size: Number(t.taille) || 0, fileId, fileName: t.nom || "", statut: "pret", source: "drive", createdAt: Date.now() });
+    changed = true;
+  });
   (state.recordings || []).forEach((r) => {
     const t = transcriptOf(r.id); if (!t) return;
     if (r.statut !== "pret") { r.statut = "pret"; changed = true; }
@@ -9515,7 +9526,10 @@ function renderReunions() {
       <div class="r-sub">${esc((r.startedAt || "").slice(11, 16))} · ${fmtDuration(r.durationSec || 0)}${m ? " · " + esc(m.title) : ""} · ${recStatusHtml(r)}</div>
       ${t && t.resume ? `<div class="mail-snippet">${esc(String(t.resume).slice(0, 160))}</div>` : ""}</div><span class="muted">›</span></div>`;
   });
-  return `<div class="page-title">Réunions et notes vocales</div>${recorder}
+  const ios2 = /iPhone|iPad/.test(navigator.userAgent || "");
+  const dictaphone = `<details class="card rec-card" ${ios2 && !rec.active ? "open" : ""}><summary style="cursor:pointer;font-weight:600">📱 Enregistrer écran éteint ou en faisant autre chose (iPhone)</summary>
+      <div class="muted" style="font-size:13px;margin-top:8px;line-height:1.5">Sur iPhone, seule une app native peut enregistrer en arrière-plan : l'app web est suspendue dès qu'elle quitte l'écran. Utilise <strong>Dictaphone</strong> (il enregistre écran éteint, sans limite), puis à la fin : <strong>Partager → Drive → dossier « ${esc(REC_FOLDER)} »</strong>. Le Mac mini transcrit et résume le fichier, et la réunion apparaît ici (choisis alors son projet dans la fiche pour la consigner au journal).${state.recFolderId ? ` <a href="https://drive.google.com/drive/folders/${esc(state.recFolderId)}" target="_blank" rel="noopener">Ouvrir le dossier</a>` : ""}</div></details>`;
+  return `<div class="page-title">Réunions et notes vocales</div>${recorder}${dictaphone}
     <div class="section-h">Enregistrements <span class="muted">(${list.length})</span></div>
     <div class="list">${html || '<div class="center-empty">Aucun enregistrement.<br><span style="font-size:13px">Une réunion ou une note vocale : transcription, résumé, décisions et actions arrivent du Mac mini.</span></div>'}</div>`;
 }
@@ -9525,7 +9539,9 @@ function renderRecordingDetail(id) {
   const missionOpts = `<option value="">Sans projet</option>` + sortedMissions().map((x) => `<option value="${x.id}" ${r.missionId === x.id ? "selected" : ""}>${esc(x.title || "Sans titre")}</option>`).join("");
   const actions = t && Array.isArray(t.actions) ? t.actions : [], decisions = t && Array.isArray(t.decisions) ? t.decisions : [], questions = t && Array.isArray(t.questions) ? t.questions : [];
   const made = r.tasksMade || {};
-  const audio = recAudioUrls[r.id] ? `<audio controls src="${recAudioUrls[r.id]}" style="width:100%;margin-top:8px"></audio>` : `<button class="btn secondary small" data-rec-play="${r.id}" ${r.fileId || r.statut === "local" ? "" : "disabled"}>▶ Écouter</button>`;
+  const audio = recAudioUrls[r.id] ? `<audio controls src="${recAudioUrls[r.id]}" style="width:100%;margin-top:8px"></audio>`
+    : r.source === "drive" ? `<a class="btn secondary small" href="https://drive.google.com/file/d/${esc(r.fileId)}/view" target="_blank" rel="noopener">▶ Écouter sur le Drive</a> <span class="muted" style="font-size:12px">(fichier déposé depuis Dictaphone : lecture dans Drive)</span>`
+    : `<button class="btn secondary small" data-rec-play="${r.id}" ${r.fileId || r.statut === "local" ? "" : "disabled"}>▶ Écouter</button>`;
   const body = t
     ? `<div class="card" style="margin-top:12px"><div class="section-h" style="margin-top:0">Résumé <span class="muted">(${esc(t.modele || "Mac mini")})</span></div><div class="md-doc" style="padding:0;background:transparent">${mdToHtml(String(t.resume || "_Pas de résumé._"))}</div>
         ${decisions.length ? `<div class="section-h">Décisions</div><ul>${decisions.map((d) => `<li>${esc(typeof d === "string" ? d : d.texte || "")}</li>`).join("")}</ul>` : ""}

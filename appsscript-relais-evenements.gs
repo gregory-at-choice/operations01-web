@@ -47,7 +47,7 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 14;
+var VERSION = 15;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -60,6 +60,7 @@ var MAX_CARACTERES = 4000;
 var MAX_CONTENU = 3000;        // texte conservé pour un SMS / iMessage / WhatsApp
 var FICHIER_TRANSCRIPTIONS = "operations01-transcriptions.json";   // v14 : créé par l'app, tenu par le relais
 var AUDIO_MAX_OCTETS = 45 * 1024 * 1024;
+var DOSSIER_ENREGISTREMENTS = "Enregistrements choice";   // v15 : créé par l'app ; Dictaphone y dépose aussi des fichiers
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
@@ -69,6 +70,7 @@ function doGet(e) {
   if (p.action === "correspondance") return reponse(lireCorrespondance(p.cle, p.depuis, p.max));
   if (p.action === "audio") return reponse(lireAudio(p.id));
   if (p.action === "transcriptions") return reponse(listerTranscriptions());
+  if (p.action === "audios") return reponse(listerAudios());
   if (p.action !== "export") return reponse({ ok: true, service: "relais-evenements", version: VERSION });
   var data = lireJson(FICHIER_DATA) || {};
   var exporte = {};
@@ -109,6 +111,20 @@ function lireAudio(id) {
   var b = f.getBlob(), octets = b.getBytes();
   if (octets.length > AUDIO_MAX_OCTETS) return { ok: false, erreur: "fichier trop volumineux pour le relais (" + octets.length + " octets)" };
   return { ok: true, id: id, nom: f.getName(), mime: b.getContentType(), taille: octets.length, base64: Utilities.base64Encode(octets) };
+}
+// Fichiers audio du dossier (ceux de l'app et ceux déposés depuis Dictaphone ou l'app Drive) : le Mac mini
+// transcrit ceux qui ne figurent ni dans data.recordings (fileId) ni dans les transcriptions (id "drive:<fileId>").
+function listerAudios() {
+  var it = DriveApp.getRootFolder().getFoldersByName(DOSSIER_ENREGISTREMENTS);
+  if (!it.hasNext()) return { ok: true, dossier: null, fichiers: [] };
+  var d = it.next(), files = d.getFiles(), out = [];
+  while (files.hasNext()) {
+    var f = files.next(), mime = f.getMimeType() || "";
+    if (!/^audio\/|^video\/|mp4|m4a|webm|ogg|mpeg|wav|aac/i.test(mime + " " + f.getName())) continue;
+    out.push({ id: f.getId(), nom: f.getName(), mime: mime, taille: f.getSize(), creeLe: f.getDateCreated().toISOString(), modifieLe: f.getLastUpdated().toISOString() });
+  }
+  out.sort(function (a, b) { return b.creeLe.localeCompare(a.creeLe); });
+  return { ok: true, dossier: { id: d.getId(), url: d.getUrl() }, fichiers: out };
 }
 function listerTranscriptions() {
   var fichier = trouver(FICHIER_TRANSCRIPTIONS); if (!fichier) return { ok: true, transcriptions: {} };

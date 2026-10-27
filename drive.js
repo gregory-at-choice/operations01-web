@@ -1151,7 +1151,7 @@
       else throw new Error("Envoi refusé par Drive (" + u.status + ")");
       if (onProgress) { try { onProgress(Math.min(1, start / blob.size)); } catch (e) {} }
     }
-    return { id: out && out.id, size: blob.size };
+    return { id: out && out.id, size: blob.size, folderId: parent };
   }
   async function readBlob(id) { const r = await api(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`); return await r.blob(); }
   // Transcriptions écrites par le relais (Mac mini) : fichier créé par l'app (portée drive.file), tenu par le relais.
