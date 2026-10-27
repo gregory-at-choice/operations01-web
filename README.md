@@ -266,8 +266,10 @@ relais v14). Pause et reprise possibles ; l'écran reste allumé pendant l'enreg
   par une fermeture de l'app est récupéré au lancement suivant). Pour enregistrer **écran éteint ou en
   faisant autre chose**, utiliser **Dictaphone** puis Partager → Drive → dossier « Enregistrements
   choice » : le Mac mini liste ce dossier (relais v15, `action=audios`), transcrit le fichier, et la
-  fiche apparaît dans Réunions (lecture dans Drive, projet à choisir). Un envoi raté se relance depuis
-  la fiche (« Renvoyer sur le Drive »).
+  fiche apparaît dans Réunions (lecture dans Drive, projet à choisir). Mieux : avec Dictaphone
+  synchronisé par iCloud sur le Mac mini, le pipeline prend chaque mémo tout seul (relais v16,
+  `action: "audio"` pour déposer la copie audio sur le Drive), sans partage à la main. Un envoi raté se
+  relance depuis la fiche (« Renvoyer sur le Drive »).
 
 ## Notifications poussées : bannière et pastille, téléphone et Mac
 

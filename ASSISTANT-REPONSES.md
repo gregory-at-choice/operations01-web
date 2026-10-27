@@ -357,6 +357,24 @@ transcriptions est à traiter comme un enregistrement : poster la transcription 
 (= `creeLe`), `dureeSec` (mesurée), `kind: "reunion"` (ou `"note"` si moins de 3 minutes). L'app crée
 alors la fiche d'elle-même ; Grégory lui attribue un projet.
 
+**Dictaphone par iCloud, sans aucun geste (relais v16).** Le Mac mini est connecté au compte iCloud de
+Grégory avec Dictaphone activé : chaque mémo enregistré sur l'iPhone (écran éteint, autre app devant)
+arrive de lui-même dans
+`~/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings/` (fichiers `.m4a`), et la base
+`CloudRecordings.db` (SQLite, table `ZCLOUDRECORDING`) donne pour chacun le titre (`ZCUSTOMLABEL` ou
+`ZENCRYPTEDTITLE`), la date (`ZDATE`, secondes depuis 2001-01-01) et la durée (`ZDURATION`). Cycle :
+1. Surveiller ce dossier (toutes les 60 s, ou `fswatch`). Un mémo est pris en compte quand son fichier
+   n'a plus changé depuis 30 s (synchronisation terminée). Ignorer les mémos dont le titre contient
+   « perso » (règle modifiable par Grégory).
+2. Déposer une copie de l'audio dans le dossier Drive pour l'écoute depuis l'app :
+   `POST { secret, action: "audio", nom: "<AAAA-MM-JJ HHhMM – titre>.m4a", mime: "audio/mp4", base64 }`
+   → `{ id }` (45 Mo au plus ; au-delà, poster une version réencodée à 48 kbit/s). Un nom déjà présent
+   renvoie l'id existant (`deja: true`) : l'opération est rejouable.
+3. Transcrire et résumer comme ci-dessus, puis poster la transcription avec `id: "drive:<id>"`,
+   `fileId`, `titre` (titre du mémo), `enregistreLe` (date du mémo), `dureeSec`, `origine: "dictaphone"`.
+4. Notification poussée « Transcription prête · <titre> ».
+Un mémo arrivé aussi par Partager → Drive (même nom) n'est traité qu'une fois (dédoublonnage par nom).
+
 **Cycle (toutes les 60 secondes, avec les demandes de réponse).**
 1. Lire l'export ; pour chaque enregistrement `statut: "envoye"` absent de `GET ?action=transcriptions`
    (ids déjà traités), télécharger l'audio : `GET ?action=audio&id=<fileId>` → `{ nom, mime, taille, base64 }`

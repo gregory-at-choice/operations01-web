@@ -47,7 +47,7 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 15;
+var VERSION = 16;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -99,6 +99,7 @@ function doPost(e) {
   if (corps.action === "correspondance") return posterCorrespondance(corps);
   if (corps.action === "retirer") return posterRetrait(corps);
   if (corps.action === "transcription") return posterTranscription(corps);
+  if (corps.action === "audio") return posterAudio(corps);
   return posterEvenements(corps);
 }
 
@@ -125,6 +126,19 @@ function listerAudios() {
   }
   out.sort(function (a, b) { return b.creeLe.localeCompare(a.creeLe); });
   return { ok: true, dossier: { id: d.getId(), url: d.getUrl() }, fichiers: out };
+}
+// v16 : dépôt d'un audio par le Mac mini (mémo Dictaphone arrivé par iCloud) dans le dossier, pour que
+// Grégory puisse l'écouter depuis l'app (« Écouter sur le Drive »). Base64, 45 Mo au plus par appel.
+function posterAudio(corps) {
+  if (!corps.base64 || !corps.nom) return reponse({ ok: false, erreur: "nom et base64 requis" });
+  var it = DriveApp.getRootFolder().getFoldersByName(DOSSIER_ENREGISTREMENTS);
+  var d = it.hasNext() ? it.next() : DriveApp.getRootFolder().createFolder(DOSSIER_ENREGISTREMENTS);
+  var octets; try { octets = Utilities.base64Decode(corps.base64); } catch (e) { return reponse({ ok: false, erreur: "base64 invalide" }); }
+  if (octets.length > AUDIO_MAX_OCTETS) return reponse({ ok: false, erreur: "fichier trop volumineux" });
+  var deja = d.getFilesByName(corps.nom);
+  if (deja.hasNext()) { var f0 = deja.next(); return reponse({ ok: true, id: f0.getId(), deja: true }); }
+  var f = d.createFile(Utilities.newBlob(octets, corps.mime || "audio/mp4", corps.nom));
+  return reponse({ ok: true, id: f.getId(), taille: octets.length });
 }
 function listerTranscriptions() {
   var fichier = trouver(FICHIER_TRANSCRIPTIONS); if (!fichier) return { ok: true, transcriptions: {} };

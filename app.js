@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v149";
+const APP_VERSION = "v150";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -9528,7 +9528,7 @@ function renderReunions() {
   });
   const ios2 = /iPhone|iPad/.test(navigator.userAgent || "");
   const dictaphone = `<details class="card rec-card" ${ios2 && !rec.active ? "open" : ""}><summary style="cursor:pointer;font-weight:600">📱 Enregistrer écran éteint ou en faisant autre chose (iPhone)</summary>
-      <div class="muted" style="font-size:13px;margin-top:8px;line-height:1.5">Sur iPhone, seule une app native peut enregistrer en arrière-plan : l'app web est suspendue dès qu'elle quitte l'écran. Utilise <strong>Dictaphone</strong> (il enregistre écran éteint, sans limite), puis à la fin : <strong>Partager → Drive → dossier « ${esc(REC_FOLDER)} »</strong>. Le Mac mini transcrit et résume le fichier, et la réunion apparaît ici (choisis alors son projet dans la fiche pour la consigner au journal).${state.recFolderId ? ` <a href="https://drive.google.com/drive/folders/${esc(state.recFolderId)}" target="_blank" rel="noopener">Ouvrir le dossier</a>` : ""}</div></details>`;
+      <div class="muted" style="font-size:13px;margin-top:8px;line-height:1.5">Sur iPhone, seule une app native peut enregistrer en arrière-plan : l'app web est suspendue dès qu'elle quitte l'écran. Utilise <strong>Dictaphone</strong> : il enregistre écran éteint, sans limite, et ses mémos arrivent d'eux-mêmes sur le Mac mini par iCloud, qui les transcrit et les résume ; la réunion apparaît ici (choisis alors son projet dans la fiche pour la consigner au journal). Sans iCloud : à la fin, <strong>Partager → Drive → dossier « ${esc(REC_FOLDER)} »</strong>. Un titre contenant « perso » n'est pas transcrit.${state.recFolderId ? ` <a href="https://drive.google.com/drive/folders/${esc(state.recFolderId)}" target="_blank" rel="noopener">Ouvrir le dossier</a>` : ""}</div></details>`;
   return `<div class="page-title">Réunions et notes vocales</div>${recorder}${dictaphone}
     <div class="section-h">Enregistrements <span class="muted">(${list.length})</span></div>
     <div class="list">${html || '<div class="center-empty">Aucun enregistrement.<br><span style="font-size:13px">Une réunion ou une note vocale : transcription, résumé, décisions et actions arrivent du Mac mini.</span></div>'}</div>`;
