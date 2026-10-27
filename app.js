@@ -39,14 +39,14 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v146";
+const APP_VERSION = "v147";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], journalEntries: [], pushSubscriptions: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, evRequests: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], journalEntries: [], pushSubscriptions: [], recordings: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, evRequests: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -99,7 +99,7 @@ function adoptRemote(remote, why) {
 // distant qui ne fait que « revenir en arrière » (vieille copie poussée par un
 // appareil resté fermé) est reconnu à ses dates et ne fait rien perdre.
 const BASE_KEY = "operations01_base";
-const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals", "journalEntries", "pushSubscriptions"];
+const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals", "journalEntries", "pushSubscriptions", "recordings"];
 const SYNC_NESTED = { missions: "entries" };
 const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "evRequests", "evRequested", "bankMap", "bankSkip", "contactIgnore"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
@@ -374,6 +374,7 @@ const SECTIONS = [
   { id: "pipelines", label: "Pipelines", ic: icon("columns"), fn: renderPipelines },
   { id: "groupe", label: "Groupe", ic: icon("building"), fn: renderGroupe },
   { id: "reader", label: "Documents", ic: icon("book"), fn: renderDocuments },
+  { id: "reunions", label: "Réunions", ic: icon("mic"), fn: renderReunions },
 ].sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" }));   // rubriques par ordre alphabétique
 const HOME_SECTION = "missions";
 let view = { section: HOME_SECTION, detailId: null };
@@ -2320,7 +2321,7 @@ const sortTasks = (ts) => [...ts].sort((a, b) => (taskDone(a) - taskDone(b))
 // fichier .md en est la mise en forme, réécrite au plus tard 15 s après un ajout. Le fichier est créé à la
 // racine du Drive (seul endroit accessible avec la portée drive.file), puis rangé dans le dossier choisi
 // par le script des mails (rangerJournaux), qui publie aussi la liste des dossiers du Drive.
-const JOURNAL_TYPES = [["note", "📝", "Notes"], ["temps", "⏱️", "Temps"], ["tache", "✅", "Tâches"], ["action", "📌", "Actions"], ["message", "✉️", "Messages"], ["rdv", "📅", "Rendez-vous"], ["projet", "📁", "Projet"], ["document", "📄", "Documents"]];
+const JOURNAL_TYPES = [["note", "📝", "Notes"], ["temps", "⏱️", "Temps"], ["tache", "✅", "Tâches"], ["action", "📌", "Actions"], ["message", "✉️", "Messages"], ["rdv", "📅", "Rendez-vous"], ["projet", "📁", "Projet"], ["document", "📄", "Documents"], ["reunion", "🎙️", "Réunions"]];
 const journalIcon = (type) => (JOURNAL_TYPES.find((x) => x[0] === type) || ["", "•"])[1];
 let journalFilter = "tous";
 // Brouillon de note en cours de saisie, par projet : enregistré sur l'appareil à chaque frappe, remis en
@@ -8143,6 +8144,7 @@ function wire() {
   // Attribut distinct de celui des onglets de Planning : les deux gestionnaires
   // écrivaient sinon sur le même onclick, et le dernier l'emportait.
   c.querySelectorAll("[data-projtab]").forEach((b) => b.onclick = () => { projectTab = b.dataset.projtab; render(); });
+  wireReunions(c);
   // Journal de bord
   c.querySelectorAll("textarea[data-autogrow]").forEach((ta) => { const fit = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; }; ta.addEventListener("input", fit); fit(); });
   c.querySelectorAll("[data-jn-filter]").forEach((b) => b.onclick = () => { journalFilter = b.dataset.jnFilter; render(); });
@@ -9331,6 +9333,216 @@ if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) navigat
     history.replaceState(null, "", u.pathname + (u.searchParams.toString() ? "?" + u.searchParams.toString() : "") + u.hash);
   } catch (e) {}
 })();
+
+// ============================ Réunions et notes vocales ============================
+// L'app enregistre (MediaRecorder), garde l'audio sur l'appareil (IndexedDB) jusqu'à son envoi sur le
+// Drive (dossier « Enregistrements choice », envoi reprenable), et décrit l'enregistrement dans
+// state.recordings (synchronisé, exporté par le relais). Le Mac mini télécharge l'audio par le relais,
+// transcrit (Whisper local), résume, extrait décisions et actions, et poste le tout dans
+// operations01-transcriptions.json (contrat, section 7). L'app affiche transcription et résumé, crée les
+// tâches proposées, et consigne la réunion dans le journal de bord du projet.
+const REC_FOLDER = "Enregistrements choice";
+const REC_KINDS = [["reunion", "🎙️", "Réunion"], ["note", "🗒️", "Note vocale"]];
+const recKindLabel = (k) => (REC_KINDS.find((x) => x[0] === k) || REC_KINDS[0])[2];
+const recKindIcon = (k) => (REC_KINDS.find((x) => x[0] === k) || REC_KINDS[0])[1];
+const rec = { active: false, paused: false, media: null, stream: null, chunks: [], mime: "", startedAt: 0, pausedTotal: 0, pauseAt: 0, timer: null, wake: null, title: "", kind: "reunion", missionId: "", uploading: {} };
+let transcriptStore = {}, transcriptLoadedAt = 0, transcriptTimer = null;
+const recAudioUrls = {};
+// --- IndexedDB : l'audio reste sur l'appareil tant qu'il n'est pas sur le Drive ---
+function audioDB() {
+  return new Promise((res, rej) => {
+    if (!window.indexedDB) return rej(new Error("IndexedDB indisponible"));
+    const q = indexedDB.open("op01-audio", 1);
+    q.onupgradeneeded = () => { q.result.createObjectStore("blobs", { keyPath: "id" }); };
+    q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+  });
+}
+function audioPut(id, blob, mime) { return audioDB().then((db) => new Promise((res, rej) => { const tx = db.transaction("blobs", "readwrite"); tx.objectStore("blobs").put({ id, blob, mime, at: Date.now() }); tx.oncomplete = res; tx.onerror = () => rej(tx.error); })); }
+function audioGet(id) { return audioDB().then((db) => new Promise((res, rej) => { const q = db.transaction("blobs").objectStore("blobs").get(id); q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error); })).catch(() => null); }
+function audioDel(id) { return audioDB().then((db) => new Promise((res) => { const tx = db.transaction("blobs", "readwrite"); tx.objectStore("blobs").delete(id); tx.oncomplete = res; tx.onerror = res; })).catch(() => {}); }
+// --- Enregistreur ---
+function recSupported() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder); }
+function recMime() {
+  const c = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/ogg;codecs=opus"];
+  return c.find((m) => { try { return MediaRecorder.isTypeSupported(m); } catch (e) { return false; } }) || "";
+}
+const recExt = (mime) => /mp4|aac|m4a/.test(mime) ? "m4a" : /ogg/.test(mime) ? "ogg" : "webm";
+function recElapsed() { if (!rec.active) return 0; return Math.max(0, (Date.now() - rec.startedAt - rec.pausedTotal - (rec.paused ? Date.now() - rec.pauseAt : 0)) / 1000); }
+async function startRecording(opts) {
+  if (rec.active) return;
+  if (!recSupported()) { toast("Enregistrement audio indisponible dans ce navigateur"); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { toast("Micro refusé : autorise-le dans les réglages du navigateur"); return; }
+  const mime = recMime();
+  let media;
+  try { media = mime ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 64000 }) : new MediaRecorder(stream); }
+  catch (e) { try { media = new MediaRecorder(stream); } catch (e2) { toast("Enregistreur indisponible : " + (e2.message || e2)); stream.getTracks().forEach((t) => t.stop()); return; } }
+  Object.assign(rec, { active: true, paused: false, media, stream, chunks: [], mime: media.mimeType || mime || "audio/webm", startedAt: Date.now(), pausedTotal: 0, pauseAt: 0, title: (opts && opts.title) || "", kind: (opts && opts.kind) || "reunion", missionId: (opts && opts.missionId) || "" });
+  media.ondataavailable = (e) => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+  media.onstop = () => finishRecording();
+  media.start(10000);   // un morceau toutes les 10 s : rien n'est perdu si l'onglet s'interrompt
+  try { if (navigator.wakeLock) { rec.wake = await navigator.wakeLock.request("screen"); } } catch (e) { rec.wake = null; }
+  rec.timer = setInterval(() => { const el = document.getElementById("recTimer"); if (el) el.textContent = fmtDuration(recElapsed()); }, 1000);
+  render(); toast("Enregistrement en cours ●");
+}
+function pauseRecording() { if (!rec.active || rec.paused) return; try { rec.media.pause(); } catch (e) {} rec.paused = true; rec.pauseAt = Date.now(); render(); }
+function resumeRecording() { if (!rec.active || !rec.paused) return; try { rec.media.resume(); } catch (e) {} rec.pausedTotal += Date.now() - rec.pauseAt; rec.paused = false; render(); }
+function stopRecording() { if (!rec.active) return; if (rec.paused) { rec.pausedTotal += Date.now() - rec.pauseAt; rec.paused = false; } try { rec.media.stop(); } catch (e) { finishRecording(); } }
+async function finishRecording() {
+  if (!rec.active) return;
+  const durationSec = Math.round(recElapsed());
+  clearInterval(rec.timer); rec.timer = null;
+  try { rec.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+  try { if (rec.wake) rec.wake.release(); } catch (e) {} rec.wake = null;
+  const blob = new Blob(rec.chunks, { type: rec.mime });
+  const title = rec.title.trim() || `${recKindLabel(rec.kind)} du ${fmtDate(todayISO())}`;
+  const r = { id: uid(), title, kind: rec.kind, missionId: rec.missionId || null, startedAt: new Date(rec.startedAt).toISOString(), durationSec, mime: rec.mime, size: blob.size, fileId: "", fileName: "", statut: "local", createdAt: Date.now() };
+  rec.active = false; rec.chunks = [];
+  if (!blob.size) { toast("Enregistrement vide"); render(); return; }
+  state.recordings = state.recordings || []; state.recordings.push(r);
+  try { await audioPut(r.id, blob, rec.mime); } catch (e) { reportError(e, "stockage local de l'audio"); }
+  save(); render();
+  toast(`Enregistré · ${fmtDuration(durationSec)} · envoi vers le Drive…`);
+  uploadRecording(r.id);
+}
+// --- Envoi sur le Drive, reprise possible tant que l'audio est sur l'appareil ---
+async function uploadRecording(id) {
+  const r = (state.recordings || []).find((x) => x.id === id); if (!r || r.fileId || rec.uploading[id]) return;
+  if (!(window.DriveSync && DriveSync.isConnected())) { toast("Hors connexion Drive : l'audio reste sur l'appareil, renvoi possible plus tard"); return; }
+  const local = await audioGet(id); if (!local || !local.blob) { r.statut = "perdu"; save(); render(); return; }
+  rec.uploading[id] = 0; render();
+  try {
+    const name = `${(r.startedAt || "").slice(0, 10)} – ${r.title.replace(/[\\\/:*?"<>|]+/g, " ").trim().slice(0, 80)}.${recExt(r.mime)}`;
+    const res = await DriveSync.uploadBlobToFolder(name, local.blob, r.mime || "audio/webm", REC_FOLDER, (p) => { rec.uploading[id] = p; const el = document.querySelector(`[data-rec-progress="${id}"]`); if (el) el.textContent = `envoi ${Math.round(p * 100)} %`; });
+    if (!res || !res.id) throw new Error("identifiant Drive absent");
+    r.fileId = res.id; r.fileName = name; r.statut = "envoye"; r.sentAt = Date.now();
+    delete rec.uploading[id]; save(); audioDel(id);
+    toast("Audio sur le Drive ✓ · transcription à venir sur le Mac mini"); scheduleTranscriptPoll();
+  } catch (e) { delete rec.uploading[id]; reportError(e, "envoi de l'enregistrement"); toast("Envoi impossible : " + ((e && e.message) || e) + " · l'audio reste sur l'appareil"); }
+  render();
+}
+// --- Transcriptions (Mac mini) ---
+const transcriptOf = (id) => transcriptStore[id] || null;
+const transcriptPending = () => (state.recordings || []).filter((r) => r.statut === "envoye" && !transcriptOf(r.id));
+async function loadTranscriptions(force) {
+  if (!(window.DriveSync && DriveSync.readTranscriptions && DriveSync.isConnected())) return;
+  if (!force && Date.now() - transcriptLoadedAt < 30000) return;
+  transcriptLoadedAt = Date.now();
+  try { const d = await DriveSync.readTranscriptions(); if (d && d.transcriptions) transcriptStore = d.transcriptions; } catch (e) {}
+  let changed = false;
+  (state.recordings || []).forEach((r) => {
+    const t = transcriptOf(r.id); if (!t) return;
+    if (r.statut !== "pret") { r.statut = "pret"; changed = true; }
+    if (r.missionId && !r.journaled && findMission(r.missionId)) {
+      const resume = String(t.resume || "").trim();
+      journalLog(r.missionId, "reunion", `${recKindLabel(r.kind)} « ${r.title} » (${fmtDuration(r.durationSec || 0)})${resume ? "\n" + resume.slice(0, 600) : ""}`, { kind: "recording", id: r.id });
+      r.journaled = true; changed = true;
+    }
+  });
+  if (changed) { save(); if (view.section === "reunions") render(); toast("Transcription reçue ✓"); }
+}
+function scheduleTranscriptPoll() {
+  if (transcriptTimer) return;
+  transcriptTimer = setInterval(() => { if (!transcriptPending().length) { clearInterval(transcriptTimer); transcriptTimer = null; return; } loadTranscriptions(true); }, 60000);
+}
+// --- Écran ---
+function recStatusHtml(r) {
+  if (rec.uploading[r.id] != null) return `<span class="rec-status attente" data-rec-progress="${r.id}">envoi ${Math.round(rec.uploading[r.id] * 100)} %</span>`;
+  if (r.statut === "local") return `<span class="rec-status local">sur cet appareil, pas encore sur le Drive</span>`;
+  if (r.statut === "perdu") return `<span class="rec-status local">audio introuvable sur cet appareil</span>`;
+  if (r.statut === "pret" || transcriptOf(r.id)) return `<span class="rec-status pret">✓ transcrit et résumé</span>`;
+  return `<span class="rec-status attente">⏳ transcription en attente (Mac mini)</span>`;
+}
+function renderReunions() {
+  if (view.detailId) return renderRecordingDetail(view.detailId);
+  loadTranscriptions(false); if (transcriptPending().length) scheduleTranscriptPoll();
+  const missions = sortedMissions().filter((m) => (m.statusCode || "") !== "terminee");
+  const missionOpts = `<option value="">Sans projet</option>` + missions.map((m) => `<option value="${m.id}" ${rec.missionId === m.id ? "selected" : ""}>${esc(m.title || "Sans titre")}</option>`).join("");
+  const kinds = REC_KINDS.map(([k, ic, lbl]) => `<button class="chip ${rec.kind === k ? "active" : ""}" data-rec-kind="${k}" ${rec.active ? "disabled" : ""}>${ic} ${lbl}</button>`).join("");
+  const ios = /iPhone|iPad/.test(navigator.userAgent || "");
+  const recorder = rec.active
+    ? `<div class="card rec-card"><div class="inline" style="gap:14px;flex-wrap:wrap"><button class="rec-btn stop" data-rec-stop title="Terminer">■</button>
+        <div class="grow"><div><span class="rec-live ${rec.paused ? "paused" : ""}"></span><span class="rec-timer" id="recTimer">${fmtDuration(recElapsed())}</span></div>
+        <div class="muted" style="font-size:13px">${esc(rec.title || recKindLabel(rec.kind))}${rec.missionId && findMission(rec.missionId) ? " · " + esc(findMission(rec.missionId).title) : ""} · ${rec.paused ? "en pause" : "enregistrement"}</div></div>
+        <button class="btn secondary" ${rec.paused ? "data-rec-resume" : "data-rec-pause"}>${rec.paused ? "▶ Reprendre" : "⏸ Pause"}</button></div>
+        <div class="muted" style="font-size:12px;margin-top:8px">Garde l'app au premier plan${ios ? " et l'écran allumé (l'app s'en charge)" : ""} : en arrière-plan, le navigateur coupe le micro.</div></div>`
+    : `<div class="card rec-card"><div class="section-h" style="margin-top:0">Nouvel enregistrement</div>
+        <div class="chip-row" style="margin-bottom:8px">${kinds}</div>
+        <div class="inline" style="gap:8px;flex-wrap:wrap"><input class="grow" data-rec-title placeholder="Titre (ex. Point hebdo Icarus, Note après l'appel DRARI)" value="${esc(rec.title)}" style="min-width:200px"/>
+          <select data-rec-mission style="width:auto">${missionOpts}</select></div>
+        <div class="inline" style="gap:14px;margin-top:12px;flex-wrap:wrap"><button class="rec-btn" data-rec-start title="Enregistrer" ${recSupported() ? "" : "disabled"}>●</button>
+          <div class="muted" style="font-size:13px">${recSupported() ? "Appuie pour enregistrer. L'audio est gardé sur l'appareil, envoyé sur le Drive à la fin, puis transcrit et résumé par le Mac mini (quelques minutes)." : "Enregistrement indisponible dans ce navigateur."}</div></div></div>`;
+  const list = [...(state.recordings || [])].sort((a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || "")));
+  let html = "", day = null;
+  list.forEach((r) => {
+    const d = (r.startedAt || "").slice(0, 10);
+    if (d !== day) { day = d; html += `<div class="jn-day">${esc(journalLongDay(d))}</div>`; }
+    const m = r.missionId ? findMission(r.missionId) : null, t = transcriptOf(r.id);
+    html += `<div class="row rec-row" data-open-rec="${r.id}"><span class="ic">${recKindIcon(r.kind)}</span><div class="grow"><div class="r-title">${esc(r.title)}</div>
+      <div class="r-sub">${esc((r.startedAt || "").slice(11, 16))} · ${fmtDuration(r.durationSec || 0)}${m ? " · " + esc(m.title) : ""} · ${recStatusHtml(r)}</div>
+      ${t && t.resume ? `<div class="mail-snippet">${esc(String(t.resume).slice(0, 160))}</div>` : ""}</div><span class="muted">›</span></div>`;
+  });
+  return `<div class="page-title">Réunions et notes vocales</div>${recorder}
+    <div class="section-h">Enregistrements <span class="muted">(${list.length})</span></div>
+    <div class="list">${html || '<div class="center-empty">Aucun enregistrement.<br><span style="font-size:13px">Une réunion ou une note vocale : transcription, résumé, décisions et actions arrivent du Mac mini.</span></div>'}</div>`;
+}
+function renderRecordingDetail(id) {
+  const r = (state.recordings || []).find((x) => x.id === id); if (!r) return renderReunions();
+  const t = transcriptOf(r.id), m = r.missionId ? findMission(r.missionId) : null;
+  const missionOpts = `<option value="">Sans projet</option>` + sortedMissions().map((x) => `<option value="${x.id}" ${r.missionId === x.id ? "selected" : ""}>${esc(x.title || "Sans titre")}</option>`).join("");
+  const actions = t && Array.isArray(t.actions) ? t.actions : [], decisions = t && Array.isArray(t.decisions) ? t.decisions : [], questions = t && Array.isArray(t.questions) ? t.questions : [];
+  const made = r.tasksMade || {};
+  const audio = recAudioUrls[r.id] ? `<audio controls src="${recAudioUrls[r.id]}" style="width:100%;margin-top:8px"></audio>` : `<button class="btn secondary small" data-rec-play="${r.id}" ${r.fileId || r.statut === "local" ? "" : "disabled"}>▶ Écouter</button>`;
+  const body = t
+    ? `<div class="card" style="margin-top:12px"><div class="section-h" style="margin-top:0">Résumé <span class="muted">(${esc(t.modele || "Mac mini")})</span></div><div class="md-doc" style="padding:0;background:transparent">${mdToHtml(String(t.resume || "_Pas de résumé._"))}</div>
+        ${decisions.length ? `<div class="section-h">Décisions</div><ul>${decisions.map((d) => `<li>${esc(typeof d === "string" ? d : d.texte || "")}</li>`).join("")}</ul>` : ""}
+        ${actions.length ? `<div class="section-h">Actions <span class="muted">(${actions.length})</span></div><div class="rec-actions">${actions.map((a, i) => { const o = typeof a === "string" ? { titre: a } : a; return `<div class="row"><span class="ic">${made[i] ? "✅" : "☐"}</span><div class="grow"><div class="r-title">${esc(o.titre || o.texte || "")}</div><div class="r-sub">${[o.responsable ? "Qui : " + esc(o.responsable) : "", o.echeance ? "Échéance : " + esc(fmtDate(String(o.echeance).slice(0, 10))) : ""].filter(Boolean).join(" · ")}</div></div>${made[i] ? "" : `<button class="btn ghost small" data-rec-task="${r.id}" data-i="${i}">+ Tâche</button>`}</div>`; }).join("")}</div>
+          ${actions.some((a, i) => !made[i]) ? `<div class="inline" style="justify-content:flex-end;margin-top:8px"><button class="btn secondary small" data-rec-tasks="${r.id}">Créer toutes les tâches${m ? " dans « " + esc(m.title) + " »" : ""}</button></div>` : ""}` : ""}
+        ${questions.length ? `<div class="section-h">Questions ouvertes</div><ul>${questions.map((q) => `<li>${esc(typeof q === "string" ? q : q.texte || "")}</li>`).join("")}</ul>` : ""}</div>
+      <details class="card" style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Transcription complète${t.dureeSec ? ` <span class="muted">· ${fmtDuration(t.dureeSec)}</span>` : ""}</summary><div class="rec-transcript" style="margin-top:8px">${esc(t.texte || "")}</div></details>`
+    : `<div class="card" style="margin-top:12px">${r.statut === "local" ? `<div>L'audio est sur cet appareil mais pas encore sur le Drive.</div><button class="btn small" data-rec-resend="${r.id}" style="margin-top:8px">↻ Renvoyer sur le Drive</button>` : r.statut === "perdu" ? "Audio introuvable sur cet appareil : l'enregistrement n'a pas pu être envoyé." : `⏳ Transcription et résumé en préparation sur le Mac mini. L'app vérifie toutes les minutes ; compte quelques minutes après la fin de l'enregistrement.`}</div>`;
+  return `<button class="back" data-back>‹ Réunions</button>
+    <div class="toolbar"><input class="grow" data-bind="recordings|${r.id}|title" value="${esc(r.title)}" style="font-size:21px;font-weight:700"/><select data-bind="recordings|${r.id}|missionId" style="width:auto">${missionOpts}</select></div>
+    <div class="card"><div class="inline" style="flex-wrap:wrap;gap:8px"><span style="font-size:22px">${recKindIcon(r.kind)}</span><div class="grow"><div>${esc(recKindLabel(r.kind))} · ${esc(fmtDateTimeISO(r.startedAt || ""))} · ${fmtDuration(r.durationSec || 0)}${r.size ? " · " + esc(fmtSize(r.size)) : ""}</div><div>${recStatusHtml(r)}</div></div>
+      ${r.fileId ? `<a class="btn ghost small" href="https://drive.google.com/file/d/${esc(r.fileId)}/view" target="_blank" rel="noopener">↗ Drive</a>` : ""}
+      ${m && t && !r.journaled ? `<button class="btn ghost small" data-rec-journal="${r.id}">📓 Consigner</button>` : ""}
+      <button class="btn ghost small" data-rec-del="${r.id}" style="color:#d23c3c">Supprimer</button></div>${audio}</div>
+    ${body}`;
+}
+function wireReunions(c) {
+  c.querySelectorAll("[data-rec-kind]").forEach((b) => b.onclick = () => { rec.kind = b.dataset.recKind; const ti = c.querySelector("[data-rec-title]"); if (ti) rec.title = ti.value; render(); });
+  const ti = c.querySelector("[data-rec-title]"); if (ti) ti.oninput = () => { rec.title = ti.value; };
+  const ms = c.querySelector("[data-rec-mission]"); if (ms) ms.onchange = () => { rec.missionId = ms.value; };
+  const st = c.querySelector("[data-rec-start]"); if (st) st.onclick = () => startRecording({ title: ti ? ti.value : "", kind: rec.kind, missionId: ms ? ms.value : "" });
+  const ps = c.querySelector("[data-rec-pause]"); if (ps) ps.onclick = pauseRecording;
+  const rs = c.querySelector("[data-rec-resume]"); if (rs) rs.onclick = resumeRecording;
+  const sp = c.querySelector("[data-rec-stop]"); if (sp) sp.onclick = () => { if (confirm("Terminer l'enregistrement ?")) stopRecording(); };
+  c.querySelectorAll("[data-open-rec]").forEach((el) => el.onclick = () => openDetail("reunions", el.dataset.openRec));
+  c.querySelectorAll("[data-rec-resend]").forEach((b) => b.onclick = () => uploadRecording(b.dataset.recResend));
+  c.querySelectorAll("[data-rec-play]").forEach((b) => b.onclick = async () => {
+    const id = b.dataset.recPlay, r = (state.recordings || []).find((x) => x.id === id); if (!r) return;
+    b.disabled = true; b.textContent = "Chargement…";
+    try { let blob = null; const local = await audioGet(id); if (local && local.blob) blob = local.blob; else if (r.fileId) blob = await DriveSync.readBlob(r.fileId); if (!blob) throw new Error("audio indisponible"); recAudioUrls[id] = URL.createObjectURL(blob); render(); }
+    catch (e) { toast("Lecture impossible : " + ((e && e.message) || e)); render(); }
+  });
+  c.querySelectorAll("[data-rec-task]").forEach((b) => b.onclick = () => createTasksFromRecording(b.dataset.recTask, [Number(b.dataset.i)]));
+  c.querySelectorAll("[data-rec-tasks]").forEach((b) => b.onclick = () => createTasksFromRecording(b.dataset.recTasks, null));
+  c.querySelectorAll("[data-rec-journal]").forEach((b) => b.onclick = () => { const r = (state.recordings || []).find((x) => x.id === b.dataset.recJournal), t = r && transcriptOf(r.id); if (!r || !t || !r.missionId) return; journalLog(r.missionId, "reunion", `${recKindLabel(r.kind)} « ${r.title} » (${fmtDuration(r.durationSec || 0)})${t.resume ? "\n" + String(t.resume).slice(0, 600) : ""}`, { kind: "recording", id: r.id }); r.journaled = true; save(); render(); toast("Consigné dans le journal ✓"); });
+  c.querySelectorAll("[data-rec-del]").forEach((b) => b.onclick = async () => { const id = b.dataset.recDel, r = (state.recordings || []).find((x) => x.id === id); if (!r) return; if (!confirm(`Supprimer « ${r.title} » ? L'audio sur le Drive est mis à la corbeille.`)) return; if (r.fileId) { try { await DriveSync.deleteDoc(r.fileId); } catch (e) {} } audioDel(id); state.recordings = state.recordings.filter((x) => x.id !== id); save(); view.detailId = null; render(); });
+}
+function createTasksFromRecording(id, idx) {
+  const r = (state.recordings || []).find((x) => x.id === id), t = r && transcriptOf(r.id); if (!r || !t) return;
+  const actions = Array.isArray(t.actions) ? t.actions : []; r.tasksMade = r.tasksMade || {}; let n = 0;
+  actions.forEach((a, i) => {
+    if ((idx && idx.indexOf(i) < 0) || r.tasksMade[i]) return;
+    const o = typeof a === "string" ? { titre: a } : a;
+    const task = { id: uid(), title: String(o.titre || o.texte || "").slice(0, 200), status: "aFaire", missionId: r.missionId || null, section: "", assignee: o.responsable || "", progress: 0, origin: "reunion", dueDate: o.echeance ? String(o.echeance).slice(0, 10) : "", notes: `Issue de « ${r.title} » (${recKindLabel(r.kind)} du ${fmtDate((r.startedAt || "").slice(0, 10))})`, createdAt: Date.now(), priority: "moyenne", labels: [], recordingId: r.id };
+    state.tasks.push(task); r.tasksMade[i] = task.id; n++;
+    if (r.missionId) journalLog(r.missionId, "tache", `Tâche créée depuis la réunion « ${r.title} » : « ${task.title} »`, { kind: "task", id: task.id });
+  });
+  if (n) { ensureTaskKeys(); save(); render(); toast(`${n} tâche${n > 1 ? "s" : ""} créée${n > 1 ? "s" : ""} ✓`); }
+}
 
 (function wireVoiceFab() {
   const b = document.getElementById("voiceFab"); if (!b) return;

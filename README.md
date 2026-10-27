@@ -246,6 +246,24 @@ recherche (clé, intitulé, notes), projet, priorité, étiquette, personne.
 - **Partager** : depuis la fiche d'une tâche (« Partager ») ou la chronologie d'un projet (« Partager
   le planning »), un texte brut à copier, envoyer par mail ou via la feuille de partage de l'appareil.
 
+## Réunions et notes vocales : enregistrer, transcrire, résumer
+
+Rubrique **Réunions** (menu Plus) : un titre, un type (réunion ou note vocale), un projet, puis le
+bouton rouge. L'audio est enregistré par le navigateur (MediaRecorder, Opus ou AAC selon l'appareil),
+gardé sur l'appareil (IndexedDB) jusqu'à son envoi sur le Drive à la fin (dossier « Enregistrements
+choice », envoi reprenable par morceaux), et décrit dans les données (`recordings`, exportées par le
+relais v14). Pause et reprise possibles ; l'écran reste allumé pendant l'enregistrement.
+
+- **Transcription et résumé** par le Mac mini (Whisper local, puis Opus 5.5 pour le résumé d'une
+  réunion ; contrat section 7), reçus dans `operations01-transcriptions.json` ; l'app vérifie toutes
+  les minutes tant qu'un enregistrement attend.
+- **Fiche d'un enregistrement** : lecture audio, résumé, décisions, actions (« + Tâche » ou « Créer
+  toutes les tâches » dans le projet, responsable et échéance repris), questions ouvertes,
+  transcription complète. La réunion est consignée dans le **journal de bord** du projet dès que le
+  résumé arrive.
+- **iPhone** : garder l'app au premier plan pendant l'enregistrement (en arrière-plan, iOS coupe le
+  micro). Un envoi raté se relance depuis la fiche (« Renvoyer sur le Drive »).
+
 ## Notifications poussées : bannière et pastille, téléphone et Mac
 
 La cloche → « Notifications poussées » → **« Activer sur cet appareil »** abonne l'appareil (Web Push).

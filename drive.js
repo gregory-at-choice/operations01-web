@@ -1132,6 +1132,37 @@
     const r = await api(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`);
     return new Uint8Array(await r.arrayBuffer());
   }
+  // --- Enregistrements audio (réunions, notes vocales) : envoi reprenable par morceaux de 5 Mo, sans
+  //     passage par base64 (un enregistrement d'une heure pèse 15 à 30 Mo) ; lecture en Blob. ---
+  async function uploadBlobToFolder(name, blob, mime, folderName, onProgress) {
+    const parent = folderName ? await ensureFolder(folderName) : null;
+    const meta = { name: name, mimeType: mime }; if (parent) meta.parents = [parent];
+    const r = await api("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,size", {
+      method: "POST", headers: { "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Type": mime, "X-Upload-Content-Length": String(blob.size) }, body: JSON.stringify(meta) });
+    const loc = r.headers.get("Location") || r.headers.get("location");
+    if (!loc) throw new Error("Drive n'a pas ouvert de session d'envoi");
+    const tok = await ensureToken(false);
+    const CH = 5 * 1024 * 1024; let start = 0, out = null;
+    while (start < blob.size) {
+      const end = Math.min(start + CH, blob.size);
+      const u = await fetch(loc, { method: "PUT", headers: { Authorization: "Bearer " + tok, "Content-Type": mime, "Content-Range": `bytes ${start}-${end - 1}/${blob.size}` }, body: blob.slice(start, end) });
+      if (u.status === 308) { const range = u.headers.get("Range"); start = range ? Number(range.split("-")[1]) + 1 : end; }
+      else if (u.ok) { out = await u.json(); start = blob.size; }
+      else throw new Error("Envoi refusé par Drive (" + u.status + ")");
+      if (onProgress) { try { onProgress(Math.min(1, start / blob.size)); } catch (e) {} }
+    }
+    return { id: out && out.id, size: blob.size };
+  }
+  async function readBlob(id) { const r = await api(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`); return await r.blob(); }
+  // Transcriptions écrites par le relais (Mac mini) : fichier créé par l'app (portée drive.file), tenu par le relais.
+  const TRANSCRIPTS_FILE = "operations01-transcriptions.json";
+  const EMPTY_TRANSCRIPTS = () => JSON.stringify({ updatedAt: 0, transcriptions: {} });
+  async function readTranscriptions() {
+    if (!accessToken) return null;
+    const f = await findByName(TRANSCRIPTS_FILE);
+    if (!f) { try { await createNamed(TRANSCRIPTS_FILE, EMPTY_TRANSCRIPTS()); } catch (e) {} return null; }
+    try { const j = JSON.parse(await download(f.id)); j._fileId = f.id; j._modifiedTime = f.modifiedTime; return j; } catch (e) { return null; }
+  }
   const listPdfs = () => listDocs(PDF_PREFIX);
   const uploadPdf = (name, bytes) => uploadBinary(name, bytes, "application/pdf", PDF_PREFIX);
 
@@ -1210,6 +1241,9 @@
     fileParents,
     listPdfs,
     uploadPdf,
-    readBinary
+    readBinary,
+    uploadBlobToFolder,
+    readBlob,
+    readTranscriptions
   };
 })();

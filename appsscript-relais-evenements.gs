@@ -47,17 +47,19 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 13;
+var VERSION = 14;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
-var EXPORT_CLES = ["missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "pushSubscriptions"];   // v12 : abonnements aux notifications poussées
+var EXPORT_CLES = ["missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "pushSubscriptions", "recordings"];   // v12 : abonnements aux notifications poussées ; v14 : enregistrements audio
 var EXPORT_OBJETS = ["evEdits", "evDecisions", "evLearn", "evSteps", "evRequests"];   // corrections et décisions de Grégory (apprentissage)
 var CONSERVER_JOURS = 30;
 var MAX_EVENEMENTS = 3000;   // ~95 événements par jour : 1000 ne couvrait que dix jours
 var DOSSIER_CORRESPONDANCES = "Correspondances";   // dossier à la racine du Drive (créé par appsscript-correspondances.gs)
 var MAX_CARACTERES = 4000;
 var MAX_CONTENU = 3000;        // texte conservé pour un SMS / iMessage / WhatsApp
+var FICHIER_TRANSCRIPTIONS = "operations01-transcriptions.json";   // v14 : créé par l'app, tenu par le relais
+var AUDIO_MAX_OCTETS = 45 * 1024 * 1024;
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
@@ -65,6 +67,8 @@ function doGet(e) {
   if (p.action === "agenda") return reponse(lireAgenda(Number(p.jours) || 7));
   if (p.action === "correspondances") return reponse(indexCorrespondances());
   if (p.action === "correspondance") return reponse(lireCorrespondance(p.cle, p.depuis, p.max));
+  if (p.action === "audio") return reponse(lireAudio(p.id));
+  if (p.action === "transcriptions") return reponse(listerTranscriptions());
   if (p.action !== "export") return reponse({ ok: true, service: "relais-evenements", version: VERSION });
   var data = lireJson(FICHIER_DATA) || {};
   var exporte = {};
@@ -92,7 +96,43 @@ function doPost(e) {
   if (corps.action === "assistant") return posterAssistant(corps);
   if (corps.action === "correspondance") return posterCorrespondance(corps);
   if (corps.action === "retirer") return posterRetrait(corps);
+  if (corps.action === "transcription") return posterTranscription(corps);
   return posterEvenements(corps);
+}
+
+// ---- v14 : enregistrements audio (réunions, notes vocales) et transcriptions ----
+// L'app dépose l'audio sur le Drive (dossier « Enregistrements choice ») et décrit l'enregistrement dans
+// data.recordings (exporté). Le Mac mini télécharge l'audio ici, transcrit, résume, puis poste le résultat.
+function lireAudio(id) {
+  if (!id) return { ok: false, erreur: "id manquant" };
+  var f; try { f = DriveApp.getFileById(id); } catch (e) { return { ok: false, erreur: "fichier introuvable" }; }
+  var b = f.getBlob(), octets = b.getBytes();
+  if (octets.length > AUDIO_MAX_OCTETS) return { ok: false, erreur: "fichier trop volumineux pour le relais (" + octets.length + " octets)" };
+  return { ok: true, id: id, nom: f.getName(), mime: b.getContentType(), taille: octets.length, base64: Utilities.base64Encode(octets) };
+}
+function listerTranscriptions() {
+  var fichier = trouver(FICHIER_TRANSCRIPTIONS); if (!fichier) return { ok: true, transcriptions: {} };
+  var data; try { data = JSON.parse(fichier.getBlob().getDataAsString() || "{}"); } catch (e) { data = {}; }
+  var t = data.transcriptions || {}, out = {};
+  Object.keys(t).forEach(function (id) { out[id] = { genereeLe: t[id].genereeLe || "", modele: t[id].modele || "" }; });
+  return { ok: true, transcriptions: out };
+}
+function posterTranscription(corps) {
+  if (!corps.id) return reponse({ ok: false, erreur: "id de l'enregistrement manquant" });
+  var fichier = trouver(FICHIER_TRANSCRIPTIONS);
+  if (!fichier) return reponse({ ok: false, erreur: "fichier absent : ouvrir une fois « Réunions » dans Operations01" });
+  var verrou = LockService.getScriptLock(); verrou.waitLock(20000);
+  try {
+    var data; try { data = JSON.parse(fichier.getBlob().getDataAsString() || "{}"); } catch (err) { data = {}; }
+    data.transcriptions = data.transcriptions || {};
+    var maintenant = new Date().toISOString();
+    data.transcriptions[corps.id] = { texte: String(corps.texte || ""), resume: String(corps.resume || ""), decisions: Array.isArray(corps.decisions) ? corps.decisions : [],
+      actions: Array.isArray(corps.actions) ? corps.actions : [], questions: Array.isArray(corps.questions) ? corps.questions : [], modele: corps.modele || "", langue: corps.langue || "fr",
+      dureeSec: Number(corps.dureeSec) || 0, genereeLe: corps.genereeLe || maintenant, recuLe: maintenant };
+    data.updatedAt = Date.now();
+    fichier.setContent(JSON.stringify(data));
+    return reponse({ ok: true, id: corps.id });
+  } finally { verrou.releaseLock(); }
 }
 
 function posterEvenements(corps) {

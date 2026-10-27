@@ -340,6 +340,44 @@ retire de sa liste à sa prochaine ouverture. 401/403 → clé VAPID incohérent
 **Test.** `node push.js --test` envoie « choice · test » à tous les abonnements et affiche le code de
 chaque réponse (201 = livré au service de push).
 
+## 7. Réunions et notes vocales : transcription et résumé (v147, relais v14)
+
+Grégory enregistre depuis l'app (rubrique **Réunions**) une réunion ou une note vocale. L'audio part sur
+le Drive dans le dossier « Enregistrements choice » (fichier `.webm` Opus ou `.m4a` AAC selon
+l'appareil, 64 kbit/s), et l'enregistrement est décrit dans `data.recordings` de l'export du relais :
+`{ id, title, kind: "reunion"|"note", missionId, startedAt, durationSec, mime, size, fileId, fileName, statut }`.
+`statut: "envoye"` = audio disponible, transcription attendue. **Le Mac mini transcrit, résume et poste.**
+
+**Cycle (toutes les 60 secondes, avec les demandes de réponse).**
+1. Lire l'export ; pour chaque enregistrement `statut: "envoye"` absent de `GET ?action=transcriptions`
+   (ids déjà traités), télécharger l'audio : `GET ?action=audio&id=<fileId>` → `{ nom, mime, taille, base64 }`
+   (45 Mo au plus par le relais ; au-delà, lire le fichier par le Drive local du Mac mini si monté).
+2. **Transcrire en local** : Whisper (`mlx-whisper` ou `whisper.cpp`, modèle `large-v3-turbo`), langue
+   détectée (français par défaut), horodatage par segment conservé pour la relecture, pas de diarisation
+   obligatoire (si elle est disponible, préfixer les tours de parole « — »).
+3. **Résumer** : pour une **réunion**, Claude Opus 5.5 (`--effort high`, pas Extra : c'est un résumé,
+   pas une réponse) avec le contexte du projet (`missionId` : tâches ouvertes, journal de bord,
+   correspondances des participants cités) ; pour une **note vocale**, le modèle local suffit (résumé en
+   trois phrases, actions éventuelles). Produire :
+   - `resume` : Markdown court (objet, points clés, conclusion), 150 à 400 mots pour une réunion ;
+   - `decisions` : liste de phrases ;
+   - `actions` : `[{ titre, responsable, echeance (AAAA-MM-JJ ou ""), note }]`, formulées comme des tâches ;
+   - `questions` : points restés ouverts.
+4. Poster : `POST { secret, action: "transcription", id: <id de l'enregistrement>, texte, resume, decisions,
+   actions, questions, modele: "whisper large-v3-turbo + claude-opus-5-5", langue, dureeSec, genereeLe }`.
+   Le relais écrit dans `operations01-transcriptions.json` (fichier créé par l'app à la première ouverture
+   de Réunions ; s'il manque, le relais le dit).
+5. Notification poussée (section 6) : « Transcription prête · <titre> », `url: ./?go=reunions&id=<id>`.
+
+**Ce que fait l'app ensuite** : affiche résumé, décisions, actions (bouton « + Tâche » et « Créer toutes
+les tâches » dans le projet, responsable et échéance repris), questions, transcription complète ; consigne
+la réunion dans le journal de bord du projet (type « Réunion », résumé inclus). Objectif : résultat
+disponible moins de dix minutes après la fin d'une réunion d'une heure.
+
+**Règles.** Ne jamais supprimer l'audio. Un enregistrement de moins de 10 secondes : transcrire seulement,
+`resume` vide. Texte des transcriptions et résumés : jamais envoyé à un service tiers autre que Claude
+(forfait) ; Whisper tourne en local.
+
 ## 5. Vérifier de bout en bout
 
 1. Envoyer une entrée de test au relais (`action: "correspondance"`) → le fichier
