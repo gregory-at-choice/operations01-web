@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v151";
+const APP_VERSION = "v152";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -4828,13 +4828,14 @@ function renderCompanyDetail(id) {
 }
 
 // ----------------------------- Finances -----------------------------
-let financeTab = "tableau";
+let financeTab = "transactions";
 function renderFinances() {
   if (view.detailId) return renderInvoiceDetail(view.detailId);
-  const tabs = [["tableau", "Tableau de bord"], ["factures", "Factures"], ["cdr", "Compte de résultat"], ["tva", "TVA"], ["apayer", "À payer"], ["budget", "Budget"], ["tresorerie", "Trésorerie"], ["cca", "Compte courant d'associé"], ["salaires", "Salaires"], ["categories", "Catégories"], ["recurrences", "Récurrences"], ["banque", "Banque"]]
+  const tabs = [["transactions", "Transactions"], ["tableau", "Tableau de bord"], ["factures", "Factures"], ["cdr", "Compte de résultat"], ["tva", "TVA"], ["apayer", "À payer"], ["budget", "Budget"], ["tresorerie", "Trésorerie"], ["cca", "Compte courant d'associé"], ["salaires", "Salaires"], ["categories", "Catégories"], ["recurrences", "Récurrences"], ["banque", "Banque"]]
     .map(([id, lbl]) => `<button class="chip ${financeTab === id ? "active" : ""}" data-ftab="${id}">${lbl}</button>`).join("");
   let body = "";
-  if (financeTab === "factures") body = financeFactures();
+  if (financeTab === "transactions") body = financeTransactions();
+  else if (financeTab === "factures") body = financeFactures();
   else if (financeTab === "tableau") body = financeDashboard();
   else if (financeTab === "cdr") body = financeCDR();
   else if (financeTab === "tva") body = financeTVA();
@@ -5457,7 +5458,7 @@ function doBankImport() {
 // opérations en écritures, catégorisation par règles, rapprochement avec les factures, alertes.
 let banqueStore = null, banqueLoading = false, banqueError = "", banqueLoadedAt = 0;
 const banqueOpen = {};   // relevé (fileId) déplié
-const banqueVisible = () => view.section === "finances" && (financeTab === "banque" || financeTab === "import") && !view.detailId;
+const banqueVisible = () => view.section === "finances" && (financeTab === "banque" || financeTab === "import" || financeTab === "transactions") && !view.detailId;
 async function loadBanque(force) {
   if (!(window.DriveSync && DriveSync.readBanque && DriveSync.isConnected()) || banqueLoading) return;
   if (!force && banqueStore && Date.now() - banqueLoadedAt < 60000) return;
@@ -6074,6 +6075,197 @@ function financeBanque() {
   const manual = `<details style="margin-top:14px"><summary class="muted" style="cursor:pointer;font-size:13px">Import manuel d'un fichier CSV ou OFX</summary><div style="margin-top:8px">${financeImport()}</div></details>`;
   return head + comptesHtml + alertsHtml + alertesHtml + clientsHtml + justifBlock(sansJustif) + relevesBlock + spHtml + rulesHtml + manual;
 }
+// ============================ Transactions (vue façon Pennylane) ============================
+// La vue principale des Finances : chaque ligne est une opération bancaire des relevés lus sur le Drive,
+// avec sa catégorie et l'état de son justificatif. Un clic ouvre un volet : l'écriture, le justificatif
+// (aperçu de la facture), et, s'il manque, des rapprochements proposés (factures du Drive au même montant,
+// pièces jointes des mails, dépôt d'un fichier). L'autre face : les factures du Drive sans transaction,
+// avec les opérations qui pourraient leur correspondre.
+const TX_FILTER_KEY = "op01_tx_filter";
+let txFilter = (() => { try { return Object.assign({ compte: "", statut: "tous", sens: "", q: "", mois: "" }, JSON.parse(localStorage.getItem(TX_FILTER_KEY) || "{}")); } catch (e) { return { compte: "", statut: "tous", sens: "", q: "", mois: "" }; } })();
+let txOpen = null;         // opération ouverte dans le volet (id) ; "f:<fileId>" pour une facture sans transaction
+let txPreview = null;      // fichier Drive dont l'aperçu est affiché dans le volet
+function saveTxFilter() { try { localStorage.setItem(TX_FILTER_KEY, JSON.stringify(txFilter)); } catch (e) {} }
+function txStateOf(op) {
+  const inv = invoiceOfOp(op.id);
+  if (inv) return inv.receiptUrl ? "justifiee" : inv.noReceipt ? "nonrequis" : "ajustifier";
+  return state.bankSkip[op.id] ? "ignoree" : "aimporter";
+}
+const TX_STATES = { justifiee: ["✓ Justifiée", "ok"], ajustifier: ["À justifier", "warn"], nonrequis: ["Sans justificatif", "muted"], aimporter: ["À importer", "info"], ignoree: ["Ignorée", "muted"] };
+function txRows() {
+  const q = normName(txFilter.q);
+  return banqueOps().filter((op) => {
+    if (txFilter.compte && op._compte !== txFilter.compte) return false;
+    if (txFilter.mois && String(op.date || "").slice(0, 7) !== txFilter.mois) return false;
+    if (txFilter.sens === "credit" && !(op.montant > 0)) return false;
+    if (txFilter.sens === "debit" && !(op.montant < 0)) return false;
+    const st = txStateOf(op);
+    if (txFilter.statut !== "tous" && txFilter.statut !== "factures" && st !== txFilter.statut) return false;
+    if (q) { const inv = invoiceOfOp(op.id); const hay = normName(bankOpLabel(op) + " " + (op.detail || "") + " " + (inv ? inv.title + " " + (inv.categoryName || "") : "") + " " + Math.abs(op.montant).toFixed(2)); if (hay.indexOf(q) < 0) return false; }
+    return true;
+  }).sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.id).localeCompare(String(a.id)));
+}
+const driveIdOf = (url) => { const m = /\/d\/([A-Za-z0-9_-]{15,})/.exec(String(url || "")) || /[?&]id=([A-Za-z0-9_-]{15,})/.exec(String(url || "")); return m ? m[1] : ""; };
+const releveOfOp = (opId) => banqueReleves().find((r) => (r.ops || []).some((o) => o.id === opId)) || null;
+// Rapprochements proposés pour une opération : même montant (factureCandidates), puis montant proche (± 2 %) ou même tiers dans les 90 jours.
+function txCandidates(op) {
+  const exact = factureCandidates(op), seen = new Set(exact.map((c) => c.f.fileId));
+  const used = new Set(state.invoices.map((v) => v.bankFactureId).filter(Boolean));
+  const amt = Math.abs(op.montant), hay = bankHaystack(op);
+  const loose = banqueFactures().filter((f) => !f.client && !used.has(f.fileId) && !seen.has(f.fileId) && f.montant != null).map((f) => {
+    const dAmt = Math.abs(f.montant - amt), days = f.date && op.date ? Math.abs((new Date(op.date) - new Date(f.date)) / 86400000) : 999;
+    const words = normName((f.fournisseur || "") + " " + (f.nom || "")).split(" ").filter((w) => w.length >= 4 && !/^(INVOICE|FACTURE|RECU|PDF|\d+)$/.test(w));
+    const name = words.some((w) => hay.indexOf(w) > -1);
+    let score = 0; if (dAmt <= Math.max(0.5, amt * 0.02)) score += 2; if (name) score += 2; if (days <= 90) score += 1;
+    return score >= 3 ? { f, score, loose: true } : null;
+  }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 4);
+  return exact.concat(loose);
+}
+// Opérations qui pourraient payer une facture du Drive : montant égal ou proche, dans les 120 jours, pas déjà justifiées.
+function txOpsForFacture(f) {
+  if (f.montant == null) return [];
+  const words = normName((f.fournisseur || "") + " " + (f.nom || "")).split(" ").filter((w) => w.length >= 4 && !/^(INVOICE|FACTURE|RECU|PDF|\d+)$/.test(w));
+  return banqueOps().filter((op) => { const st = txStateOf(op); return st !== "justifiee" && st !== "ignoree"; }).map((op) => {
+    const dAmt = Math.abs(Math.abs(op.montant) - f.montant), days = f.date && op.date ? (new Date(op.date) - new Date(f.date)) / 86400000 : null;
+    let score = 0; if (dAmt < 0.005) score += 3; else if (dAmt <= Math.max(0.5, f.montant * 0.02)) score += 2;
+    if (words.some((w) => bankHaystack(op).indexOf(w) > -1)) score += 2;
+    if (days != null && days >= -10 && days <= 120) score += 1;
+    return score >= 3 ? { op, score } : null;
+  }).filter(Boolean).sort((a, b) => b.score - a.score || String(b.op.date).localeCompare(String(a.op.date))).slice(0, 6);
+}
+function txFacturesSansTransaction() {
+  const used = new Set(state.invoices.map((v) => v.bankFactureId).filter(Boolean)), urls = new Set(state.invoices.map((v) => v.receiptUrl).filter(Boolean));
+  return banqueFactures().filter((f) => !f.client && f.montant != null && f.montant > 0 && !used.has(f.fileId) && !urls.has(f.url)).sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+}
+function txImportOp(op) {
+  if (invoiceOfOp(op.id)) return invoiceOfOp(op.id);
+  const r = releveOfOp(op.id); if (!r) return null;
+  delete state.bankSkip[op.id];
+  const res = importReleve(Object.assign({}, r, { ops: (r.ops || []).filter((o) => o.id === op.id) }));
+  if (res.error) { alert(res.error); return null; }
+  return invoiceOfOp(op.id);
+}
+function txLink(op, f) { const inv = txImportOp(op); if (!inv) return false; applyFacture(inv, f); toast("Justificatif rapproché ✓"); return true; }
+function financeTransactions() {
+  if (!banqueStore && !banqueLoading && !banqueError) setTimeout(loadBanque, 0);
+  const all = banqueOps(), comptes = (banqueStore && banqueStore.comptes) || [];
+  if (!all.length) return `<div class="card"><div style="font-weight:600">Aucune transaction pour l'instant</div><div class="muted" style="font-size:13px;margin-top:4px">${banqueLoading ? "Lecture du Drive en cours…" : banqueError ? "Erreur : " + esc(banqueError) : "Les relevés sont lus par le script « Operations01 banque » (onglet Banque pour l'installation)."}</div></div>`;
+  const counts = {}; all.forEach((op) => { const s = txStateOf(op); counts[s] = (counts[s] || 0) + 1; });
+  const nFact = txFacturesSansTransaction().length;
+  const months = [...new Set(all.map((op) => String(op.date || "").slice(0, 7)).filter(Boolean))].sort().reverse().slice(0, 14);
+  const rows = txRows();
+  const credits = rows.filter((o) => o.montant > 0).reduce((a, o) => a + o.montant, 0), debits = rows.filter((o) => o.montant < 0).reduce((a, o) => a + o.montant, 0);
+  const soldeOf = (compte) => { const rs = banqueReleves().filter((r) => r.compte === compte && r.soldeFin != null).sort((a, b) => String(b.au || "").localeCompare(String(a.au || ""))); return rs.length ? rs[0] : null; };
+  const compteChips = [`<button class="chip ${!txFilter.compte ? "active" : ""}" data-tx-compte="">Tous les comptes</button>`].concat(comptes.map((c) => { const s = soldeOf(c.compte); return `<button class="chip ${txFilter.compte === c.compte ? "active" : ""}" data-tx-compte="${esc(c.compte)}" title="${esc(c.compte)}">${esc((c.titulaire || c.compte || "").slice(0, 26))}${s ? ` <span class="muted">· ${euros(s.soldeFin)} au ${esc(fmtDate(s.au))}</span>` : ""}</button>`; })).join("");
+  const stChips = [["tous", `Toutes <span class="pm-tag">${all.length}</span>`], ["ajustifier", `À justifier <span class="pm-tag">${counts.ajustifier || 0}</span>`], ["justifiee", `Justifiées <span class="pm-tag">${counts.justifiee || 0}</span>`], ["aimporter", `À importer <span class="pm-tag">${counts.aimporter || 0}</span>`], ["nonrequis", `Sans justificatif <span class="pm-tag">${counts.nonrequis || 0}</span>`], ["ignoree", `Ignorées <span class="pm-tag">${counts.ignoree || 0}</span>`], ["factures", `📄 Factures sans transaction <span class="pm-tag">${nFact}</span>`]]
+    .map(([id, lbl]) => `<button class="chip ${txFilter.statut === id ? "active" : ""}" data-tx-statut="${id}">${lbl}</button>`).join("");
+  const toolbar = `<div class="tx-toolbar"><input data-tx-q placeholder="Rechercher un libellé, un tiers, un montant…" value="${esc(txFilter.q)}" style="min-width:220px"/>
+      <select data-tx-mois style="width:auto"><option value="">Toute la période</option>${months.map((m) => `<option value="${m}" ${txFilter.mois === m ? "selected" : ""}>${esc(monthLabel(m))}</option>`).join("")}</select>
+      <select data-tx-sens style="width:auto"><option value="">Entrées et sorties</option><option value="credit" ${txFilter.sens === "credit" ? "selected" : ""}>Encaissements</option><option value="debit" ${txFilter.sens === "debit" ? "selected" : ""}>Décaissements</option></select>
+      <span class="grow"></span><button class="btn ghost small" data-banque-refresh ${banqueLoading ? "disabled" : ""}>${icon("refresh")} Actualiser</button></div>`;
+  let body;
+  if (txFilter.statut === "factures") {
+    const list = txFacturesSansTransaction();
+    body = `<div class="card tx-card"><table class="tx-table"><thead><tr><th>Date</th><th>Facture</th><th style="text-align:right">Montant</th><th>Rapprochement</th></tr></thead><tbody>${list.map((f) => { const cands = txOpsForFacture(f); const open = txOpen === "f:" + f.fileId; return `<tr class="tx-row ${open ? "open" : ""}" data-tx-open="f:${esc(f.fileId)}"><td class="tx-date">${esc(f.date ? fmtDate(f.date) : "—")}</td><td><div class="tx-label">${esc(f.fournisseur || f.nom || "Facture")}</div><div class="tx-sub">${esc(f.nom || "")}${f.dossier ? " · " + esc(f.dossier) : ""}</div></td><td class="tx-amount">${euros(f.montant)}</td><td>${cands.length ? `<span class="tx-badge info">${cands.length} transaction${cands.length > 1 ? "s" : ""} possible${cands.length > 1 ? "s" : ""}</span>` : `<span class="tx-badge muted">Aucune transaction trouvée</span>`}</td></tr>`; }).join("") || `<tr><td colspan="4" class="muted" style="text-align:center;padding:18px">Toutes les factures du Drive sont reliées à une transaction.</td></tr>`}</tbody></table></div>`;
+  } else {
+    const catOpts = (sel) => '<option value="">— Catégorie —</option>' + categoryOptions(sel);
+    let html = "", lastMonth = null;
+    rows.forEach((op) => {
+      const m = String(op.date || "").slice(0, 7);
+      if (m !== lastMonth) { lastMonth = m; html += `<tr class="tx-month"><td colspan="5">${esc(monthLabel(m))}</td></tr>`; }
+      const inv = invoiceOfOp(op.id), st = txStateOf(op), [lbl, cls] = TX_STATES[st];
+      const cat = inv ? `<select class="tx-cat" data-tx-cat="${inv.id}" title="Catégorie">${catOpts(inv.categoryName)}</select>` : `<span class="muted" style="font-size:12px">${esc(bankRuleFor(op).categoryName || "—")}</span>`;
+      html += `<tr class="tx-row ${txOpen === op.id ? "open" : ""}" data-tx-open="${esc(op.id)}"><td class="tx-date">${esc(fmtDate(op.date))}</td>
+        <td><div class="tx-label">${esc(bankOpLabel(op))}${op.doute ? ' <span title="Montant ou sens à vérifier" style="color:#d23c3c">?</span>' : ""}</div><div class="tx-sub">${esc((op.detail || op.nature || "").slice(0, 90))}${comptes.length > 1 && !txFilter.compte ? ` · ${esc((op._titulaire || op._compte || "").slice(0, 20))}` : ""}</div></td>
+        <td class="tx-catcell">${cat}</td><td class="tx-amount ${op.montant >= 0 ? "pos" : "neg"}">${euros(op.montant)}</td>
+        <td><span class="tx-badge ${cls}">${st === "justifiee" ? "📎 " : ""}${lbl}</span></td></tr>`;
+    });
+    body = `<div class="card tx-card"><table class="tx-table"><thead><tr><th>Date</th><th>Transaction</th><th>Catégorie</th><th style="text-align:right">Montant</th><th>Justificatif</th></tr></thead><tbody>${html || `<tr><td colspan="5" class="muted" style="text-align:center;padding:18px">Aucune transaction pour ce filtre.</td></tr>`}</tbody></table></div>`;
+  }
+  const totals = txFilter.statut === "factures" ? "" : `<div class="tx-totals"><span>${rows.length} transaction${rows.length > 1 ? "s" : ""}</span><span class="pos">+ ${euros(credits)}</span><span class="neg">${euros(debits)}</span><span><strong>${euros(credits + debits)}</strong> net</span></div>`;
+  return `<div class="chip-row" style="margin-bottom:8px">${compteChips}</div><div class="chip-row" style="margin-bottom:10px">${stChips}</div>${toolbar}${totals}${body}${txOpen ? txDrawerHtml() : ""}`;
+}
+function txDrawerHtml() {
+  if (String(txOpen).indexOf("f:") === 0) {
+    const f = banqueFactures().find((x) => x.fileId === txOpen.slice(2)); if (!f) return "";
+    const cands = txOpsForFacture(f);
+    return `<div class="tx-overlay" data-tx-close></div><aside class="tx-drawer"><div class="tx-drawer-head"><div class="grow"><div class="tx-drawer-title">${esc(f.fournisseur || f.nom || "Facture")}</div><div class="muted" style="font-size:13px">${esc(f.nom || "")} · ${f.date ? esc(fmtDate(f.date)) : "date inconnue"} · <strong>${euros(f.montant)}</strong></div></div><button class="btn ghost small" data-tx-close>${icon("x")}</button></div>
+      <div class="tx-drawer-body">
+        <iframe class="justif-frame" style="height:42vh" src="https://drive.google.com/file/d/${encodeURIComponent(f.fileId)}/preview" title="Aperçu"></iframe>
+        <div class="inline" style="gap:8px;margin:8px 0"><a class="btn ghost small" href="${esc(f.url)}" target="_blank" rel="noopener">${icon("external")} Ouvrir dans Drive</a></div>
+        <div class="section-h">Transactions qui pourraient correspondre</div>
+        ${cands.length ? cands.map((c) => `<div class="tx-cand"><div class="grow"><div class="tx-label">${esc(bankOpLabel(c.op))}</div><div class="tx-sub">${esc(fmtDate(c.op.date))} · ${esc((c.op._titulaire || c.op._compte || "").slice(0, 24))} · <span class="${c.op.montant >= 0 ? "pos" : "neg"}">${euros(c.op.montant)}</span>${Math.abs(Math.abs(c.op.montant) - f.montant) < 0.005 ? " · montant identique" : ""}</div></div><button class="btn small" data-tx-link-op="${esc(c.op.id)}|${esc(f.fileId)}">Relier</button></div>`).join("") : `<div class="muted" style="font-size:13px">Aucune opération au montant proche dans les relevés lus. Le paiement n'est peut-être pas encore sur un relevé, ou il a été réglé autrement.</div>`}
+      </div></aside>`;
+  }
+  const op = banqueOps().find((o) => o.id === txOpen); if (!op) return "";
+  const inv = invoiceOfOp(op.id), st = txStateOf(op), [lbl, cls] = TX_STATES[st], r = releveOfOp(op.id);
+  let justif = "";
+  if (inv && inv.receiptUrl) {
+    const fid = driveIdOf(inv.receiptUrl) || inv.receiptFileId || inv.bankFactureId || "";
+    justif = `${fid ? `<iframe class="justif-frame" style="height:46vh" src="https://drive.google.com/file/d/${encodeURIComponent(fid)}/preview" title="Justificatif"></iframe>` : `<div class="muted" style="font-size:13px">Lien externe : <a href="${esc(inv.receiptUrl)}" target="_blank" rel="noopener">${esc(inv.receiptUrl.slice(0, 60))}</a></div>`}
+      <div class="inline" style="gap:8px;margin-top:8px;flex-wrap:wrap"><a class="btn ghost small" href="${esc(inv.receiptUrl)}" target="_blank" rel="noopener">${icon("external")} Ouvrir</a><button class="btn ghost small" data-tx-unmatch="${inv.id}">Détacher</button></div>`;
+  } else {
+    const cands = txCandidates(op);
+    const js = inv ? justifSearch[inv.id] : null;
+    const prev = txPreview ? banqueFactures().find((x) => x.fileId === txPreview) : null;
+    justif = `${inv && inv.noReceipt ? `<div style="margin-bottom:10px"><button class="btn ghost small" data-tx-needreceipt="${inv.id}">Un justificatif est finalement attendu</button></div>` : ""}
+      ${prev ? `<div class="tx-prevbox"><div class="inline" style="gap:8px"><strong class="grow">${esc(prev.fournisseur || prev.nom || "")}</strong><button class="btn small" data-tx-link="${esc(op.id)}|${esc(prev.fileId)}">${icon("check")} Relier à cette transaction</button><button class="btn ghost small" data-tx-preview="">${icon("x")}</button></div><iframe class="justif-frame" style="height:40vh;margin-top:6px" src="https://drive.google.com/file/d/${encodeURIComponent(prev.fileId)}/preview" title="Aperçu"></iframe></div>` : ""}
+      <div class="section-h" style="margin-top:${prev ? 10 : 0}px">Rapprochements proposés</div>
+      ${cands.length ? cands.map((c) => `<div class="tx-cand ${txPreview === c.f.fileId ? "active" : ""}"><div class="grow"><div class="tx-label">${esc(c.f.fournisseur || c.f.nom || "Facture")}</div><div class="tx-sub">${esc(c.f.nom || "")} · ${c.f.date ? esc(fmtDate(c.f.date)) : "sans date"} · <strong>${euros(c.f.montant)}</strong>${c.loose ? " · montant ou tiers proche" : " · montant identique"}</div></div><button class="btn ghost small" data-tx-preview="${esc(c.f.fileId)}">Aperçu</button><button class="btn small" data-tx-link="${esc(op.id)}|${esc(c.f.fileId)}">Relier</button></div>`).join("") : `<div class="muted" style="font-size:13px">Aucune facture du Drive au montant ${euros(Math.abs(op.montant))} autour du ${esc(fmtDate(op.date))}.</div>`}
+      <div class="section-h">Autres moyens</div>
+      <div class="inline" style="gap:8px;flex-wrap:wrap">
+        ${inv ? `<button class="btn secondary small" data-justif-search="${inv.id}" ${js && js.loading ? "disabled" : ""}>${icon("mail")} ${js && js.loading ? "Recherche…" : "Chercher dans les mails"}</button>` : ""}
+        <label class="btn secondary small" style="cursor:pointer">${icon("upload")} Déposer un fichier<input type="file" accept="application/pdf,image/*" data-tx-upload="${esc(op.id)}" style="display:none"/></label>
+        <button class="btn ghost small" data-tx-url="${esc(op.id)}">Coller un lien</button>
+        ${inv && !inv.noReceipt ? `<button class="btn ghost small" data-tx-noreceipt="${inv.id}">Aucun justificatif nécessaire</button>` : ""}</div>
+      ${js && js.results && js.results.length ? `<div class="section-h">Pièces jointes trouvées dans les mails</div>${js.results.slice(0, js.showAll ? 20 : 5).map((m) => (m.attachments || []).map((a) => `<div class="tx-cand"><div class="grow"><div class="tx-label">${esc(a.name || "pièce jointe")}</div><div class="tx-sub">${esc(expediteurCourtApp(m.from || m.de || ""))} · ${esc(m.subject || m.sujet || "")}${m.date ? " · " + esc(fmtDate(String(m.date).slice(0, 10))) : ""}</div></div><button class="btn small" data-justif-add="${inv.id}|${esc(m.id)}|${esc(a.id)}">Voir et relier</button></div>`).join("")).join("")}` : js && js.done && !(js.results || []).length ? `<div class="muted" style="font-size:13px;margin-top:6px">Rien de concluant dans les mails.</div>` : ""}`;
+  }
+  const ecriture = inv
+    ? `<div class="inline" style="gap:8px;flex-wrap:wrap"><select class="tx-cat" data-tx-cat="${inv.id}" style="width:auto">${'<option value="">— Catégorie —</option>' + categoryOptions(inv.categoryName)}</select><button class="btn ghost small" data-open-invoice="${inv.id}">↗ Ouvrir l'écriture</button></div>`
+    : st === "ignoree" ? `<div class="inline" style="gap:8px"><span class="tx-badge muted">Ignorée</span><button class="btn ghost small" data-tx-unskip="${esc(op.id)}">Rétablir</button></div>`
+    : `<div class="inline" style="gap:8px;flex-wrap:wrap"><button class="btn small" data-tx-import="${esc(op.id)}">Importer en écriture</button><button class="btn ghost small" data-tx-skip="${esc(op.id)}">Ignorer</button><span class="muted" style="font-size:12px">Catégorie proposée : ${esc(bankRuleFor(op).categoryName || "—")}</span></div>`;
+  return `<div class="tx-overlay" data-tx-close></div><aside class="tx-drawer"><div class="tx-drawer-head"><div class="grow"><div class="tx-drawer-title">${esc(bankOpLabel(op))}</div><div class="muted" style="font-size:13px">${esc(fmtDate(op.date))}${op.valeur && op.valeur !== op.date ? ` (valeur ${esc(fmtDate(op.valeur))})` : ""} · ${esc(op._titulaire || op._compte || "")}${r && r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">relevé</a>` : ""}</div></div><div class="tx-amount big ${op.montant >= 0 ? "pos" : "neg"}">${euros(op.montant)}</div><button class="btn ghost small" data-tx-close>${icon("x")}</button></div>
+    <div class="tx-drawer-body">
+      <div class="tx-sub" style="margin-bottom:10px">${esc(op.nature || "")}${op.detail ? " · " + esc(op.detail) : ""}</div>
+      <div class="section-h" style="margin-top:0">Écriture <span class="tx-badge ${cls}" style="margin-left:6px">${lbl}</span></div>${ecriture}
+      <div class="section-h">Justificatif${inv && inv.receiptUrl ? "" : ` <span class="tx-badge ${inv && inv.noReceipt ? "muted" : "warn"}" style="margin-left:6px">${inv && inv.noReceipt ? "non requis" : "manquant"}</span>`}</div>${justif}
+    </div></aside>`;
+}
+function wireTransactions(c) {
+  const rerender = () => { saveTxFilter(); render(); };
+  c.querySelectorAll("[data-tx-compte]").forEach((b) => b.onclick = () => { txFilter.compte = b.dataset.txCompte; rerender(); });
+  c.querySelectorAll("[data-tx-statut]").forEach((b) => b.onclick = () => { txFilter.statut = b.dataset.txStatut; txOpen = null; rerender(); });
+  const q = c.querySelector("[data-tx-q]"); if (q) { let t; q.oninput = () => { clearTimeout(t); t = setTimeout(() => { txFilter.q = q.value; saveTxFilter(); render(); const q2 = document.querySelector("[data-tx-q]"); if (q2) { q2.focus(); q2.setSelectionRange(q2.value.length, q2.value.length); } }, 300); }; }
+  const mo = c.querySelector("[data-tx-mois]"); if (mo) mo.onchange = () => { txFilter.mois = mo.value; rerender(); };
+  const se = c.querySelector("[data-tx-sens]"); if (se) se.onchange = () => { txFilter.sens = se.value; rerender(); };
+  c.querySelectorAll("[data-tx-open]").forEach((tr) => tr.onclick = (ev) => { if (ev.target.closest("select, a, button")) return; txOpen = txOpen === tr.dataset.txOpen ? null : tr.dataset.txOpen; txPreview = null; render(); });
+  c.querySelectorAll("[data-tx-close]").forEach((b) => b.onclick = () => { txOpen = null; txPreview = null; render(); });
+  c.querySelectorAll("[data-tx-preview]").forEach((b) => b.onclick = () => { txPreview = b.dataset.txPreview || null; render(); });
+  c.querySelectorAll("[data-tx-import]").forEach((b) => b.onclick = () => { const op = banqueOps().find((o) => o.id === b.dataset.txImport); if (op && txImportOp(op)) { save(); toast("Écriture créée ✓"); } render(); });
+  c.querySelectorAll("[data-tx-skip]").forEach((b) => b.onclick = () => { state.bankSkip[b.dataset.txSkip] = 1; save(); render(); });
+  c.querySelectorAll("[data-tx-unskip]").forEach((b) => b.onclick = () => { delete state.bankSkip[b.dataset.txUnskip]; save(); render(); });
+  c.querySelectorAll("[data-tx-cat]").forEach((s) => s.onchange = () => { const inv = state.invoices.find((v) => v.id === s.dataset.txCat); if (!inv) return; inv.categoryName = s.value; const op = banqueOps().find((o) => o.id === inv.bankOpId); const rule = op && s.value ? learnBankRule(op, s.value) : null; save(); render(); if (rule) toast(`Règle : « ${rule.motif} » → ${rule.categoryName}`); });
+  c.querySelectorAll("[data-tx-link]").forEach((b) => b.onclick = () => { const [opId, fileId] = b.dataset.txLink.split("|"); const op = banqueOps().find((o) => o.id === opId), f = banqueFactures().find((x) => x.fileId === fileId); if (op && f && txLink(op, f)) { txPreview = null; render(); } });
+  c.querySelectorAll("[data-tx-link-op]").forEach((b) => b.onclick = () => { const [opId, fileId] = b.dataset.txLinkOp.split("|"); const op = banqueOps().find((o) => o.id === opId), f = banqueFactures().find((x) => x.fileId === fileId); if (op && f && txLink(op, f)) { txOpen = null; render(); } });
+  c.querySelectorAll("[data-tx-unmatch]").forEach((b) => b.onclick = () => { const inv = state.invoices.find((v) => v.id === b.dataset.txUnmatch); if (inv && confirm("Détacher ce justificatif de la transaction ?")) { inv.receiptUrl = ""; delete inv.bankFactureId; save(); render(); } });
+  c.querySelectorAll("[data-tx-noreceipt]").forEach((b) => b.onclick = () => { const inv = state.invoices.find((v) => v.id === b.dataset.txNoreceipt); if (inv) { inv.noReceipt = true; save(); render(); } });
+  c.querySelectorAll("[data-tx-needreceipt]").forEach((b) => b.onclick = () => { const inv = state.invoices.find((v) => v.id === b.dataset.txNeedreceipt); if (inv) { inv.noReceipt = false; save(); render(); } });
+  c.querySelectorAll("[data-tx-url]").forEach((b) => b.onclick = () => { const op = banqueOps().find((o) => o.id === b.dataset.txUrl); if (!op) return; const url = prompt("Lien du justificatif (Drive ou autre)"); if (!url || !/^https?:\/\//i.test(url.trim())) return; const inv = txImportOp(op); if (!inv) return; inv.receiptUrl = url.trim(); inv.noReceipt = false; if (driveIdOf(url)) inv.receiptFileId = driveIdOf(url); save(); render(); toast("Justificatif relié ✓"); });
+  c.querySelectorAll("[data-tx-upload]").forEach((inp) => inp.onchange = async () => {
+    const file = inp.files && inp.files[0]; if (!file) return;
+    const op = banqueOps().find((o) => o.id === inp.dataset.txUpload); if (!op) return;
+    const inv = txImportOp(op); if (!inv) return;
+    toast("Envoi du justificatif…");
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const name = `${op.date || todayISO()} – ${(bankCounterparty(op) || bankOpLabel(op)).replace(/[\\\/:*?"<>|]+/g, " ").slice(0, 60)} – ${Math.abs(op.montant).toFixed(2)} € – ${file.name}`;
+      const up = await DriveSync.uploadToFolder(name, bytes, file.type || "application/pdf", JUSTIF_FOLDER);
+      inv.receiptUrl = up.url; inv.receiptFileId = up.id; inv.bankFactureId = up.id; inv.receiptFrom = "upload"; inv.noReceipt = false;
+      save(); render(); toast("Justificatif déposé et relié ✓");
+    } catch (e) { reportError(e, "dépôt d'un justificatif"); toast("Dépôt impossible : " + ((e && e.message) || e)); }
+  });
+}
+
 function wireBanque(c) {
   const rf = c.querySelector("[data-banque-refresh]"); if (rf) rf.onclick = () => loadBanque(true);
   c.querySelectorAll("[data-bank-map]").forEach((s) => s.onchange = () => { if (s.value) state.bankMap[s.dataset.bankMap] = s.value; else delete state.bankMap[s.dataset.bankMap]; save(); render(); });
@@ -7743,6 +7935,7 @@ function wire() {
   c.querySelectorAll("[data-ftab]").forEach((b) => b.onclick = () => { financeTab = b.dataset.ftab; render(); });
   c.querySelectorAll("[data-go]").forEach((b) => b.onclick = () => go(b.dataset.go));
   wireBanque(c);
+  wireTransactions(c);
   // pilotage
   const py = c.querySelector("[data-period-year]"); if (py) py.onchange = () => { cdrPeriod.year = Number(py.value) || 0; if (!cdrPeriod.year) cdrPeriod.month = 0; render(); };
   const pm = c.querySelector("[data-period-month]"); if (pm) pm.onchange = () => { cdrPeriod.month = Number(pm.value) || 0; render(); };

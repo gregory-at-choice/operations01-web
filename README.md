@@ -88,6 +88,25 @@ mini), `operations01-mails.json` (index des mails et des correspondances) et
 appareils, uniquement si cet appareil avait des modifications non écrites, au plus une paire par
 quart d'heure, 20 conservées). Une simple relecture périodique ne crée jamais de copie « conflit ».
 
+## Transactions : la vue façon Pennylane (Finances → Transactions)
+
+C'est l'onglet qui s'ouvre par défaut dans Finances. Chaque ligne est une opération d'un relevé lu sur le Drive, avec sa date, son libellé lisible, sa catégorie, son montant (vert pour les encaissements, rouge pour les décaissements) et l'état de son justificatif :
+
+- **✓ Justifiée** : l'écriture existe et un justificatif y est attaché ;
+- **À justifier** : l'écriture existe mais aucun justificatif n'est relié ;
+- **Sans justificatif** : l'écriture est marquée comme n'en exigeant pas (frais bancaires, URSSAF, échéance de prêt…) ;
+- **À importer** : l'opération est sur le relevé mais pas encore dans l'app ; **Ignorée** : écartée volontairement.
+
+En haut : un bouton par compte (avec le dernier solde connu), des filtres par état, une recherche (libellé, tiers, montant), le mois, et le sens (encaissements / décaissements). Les totaux de la sélection s'affichent au-dessus du tableau, qui est regroupé par mois.
+
+**Un clic sur une ligne ouvre un volet à droite** :
+
+- si la transaction est justifiée, le justificatif s'affiche directement (aperçu Drive), avec « Ouvrir » et « Détacher » ;
+- sinon l'app **propose des rapprochements** : les factures du Drive au même montant (datées jusqu'à 120 jours avant / 30 jours après le paiement), puis celles au montant proche (± 2 %) ou du même tiers dans les 90 jours. « Aperçu » montre la facture dans le volet, « Relier » l'attache à l'écriture (en la créant si l'opération n'était pas encore importée). Les autres moyens : chercher la pièce jointe dans les mails, déposer un fichier (rangé dans « Justificatifs choice » sur le Drive), coller un lien, ou déclarer qu'aucun justificatif n'est nécessaire ;
+- la catégorie se change dans le volet comme dans le tableau ; comme dans l'onglet Banque, l'app en déduit une règle pour les opérations suivantes du même tiers.
+
+L'autre face du rapprochement : le filtre **📄 Factures sans transaction** liste les factures du Drive qu'aucune écriture n'utilise, avec pour chacune les opérations qui pourraient la payer (montant égal ou proche, même tiers, dans les 120 jours). Un clic ouvre la facture et « Relier » l'attache à l'opération choisie.
+
 ## Banque : relevés et factures déjà sur le Drive (Finances → Banque)
 
 Un script Apps Script (`appsscript-banque.gs`) lit les relevés de compte PDF — Société Générale
