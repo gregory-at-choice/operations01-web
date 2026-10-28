@@ -401,6 +401,21 @@ les tâches » dans le projet, responsable et échéance repris), questions, tra
 la réunion dans le journal de bord du projet (type « Réunion », résumé inclus). Objectif : résultat
 disponible moins de dix minutes après la fin d'une réunion d'une heure.
 
+**Lexique (v153, relais v18).** Whisper et le résumé écorchent les noms propres (« Drotech » pour
+Drotek). L'export du relais contient `data.lexique` : `[{ faux, juste }]`, les corrections saisies par
+Grégory dans l'app (bouton « Corriger un nom » sur une fiche, ou « Lexique » dans Réunions). À respecter
+à chaque transcription :
+1. Donner à Whisper un `initial_prompt` qui cite les orthographes correctes du lexique et les noms
+   propres du projet (`missionId` : titre, participants, interlocuteurs des correspondances), par exemple
+   « Réunion Icarus, Pulsar, Drotek, Radxa, Avetix, Dronisos, PX4, Swarmer, UniFi, DSTA, A400M, LoRa, DGA. »
+2. Appliquer les remplacements du lexique (mot entier, sans tenir compte de la casse) au texte, au
+   résumé, aux décisions, actions et questions avant de poster.
+3. Rappeler dans le prompt du résumé : « Orthographes à respecter : … » avec la liste du lexique.
+Noms déjà connus à utiliser d'office : Drotek (fournisseur, drotek.com), Radxa, Avetix, Dronisos,
+Pulsar, Icarus Swarms, DSTA, PX4, Swarmer, UniFi, LoRa, DGA, A400M.
+L'app applique de son côté le lexique à l'affichage, aussi aux transcriptions déjà reçues : inutile de
+reposter une transcription corrigée.
+
 **Règles.** Ne jamais supprimer l'audio. Un enregistrement de moins de 10 secondes : transcrire seulement,
 `resume` vide. Texte des transcriptions et résumés : jamais envoyé à un service tiers autre que Claude
 (forfait) ; Whisper tourne en local.

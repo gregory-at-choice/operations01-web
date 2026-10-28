@@ -902,3 +902,13 @@ label.field.inline-check > span { margin-bottom: 0; }
 .tx-cand.active { border-color: var(--primary); }
 .tx-prevbox { border: 1px solid var(--primary); border-radius: 10px; padding: 8px; }
 @media (max-width: 720px) { .tx-table th:nth-child(3), .tx-table td.tx-catcell { display: none; } .tx-table td { padding: 8px 8px; } }
+
+/* v154 : enregistrement → projet, compte rendu dans le journal */
+.rec-project { margin-top: 10px; padding: 10px 14px; }
+.rec-project.todo { border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.rec-pick { font-size: 12px; padding: 2px 6px; width: auto; max-width: 220px; }
+.jn-more summary { cursor: pointer; list-style: none; }
+.jn-more summary::after { content: " · voir le compte rendu"; color: var(--accent); font-size: 12px; }
+.jn-more[open] summary::after { content: " · replier"; }
+.jn-md { white-space: normal; padding: 6px 0 0; background: transparent; font-size: 13px; }
+.jn-md ul { padding-left: 18px; margin: 4px 0; }

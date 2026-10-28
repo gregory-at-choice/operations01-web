@@ -287,8 +287,13 @@ relais v14). Pause et reprise possibles ; l'écran reste allumé pendant l'enreg
   les minutes tant qu'un enregistrement attend.
 - **Fiche d'un enregistrement** : lecture audio, résumé, décisions, actions (« + Tâche » ou « Créer
   toutes les tâches » dans le projet, responsable et échéance repris), questions ouvertes,
-  transcription complète. La réunion est consignée dans le **journal de bord** du projet dès que le
-  résumé arrive.
+  transcription complète.
+- **Projet et journal de bord** (v154) : un enregistrement sans projet (mémo Dictaphone) se rattache
+  depuis la liste (menu « Sans projet · choisir… ») ou depuis l'encart « À quel projet rattacher cet
+  enregistrement ? » de sa fiche. Le **compte rendu complet** (résumé, décisions, actions, questions)
+  est alors consigné dans le journal de bord du projet, replié sur sa première ligne (« voir le compte
+  rendu » le déplie) ; un clic sur l'entrée rouvre la fiche, « Ouvrir le journal » fait l'inverse.
+  Changer de projet déplace l'entrée dans l'autre journal.
 - **iPhone** : garder l'app au premier plan pendant l'enregistrement (en arrière-plan, iOS coupe le
   micro ; une coupure clôt l'enregistrement avec ce qui a été capté, et un enregistrement interrompu
   par une fermeture de l'app est récupéré au lancement suivant). Pour enregistrer **écran éteint ou en
@@ -298,6 +303,11 @@ relais v14). Pause et reprise possibles ; l'écran reste allumé pendant l'enreg
   synchronisé par iCloud sur le Mac mini, le pipeline prend chaque mémo tout seul (relais v16,
   `action: "audio"` pour déposer la copie audio sur le Drive), sans partage à la main. Un envoi raté se
   relance depuis la fiche (« Renvoyer sur le Drive »).
+- **Lexique** (v153) : un nom mal entendu (« Drotech » au lieu de Drotek) se corrige depuis la fiche
+  (« Corriger un nom », le texte sélectionné est proposé) ou le bouton « Lexique » de la rubrique. La
+  correction s'applique aussitôt à toutes les transcriptions affichées (texte, résumé, décisions,
+  actions, questions), aux entrées de journal et aux tâches déjà créées, et le Mac mini la reçoit
+  (relais v18, clé `lexique` de l'export) pour les prochaines transcriptions.
 
 ## Notifications poussées : bannière et pastille, téléphone et Mac
 

@@ -39,14 +39,14 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v152";
+const APP_VERSION = "v154";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], journalEntries: [], pushSubscriptions: [], recordings: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, evRequests: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], journalEntries: [], pushSubscriptions: [], recordings: [], lexique: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, evRequests: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -99,7 +99,19 @@ function adoptRemote(remote, why) {
 // distant qui ne fait que « revenir en arrière » (vieille copie poussée par un
 // appareil resté fermé) est reconnu à ses dates et ne fait rien perdre.
 const BASE_KEY = "operations01_base";
-const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals", "journalEntries", "pushSubscriptions", "recordings"];
+// ---- Lexique : noms propres que Whisper et le résumé écorchent (« Drotech » → Drotek). ----
+// Les corrections sont appliquées à l'affichage de toute transcription (texte, résumé, décisions,
+// actions, questions), aux entrées de journal et tâches déjà créées, et exportées au Mac mini
+// (relais v18, clé `lexique`) qui les donne à Whisper (initial_prompt) et au résumé.
+const DEFAULT_LEXIQUE = [["Drotech", "Drotek"]];
+const lexiqueEntries = () => DEFAULT_LEXIQUE.map(([faux, juste]) => ({ faux, juste, builtin: true })).concat((state.lexique || []).filter((e) => e && e.faux && e.juste));
+const lexiqueRegex = (faux) => new RegExp("(^|[^\\p{L}\\p{N}])(" + faux.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")(?![\\p{L}\\p{N}])", "giu");
+function applyLexique(text, entries) {
+  if (typeof text !== "string" || !text) return text;
+  (entries || lexiqueEntries()).forEach((e) => { text = text.replace(lexiqueRegex(e.faux), (m, pre, w) => pre + (w === w.toUpperCase() && w.length > 2 ? e.juste.toUpperCase() : e.juste)); });
+  return text;
+}
+const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals", "journalEntries", "pushSubscriptions", "recordings", "lexique"];
 const SYNC_NESTED = { missions: "entries" };
 const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "evRequests", "evRequested", "livraisonsVues", "bankMap", "bankSkip", "contactIgnore"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
@@ -2457,6 +2469,12 @@ async function createJournal(m, name, dossier) {
   } catch (e) { journalStatus[m.id] = { ok: false, err: (e && e.message) || String(e) }; toast("Création impossible : " + ((e && e.message) || e)); }
   render();
 }
+// Une entrée longue (compte rendu de réunion) : première ligne visible, le reste déplié à la demande.
+function journalTextHtml(e) {
+  const txt = String(e.text || ""), nl = txt.indexOf("\n");
+  if (nl < 0 || txt.length < 240) return `<div class="grow jn-text">${esc(txt)}</div>`;
+  return `<div class="grow jn-text"><details class="jn-more"><summary>${esc(txt.slice(0, nl))}</summary><div class="md-doc jn-md">${mdToHtml(txt.slice(nl + 1))}</div></details></div>`;
+}
 function renderProjectJournal(m) {
   const j = m.journal, st = journalStatus[m.id] || {};
   const all = journalEntries(m.id);
@@ -2472,7 +2490,7 @@ function renderProjectJournal(m) {
     const ref = e.ref && e.ref.kind ? ` data-jn-open="${esc(e.ref.kind)}" data-jn-id="${esc(e.ref.id || "")}"` : "";
     html += `<div class="jn-row ${e.auto ? "auto" : "manual"}"${ref}>
       <span class="jn-time">${journalTime(e.at)}</span><span class="jn-ic">${journalIcon(e.type)}</span>
-      <div class="grow jn-text">${esc(e.text)}</div>
+      ${journalTextHtml(e)}
       <span class="pm-tag jn-tag">${e.auto ? "auto" : "note"}</span>
       ${e.auto ? "" : `<button class="btn ghost small" data-jn-edit="${e.id}" title="Modifier">✎</button>`}
       <button class="btn ghost small" data-jn-del="${e.id}" title="Retirer du journal">✕</button></div>`;
@@ -8352,7 +8370,7 @@ function wire() {
   c.querySelectorAll("[data-jn-add]").forEach((b) => b.onclick = () => { const ta = c.querySelector("[data-jn-text]"), at = c.querySelector("[data-jn-at]"); const txt = ((ta && ta.value) || "").trim(); if (!txt) { toast("Écris d'abord ta note"); if (ta) ta.focus(); return; } const when = at && at.value ? new Date(at.value).toISOString() : new Date().toISOString(); journalLog(b.dataset.jnAdd, "note", txt, null, { manual: true, at: when }); saveJournalDraft(b.dataset.jnAdd, "", ""); save(); render(); toast("Consigné ✓"); });
   c.querySelectorAll("[data-jn-del]").forEach((b) => b.onclick = () => { const i = (state.journalEntries || []).findIndex((e) => e.id === b.dataset.jnDel); if (i < 0) return; if (!confirm("Retirer cette entrée du journal ?")) return; const e = state.journalEntries.splice(i, 1)[0]; scheduleJournalWrite(e.missionId); save(); render(); });
   c.querySelectorAll("[data-jn-edit]").forEach((b) => b.onclick = () => { const e = (state.journalEntries || []).find((x) => x.id === b.dataset.jnEdit); if (!e) return; const v = prompt("Modifier la note", e.text); if (v == null || !v.trim()) return; e.text = v.trim(); scheduleJournalWrite(e.missionId); save(); render(); });
-  c.querySelectorAll("[data-jn-open]").forEach((r) => r.onclick = (ev) => { if (ev.target.closest("button, a")) return; const k = r.dataset.jnOpen, id = r.dataset.jnId; if (k === "task" && state.tasks.some((t) => t.id === id)) openTask(id); else if (k === "action" && state.actions.some((a) => a.id === id)) openDetail("actions", id); else if (k === "event") go("atraiter"); });
+  c.querySelectorAll("[data-jn-open]").forEach((r) => r.onclick = (ev) => { if (ev.target.closest("button, a, summary, details")) return; const k = r.dataset.jnOpen, id = r.dataset.jnId; if (k === "task" && state.tasks.some((t) => t.id === id)) openTask(id); else if (k === "action" && state.actions.some((a) => a.id === id)) openDetail("actions", id); else if (k === "recording" && (state.recordings || []).some((r) => r.id === id)) openDetail("reunions", id); else if (k === "event") go("atraiter"); });
   c.querySelectorAll("[data-goto-gestion]").forEach((r) => r.onclick = () => { projectTab = "gestion"; render(); });
   c.querySelectorAll("[data-project-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.projectTimer); if (!m) return; startProjectTimer(m, null); save(); render(); toast("Chrono lancé sur le projet ▶"); });
   c.querySelectorAll("[data-task-timer]").forEach((b) => b.onclick = () => {
@@ -9126,7 +9144,7 @@ document.getElementById("installClose").onclick = () => { document.getElementByI
 
 // ----------------------------- Démarrage -----------------------------
 if (generateRecurrences() > 0) save();
-seedVip();
+seedVip(); seedLexique();
 seedBilan();
 seedPipelines();
 handleAddContactParam();
@@ -9543,6 +9561,7 @@ const recKindLabel = (k) => (REC_KINDS.find((x) => x[0] === k) || REC_KINDS[0])[
 const recKindIcon = (k) => (REC_KINDS.find((x) => x[0] === k) || REC_KINDS[0])[1];
 const rec = { active: false, paused: false, media: null, stream: null, chunks: [], mime: "", startedAt: 0, pausedTotal: 0, pauseAt: 0, timer: null, wake: null, title: "", kind: "reunion", missionId: "", uploading: {} };
 let transcriptStore = {}, transcriptLoadedAt = 0, transcriptTimer = null;
+let transcriptStamp = 0;
 const recAudioUrls = {};
 // --- IndexedDB : l'audio reste sur l'appareil tant qu'il n'est pas sur le Drive ---
 function audioDB() {
@@ -9651,13 +9670,61 @@ async function uploadRecording(id) {
   render();
 }
 // --- Transcriptions (Mac mini) ---
-const transcriptOf = (id) => transcriptStore[id] || null;
+const lexiqueDeep = (v, entries) => typeof v === "string" ? applyLexique(v, entries) : Array.isArray(v) ? v.map((x) => lexiqueDeep(x, entries)) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, lexiqueDeep(x, entries)])) : v;
+const lexiqueCache = {};
+function transcriptOf(id) {
+  const t = transcriptStore[id]; if (!t) return null;
+  const entries = lexiqueEntries(), key = entries.map((e) => e.faux + ">" + e.juste).join("|") + "#" + (t.recuLe || t.genereeLe || "");
+  const c = lexiqueCache[id]; if (c && c.key === key && c.src === t) return c.val;
+  const val = entries.length ? lexiqueDeep(t, entries) : t;
+  lexiqueCache[id] = { key, src: t, val };
+  return val;
+}
+// Ajoute une correction et la répercute sur ce qui a déjà été écrit à partir des transcriptions.
+function addLexique(faux, juste) {
+  faux = String(faux || "").trim(); juste = String(juste || "").trim();
+  if (!faux || !juste || faux === juste) return null;
+  state.lexique = state.lexique || [];
+  let e = state.lexique.find((x) => x.faux.toLowerCase() === faux.toLowerCase());
+  if (e) e.juste = juste; else { e = { id: uid(), faux, juste, createdAt: Date.now() }; state.lexique.push(e); }
+  const one = [e]; let n = 0; const missions = new Set();
+  (state.journalEntries || []).forEach((j) => { const t = applyLexique(j.text, one); if (t !== j.text) { j.text = t; n++; missions.add(j.missionId); } });
+  state.tasks.forEach((t) => { if (t.origin !== "reunion") return; ["title", "notes"].forEach((k) => { const v = applyLexique(t[k], one); if (v !== t[k]) { t[k] = v; n++; } }); });
+  (state.recordings || []).forEach((r) => { const v = applyLexique(r.title, one); if (v !== r.title) { r.title = v; n++; } });
+  missions.forEach((mid) => scheduleJournalWrite(mid));
+  save();
+  return { entry: e, corrected: n };
+}
+// Premier lancement avec le lexique intégré : les textes déjà écrits (journal, tâches) sont corrigés une fois.
+function seedLexique() {
+  let done = false; try { done = localStorage.getItem("op01_lexSeeded") === "1"; } catch (e) {}
+  if (done) return;
+  const entries = DEFAULT_LEXIQUE.map(([faux, juste]) => ({ faux, juste })); let n = 0; const missions = new Set();
+  (state.journalEntries || []).forEach((j) => { const t = applyLexique(j.text, entries); if (t !== j.text) { j.text = t; n++; missions.add(j.missionId); } });
+  state.tasks.forEach((t) => { if (t.origin !== "reunion") return; ["title", "notes"].forEach((k) => { const v = applyLexique(t[k], entries); if (v !== t[k]) { t[k] = v; n++; } }); });
+  try { localStorage.setItem("op01_lexSeeded", "1"); } catch (e) {}
+  if (n) { missions.forEach((mid) => scheduleJournalWrite(mid)); storeState(); }
+}
+function openLexiqueDialog(faux) {
+  const rows = lexiqueEntries().map((e) => `<div class="inline" style="gap:8px;padding:4px 0;border-bottom:1px solid var(--line)"><span class="muted" style="text-decoration:line-through">${esc(e.faux)}</span><span>→</span><strong class="grow">${esc(e.juste)}</strong>${e.builtin ? '<span class="muted" style="font-size:12px">intégré</span>' : `<button class="btn ghost small" data-lx-del="${esc(e.faux)}">✕</button>`}</div>`).join("");
+  showModal(`<div class="modal-head"><strong class="grow">Lexique des transcriptions</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <div class="muted" style="font-size:13px;line-height:1.45;margin-bottom:10px">Un nom mal entendu par Whisper ? Indique la bonne orthographe : elle est appliquée tout de suite à toutes les transcriptions, résumés, entrées de journal et tâches, et le Mac mini s'en servira pour les prochaines réunions.</div>
+    <div class="inline" style="gap:8px;flex-wrap:wrap"><label class="field grow"><span>Mal transcrit</span><input data-lx-faux value="${esc(faux || "")}" placeholder="ex. Drotech"/></label><label class="field grow"><span>Orthographe correcte</span><input data-lx-juste placeholder="ex. Drotek"/></label></div>
+    <div class="inline" style="justify-content:flex-end;margin-top:8px"><button class="btn" data-lx-add>Corriger partout</button></div>
+    ${rows ? `<div class="section-h">Corrections connues</div>${rows}` : ""}`);
+  document.querySelector("[data-modal-close]").onclick = closeModal;
+  const fi = document.querySelector("[data-lx-faux]"), ju = document.querySelector("[data-lx-juste]"); (faux ? ju : fi).focus();
+  const add = () => { const r = addLexique(fi.value, ju.value); if (!r) { toast("Indique le terme et sa correction"); return; } closeModal(); render(); toast(`« ${r.entry.faux} » → « ${r.entry.juste} »${r.corrected ? ` · ${r.corrected} texte${r.corrected > 1 ? "s" : ""} corrigé${r.corrected > 1 ? "s" : ""}` : ""} ✓`); };
+  document.querySelector("[data-lx-add]").onclick = add; ju.onkeydown = (ev) => { if (ev.key === "Enter") add(); };
+  document.querySelectorAll("[data-lx-del]").forEach((b) => b.onclick = () => { state.lexique = (state.lexique || []).filter((e) => e.faux !== b.dataset.lxDel); save(); closeModal(); openLexiqueDialog(); });
+}
 const transcriptPending = () => (state.recordings || []).filter((r) => r.statut === "envoye" && !transcriptOf(r.id));
 async function loadTranscriptions(force) {
   if (!(window.DriveSync && DriveSync.readTranscriptions && DriveSync.isConnected())) return;
   if (!force && Date.now() - transcriptLoadedAt < 30000) return;
   transcriptLoadedAt = Date.now();
-  try { const d = await DriveSync.readTranscriptions(); if (d && d.transcriptions) transcriptStore = d.transcriptions; } catch (e) {}
+  let fresh = false;
+  try { const d = await DriveSync.readTranscriptions(); if (d && d.transcriptions) { fresh = JSON.stringify(Object.keys(d.transcriptions)) !== JSON.stringify(Object.keys(transcriptStore)) || (d.updatedAt || 0) !== transcriptStamp; transcriptStamp = d.updatedAt || 0; transcriptStore = d.transcriptions; } } catch (e) {}
   let changed = false;
   // Fichiers déposés directement dans le dossier Drive (Dictaphone, app Drive) : le Mac mini les transcrit
   // sous l'id « drive:<fileId> » ; l'app crée alors la fiche, sans projet tant que Grégory n'en choisit pas.
@@ -9672,13 +9739,46 @@ async function loadTranscriptions(force) {
   (state.recordings || []).forEach((r) => {
     const t = transcriptOf(r.id); if (!t) return;
     if (r.statut !== "pret") { r.statut = "pret"; changed = true; }
-    if (r.missionId && !r.journaled && findMission(r.missionId)) {
-      const resume = String(t.resume || "").trim();
-      journalLog(r.missionId, "reunion", `${recKindLabel(r.kind)} « ${r.title} » (${fmtDuration(r.durationSec || 0)})${resume ? "\n" + resume.slice(0, 600) : ""}`, { kind: "recording", id: r.id });
-      r.journaled = true; changed = true;
-    }
+    if (r.missionId && findMission(r.missionId) && (!r.journaled || r.journalVersion !== 2)) { journalRecording(r); changed = true; }   // v154 : compte rendu complet (les entrées tronquées sont réécrites)
   });
   if (changed) { save(); if (view.section === "reunions") render(); toast("Transcription reçue ✓"); }
+  else if (fresh && view.section === "reunions") render();   // fichier relu avec du nouveau : rafraîchir l'écran (fiche ouverte avant la lecture)
+}
+// ---- Compte rendu dans le journal de bord du projet ----
+// Texte complet (résumé, décisions, actions, questions), une seule entrée par enregistrement ;
+// changer le projet déplace l'entrée dans l'autre journal.
+function recordingJournalText(r, t) {
+  const lines = [`${recKindLabel(r.kind)} « ${r.title} » (${fmtDuration(r.durationSec || t.dureeSec || 0)}) — compte rendu`];
+  const resume = String(t.resume || "").trim(); if (resume) lines.push(resume);
+  const li = (v) => "- " + (typeof v === "string" ? v : v.texte || v.titre || "");
+  const dec = Array.isArray(t.decisions) ? t.decisions.filter(Boolean) : [], act = Array.isArray(t.actions) ? t.actions.filter(Boolean) : [], q = Array.isArray(t.questions) ? t.questions.filter(Boolean) : [];
+  if (dec.length) lines.push("", "**Décisions**", ...dec.map(li));
+  if (act.length) lines.push("", "**Actions**", ...act.map((a) => { const o = typeof a === "string" ? { titre: a } : a; const who = [o.responsable, o.echeance ? fmtDate(o.echeance) : ""].filter(Boolean).join(", "); return `- ${o.titre || o.texte || ""}${who ? ` (${who})` : ""}`; }));
+  if (q.length) lines.push("", "**Questions ouvertes**", ...q.map(li));
+  return lines.join("\n");
+}
+function journalRecording(r) {
+  const t = transcriptOf(r.id); if (!t) return null;
+  const ref = { kind: "recording", id: r.id };
+  state.journalEntries = state.journalEntries || [];
+  // l'entrée existante (même enregistrement), où qu'elle soit
+  const olds = state.journalEntries.filter((e) => e.ref && e.ref.kind === "recording" && e.ref.id === r.id);
+  olds.filter((e) => e.missionId !== r.missionId).forEach((e) => { state.journalEntries.splice(state.journalEntries.indexOf(e), 1); scheduleJournalWrite(e.missionId); });
+  if (!r.missionId || !findMission(r.missionId)) { r.journaled = false; return null; }
+  const text = recordingJournalText(r, t);
+  let e = olds.find((x) => x.missionId === r.missionId);
+  if (e) { if (e.text !== text) { e.text = text; scheduleJournalWrite(r.missionId); } }
+  else e = journalLog(r.missionId, "reunion", text, ref, { at: r.startedAt || undefined });
+  r.journaled = true; r.journalVersion = 2;
+  return e;
+}
+function setRecordingMission(r, mid) {
+  const before = r.missionId || "";
+  r.missionId = mid || null;
+  const e = journalRecording(r);
+  save(); render();
+  if (e) toast(`Compte rendu consigné dans le journal de « ${findMission(r.missionId).title} » ✓`);
+  else if (before && !mid) toast("Enregistrement détaché du projet");
 }
 function scheduleTranscriptPoll() {
   if (transcriptTimer) return;
@@ -9719,13 +9819,13 @@ function renderReunions() {
     if (d !== day) { day = d; html += `<div class="jn-day">${esc(journalLongDay(d))}</div>`; }
     const m = r.missionId ? findMission(r.missionId) : null, t = transcriptOf(r.id);
     html += `<div class="row rec-row" data-open-rec="${r.id}"><span class="ic">${recKindIcon(r.kind)}</span><div class="grow"><div class="r-title">${esc(r.title)}</div>
-      <div class="r-sub">${esc((r.startedAt || "").slice(11, 16))} · ${fmtDuration(r.durationSec || 0)}${m ? " · " + esc(m.title) : ""} · ${recStatusHtml(r)}</div>
+      <div class="r-sub">${esc((r.startedAt || "").slice(11, 16))} · ${fmtDuration(r.durationSec || 0)}${m ? " · 📓 " + esc(m.title) : ` · <select class="rec-pick" data-rec-mission-of="${r.id}" title="Rattacher à un projet"><option value="">Sans projet · choisir…</option>${sortedMissions().filter((x) => (x.statusCode || "") !== "terminee").map((x) => `<option value="${x.id}">${esc(x.title || "Sans titre")}</option>`).join("")}</select>`} · ${recStatusHtml(r)}</div>
       ${t && t.resume ? `<div class="mail-snippet">${esc(String(t.resume).slice(0, 160))}</div>` : ""}</div><span class="muted">›</span></div>`;
   });
   const ios2 = /iPhone|iPad/.test(navigator.userAgent || "");
   const dictaphone = `<details class="card rec-card" ${ios2 && !rec.active ? "open" : ""}><summary style="cursor:pointer;font-weight:600">📱 Enregistrer écran éteint ou en faisant autre chose (iPhone)</summary>
       <div class="muted" style="font-size:13px;margin-top:8px;line-height:1.5">Sur iPhone, seule une app native peut enregistrer en arrière-plan : l'app web est suspendue dès qu'elle quitte l'écran. Utilise <strong>Dictaphone</strong> : il enregistre écran éteint, sans limite, et ses mémos arrivent d'eux-mêmes sur le Mac mini par iCloud, qui les transcrit et les résume ; la réunion apparaît ici (choisis alors son projet dans la fiche pour la consigner au journal). Sans iCloud : à la fin, <strong>Partager → Drive → dossier « ${esc(REC_FOLDER)} »</strong>. Un titre contenant « perso » n'est pas transcrit.${state.recFolderId ? ` <a href="https://drive.google.com/drive/folders/${esc(state.recFolderId)}" target="_blank" rel="noopener">Ouvrir le dossier</a>` : ""}</div></details>`;
-  return `<div class="page-title">Réunions et notes vocales</div>${recorder}${dictaphone}
+  return `<div class="page-title inline" style="gap:10px"><span class="grow">Réunions et notes vocales</span><button class="btn ghost small" data-lexique title="Noms propres à respecter dans les transcriptions">✏️ Lexique</button></div>${recorder}${dictaphone}
     <div class="section-h">Enregistrements <span class="muted">(${list.length})</span></div>
     <div class="list">${html || '<div class="center-empty">Aucun enregistrement.<br><span style="font-size:13px">Une réunion ou une note vocale : transcription, résumé, décisions et actions arrivent du Mac mini.</span></div>'}</div>`;
 }
@@ -9747,14 +9847,18 @@ function renderRecordingDetail(id) {
       <details class="card" style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Transcription complète${t.dureeSec ? ` <span class="muted">· ${fmtDuration(t.dureeSec)}</span>` : ""}</summary><div class="rec-transcript" style="margin-top:8px">${esc(t.texte || "")}</div></details>`
     : `<div class="card" style="margin-top:12px">${r.statut === "local" ? `<div>L'audio est sur cet appareil mais pas encore sur le Drive.</div><button class="btn small" data-rec-resend="${r.id}" style="margin-top:8px">↻ Renvoyer sur le Drive</button>` : r.statut === "perdu" ? "Audio introuvable sur cet appareil : l'enregistrement n'a pas pu être envoyé." : `⏳ Transcription et résumé en préparation sur le Mac mini. L'app vérifie toutes les minutes ; compte quelques minutes après la fin de l'enregistrement.`}</div>`;
   return `<button class="back" data-back>‹ Réunions</button>
-    <div class="toolbar"><input class="grow" data-bind="recordings|${r.id}|title" value="${esc(r.title)}" style="font-size:21px;font-weight:700"/><select data-bind="recordings|${r.id}|missionId" style="width:auto">${missionOpts}</select></div>
+    <div class="toolbar"><input class="grow" data-bind="recordings|${r.id}|title" value="${esc(r.title)}" style="font-size:21px;font-weight:700"/></div>
+    <div class="card rec-project ${m ? "" : "todo"}"><div class="inline" style="gap:10px;flex-wrap:wrap"><span style="font-size:20px">📓</span><div class="grow" style="min-width:200px"><div style="font-weight:600">${m ? `Projet : ${esc(m.title)}` : "À quel projet rattacher cet enregistrement ?"}</div><div class="muted" style="font-size:12px">${m ? (r.journaled ? "Le compte rendu est dans le journal de bord du projet." : t ? "Le compte rendu sera consigné dans son journal de bord." : "Le compte rendu ira dans son journal de bord dès qu'il sera prêt.") : "Le compte rendu sera consigné dans le journal de bord du projet choisi."}</div></div>
+      <select data-rec-mission-of="${r.id}" style="width:auto">${missionOpts}</select>${m && r.journaled ? `<button class="btn ghost small" data-rec-open-journal="${m.id}">Ouvrir le journal ›</button>` : ""}</div></div>
     <div class="card"><div class="inline" style="flex-wrap:wrap;gap:8px"><span style="font-size:22px">${recKindIcon(r.kind)}</span><div class="grow"><div>${esc(recKindLabel(r.kind))} · ${esc(fmtDateTimeISO(r.startedAt || ""))} · ${fmtDuration(r.durationSec || 0)}${r.size ? " · " + esc(fmtSize(r.size)) : ""}</div><div>${recStatusHtml(r)}</div></div>
       ${r.fileId ? `<a class="btn ghost small" href="https://drive.google.com/file/d/${esc(r.fileId)}/view" target="_blank" rel="noopener">↗ Drive</a>` : ""}
       ${m && t && !r.journaled ? `<button class="btn ghost small" data-rec-journal="${r.id}">📓 Consigner</button>` : ""}
+      ${t ? `<button class="btn ghost small" data-lexique title="Un nom mal transcrit ? Corrige-le partout">✏️ Corriger un nom</button>` : ""}
       <button class="btn ghost small" data-rec-del="${r.id}" style="color:#d23c3c">Supprimer</button></div>${audio}</div>
     ${body}`;
 }
 function wireReunions(c) {
+  c.querySelectorAll("[data-lexique]").forEach((b) => b.onclick = () => { const sel = String(window.getSelection && window.getSelection() || "").trim(); openLexiqueDialog(sel.length && sel.length <= 40 ? sel : ""); });
   c.querySelectorAll("[data-rec-kind]").forEach((b) => b.onclick = () => { rec.kind = b.dataset.recKind; const ti = c.querySelector("[data-rec-title]"); if (ti) rec.title = ti.value; render(); });
   const ti = c.querySelector("[data-rec-title]"); if (ti) ti.oninput = () => { rec.title = ti.value; };
   const ms = c.querySelector("[data-rec-mission]"); if (ms) ms.onchange = () => { rec.missionId = ms.value; };
@@ -9762,7 +9866,7 @@ function wireReunions(c) {
   const ps = c.querySelector("[data-rec-pause]"); if (ps) ps.onclick = pauseRecording;
   const rs = c.querySelector("[data-rec-resume]"); if (rs) rs.onclick = resumeRecording;
   const sp = c.querySelector("[data-rec-stop]"); if (sp) sp.onclick = () => { if (confirm("Terminer l'enregistrement ?")) stopRecording(); };
-  c.querySelectorAll("[data-open-rec]").forEach((el) => el.onclick = () => openDetail("reunions", el.dataset.openRec));
+  c.querySelectorAll("[data-open-rec]").forEach((el) => el.onclick = (ev) => { if (ev.target.closest("select, button, a")) return; openDetail("reunions", el.dataset.openRec); });
   c.querySelectorAll("[data-rec-resend]").forEach((b) => b.onclick = () => uploadRecording(b.dataset.recResend));
   c.querySelectorAll("[data-rec-play]").forEach((b) => b.onclick = async () => {
     const id = b.dataset.recPlay, r = (state.recordings || []).find((x) => x.id === id); if (!r) return;
@@ -9772,7 +9876,9 @@ function wireReunions(c) {
   });
   c.querySelectorAll("[data-rec-task]").forEach((b) => b.onclick = () => createTasksFromRecording(b.dataset.recTask, [Number(b.dataset.i)]));
   c.querySelectorAll("[data-rec-tasks]").forEach((b) => b.onclick = () => createTasksFromRecording(b.dataset.recTasks, null));
-  c.querySelectorAll("[data-rec-journal]").forEach((b) => b.onclick = () => { const r = (state.recordings || []).find((x) => x.id === b.dataset.recJournal), t = r && transcriptOf(r.id); if (!r || !t || !r.missionId) return; journalLog(r.missionId, "reunion", `${recKindLabel(r.kind)} « ${r.title} » (${fmtDuration(r.durationSec || 0)})${t.resume ? "\n" + String(t.resume).slice(0, 600) : ""}`, { kind: "recording", id: r.id }); r.journaled = true; save(); render(); toast("Consigné dans le journal ✓"); });
+  c.querySelectorAll("[data-rec-journal]").forEach((b) => b.onclick = () => { const r = (state.recordings || []).find((x) => x.id === b.dataset.recJournal); if (!r || !r.missionId) return; if (journalRecording(r)) { save(); render(); toast("Compte rendu consigné dans le journal ✓"); } });
+  c.querySelectorAll("[data-rec-mission-of]").forEach((sel) => sel.onchange = () => { const r = (state.recordings || []).find((x) => x.id === sel.dataset.recMissionOf); if (r) setRecordingMission(r, sel.value); });
+  c.querySelectorAll("[data-rec-open-journal]").forEach((b) => b.onclick = () => { projectTab = "journal"; projectTabFor = b.dataset.recOpenJournal; openDetail("missions", b.dataset.recOpenJournal); });
   c.querySelectorAll("[data-rec-del]").forEach((b) => b.onclick = async () => { const id = b.dataset.recDel, r = (state.recordings || []).find((x) => x.id === id); if (!r) return; if (!confirm(`Supprimer « ${r.title} » ? L'audio sur le Drive est mis à la corbeille.`)) return; if (r.fileId) { try { await DriveSync.deleteDoc(r.fileId); } catch (e) {} } audioDel(id); state.recordings = state.recordings.filter((x) => x.id !== id); save(); view.detailId = null; render(); });
 }
 function createTasksFromRecording(id, idx) {

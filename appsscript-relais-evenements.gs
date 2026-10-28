@@ -47,11 +47,11 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 17;
+var VERSION = 18;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
-var EXPORT_CLES = ["missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "pushSubscriptions", "recordings"];   // v12 : abonnements aux notifications poussées ; v14 : enregistrements audio
+var EXPORT_CLES = ["missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "pushSubscriptions", "recordings", "lexique"];   // v12 : abonnements aux notifications poussées ; v14 : enregistrements audio ; v18 : lexique des transcriptions
 var EXPORT_OBJETS = ["evEdits", "evDecisions", "evLearn", "evSteps", "evRequests"];   // corrections et décisions de Grégory (apprentissage)
 var CONSERVER_JOURS = 30;
 var MAX_EVENEMENTS = 3000;   // ~95 événements par jour : 1000 ne couvrait que dix jours
