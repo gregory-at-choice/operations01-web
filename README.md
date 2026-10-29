@@ -107,6 +107,14 @@ En haut : un bouton par compte (avec le dernier solde connu), des filtres par é
 
 L'autre face du rapprochement : le filtre **📄 Factures sans transaction** liste les factures du Drive qu'aucune écriture n'utilise, avec pour chacune les opérations qui pourraient la payer (montant égal ou proche, même tiers, dans les 120 jours). Un clic ouvre la facture et « Relier » l'attache à l'opération choisie.
 
+## Déploiement des scripts Google : par le Mac mini, plus de copier-coller
+
+`CONTRAT-DEPLOIEMENT.md` confie au Mac mini le déploiement des cinq scripts Apps Script (relais,
+mails, correspondances, banque, rappels) dans les trois comptes, avec `clasp`, à partir de ce dépôt :
+toutes les 10 minutes, tout `.gs` modifié est poussé, le relais reçoit une nouvelle version sur son
+déploiement existant, et la version qui répond est vérifiée. Mise en place unique : trois connexions
+`clasp login` (Grégory clique « Autoriser ») et l'API Apps Script activée dans chaque compte.
+
 ## Économie de ressources (v155, relais v19)
 
 - **App** : le fichier des événements (plusieurs Mo) n'est plus téléchargé que s'il a changé
