@@ -109,6 +109,13 @@ L'autre face du rapprochement : le filtre **📄 Factures sans transaction** lis
 
 ## Déploiement des scripts Google : par le Mac mini, plus de copier-coller
 
+Règles pour modifier un `.gs` (détail dans `CONTRAT-DEPLOIEMENT.md`, section 5) : incrémenter
+`VERSION` en tête ; laisser vides les réglages propres à un compte (`FICHIER_MAILS_ID`,
+`DOSSIER_CORRESPONDANCES_ID`, `SECRET_CODE`) et ne pas les renommer ; ne pas introduire de nouveau
+service Google sans l'annoncer (accord à donner dans chaque compte) ; regrouper les modifications du
+relais (chaque publication consomme une version Apps Script) ; ne plus rien modifier dans l'éditeur en
+ligne, sinon le projet est bloqué jusqu'à décision.
+
 `CONTRAT-DEPLOIEMENT.md` confie au Mac mini le déploiement des cinq scripts Apps Script (relais,
 mails, correspondances, banque, rappels) dans les trois comptes, avec `clasp`, à partir de ce dépôt :
 toutes les 10 minutes, tout `.gs` modifié est poussé, le relais reçoit une nouvelle version sur son

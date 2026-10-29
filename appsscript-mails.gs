@@ -37,6 +37,7 @@
  * EXTRAIT_CARACTERES caractères du dernier message (0 pour ne rien extraire).
  */
 
+var VERSION = 1;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
 var FICHIER_MAILS_ID = "";        // vide = boîte principale (fichier trouvé par son nom)
 var DATA_FILE = "operations01-data.json";
 var MAILS_FILE = "operations01-mails.json";

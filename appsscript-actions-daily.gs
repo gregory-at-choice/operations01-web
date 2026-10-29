@@ -22,6 +22,7 @@
  */
 
 // Nom du fichier de données sur le Drive (identique à la config de la web app).
+var VERSION = 1;   // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
 var NOM_FICHIER = "operations01-data.json";
 
 /**

@@ -72,3 +72,29 @@ l'option `--user`). Dossier de travail : `~/choice-deploiement/`.
   (le dire à Grégory, c'est lui qui clique).
 - Ne jamais déployer un fichier dont le numéro de version en tête est inférieur à celui déjà en
   ligne.
+
+## 5. Règles du dépôt (retour du premier passage, 29 octobre 2026)
+
+Ces règles s'imposent à Claude (session web-choice) pour tout `.gs` du dépôt.
+
+1. Tout commit sur `main` part en ligne sous 10 minutes. Plus aucune modification dans l'éditeur
+   Apps Script : un code modifié à la main n'est pas écrasé, mais il bloque le déploiement du projet.
+2. `var VERSION = N;` en tête de chaque fichier, incrémenté à chaque modification (mails et rappels
+   l'ont depuis le 29/10 : `VERSION = 1`).
+3. Le relais répond toujours `{ ok, service, version }` en GET sans paramètre : c'est le contrôle
+   d'après publication ; en cas d'échec, le Mac mini revient à la version précédente.
+4. Les réglages propres à un compte restent vides dans le dépôt (`var FICHIER_MAILS_ID = "";`,
+   `DOSSIER_CORRESPONDANCES_ID`, `SECRET_CODE`…) : la valeur saisie en ligne est conservée à chaque
+   déploiement. Ne jamais renommer ces variables.
+5. Un service Google nouveau dans un script (ScriptApp, UrlFetchApp, MailApp…) demande l'accord de
+   Grégory, une fois par projet et par compte : à éviter, sinon à annoncer dans le message de commit.
+6. Le manifeste `appsscript.json` n'est jamais déployé depuis le dépôt.
+7. Un seul fichier de code par projet. Chaque publication du relais consomme une version Apps Script
+   (200 au plus) : regrouper les modifications du relais.
+
+**Rappels (actions-daily), décision de Grégory du 29/10** : la version du dépôt fait foi. Le code en
+ligne (96 lignes, première mouture de juillet : rappels d'actions et de rendez-vous) est d'abord
+archivé par le Mac mini dans `~/choice-deploiement/archives/actions-daily-en-ligne-<date>.gs`, puis
+remplacé par celle du dépôt (221 lignes : mêmes rappels, plus le rappel des justificatifs manquants).
+Ne pas relancer `installerDeclencheurQuotidien` : le déclencheur de 9 h existe déjà.
+
