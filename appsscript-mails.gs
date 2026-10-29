@@ -61,7 +61,20 @@ function installerAnalyseMails() {
   else { t.everyHours(1).create(); Logger.log("Analyse des mails installée : toutes les heures."); }
 }
 
+// Heures creuses (vmails) : la nuit (23 h – 7 h, heure du projet Apps Script) et le week-end, un passage
+// sur deux est sauté : le déclencheur reste à 15 minutes, le travail se fait toutes les 30 minutes.
+var HEURES_CREUSES = { debut: 23, fin: 7, weekend: true, minutes: 30 };
+function passageUtile(cle) {
+  var d = new Date(), h = d.getHours(), j = d.getDay();
+  var creux = h >= HEURES_CREUSES.debut || h < HEURES_CREUSES.fin || (HEURES_CREUSES.weekend && (j === 0 || j === 6));
+  if (!creux) return true;
+  var props = PropertiesService.getScriptProperties(), dernier = Number(props.getProperty(cle)) || 0;
+  if (Date.now() - dernier < HEURES_CREUSES.minutes * 60000 - 30000) return false;
+  props.setProperty(cle, String(Date.now()));
+  return true;
+}
 function analyserMails() {
+  if (!passageUtile("dernierPassageMails")) return;   // heures creuses : un passage sur deux
   var cible = FICHIER_MAILS_ID ? fichierParId(FICHIER_MAILS_ID) : trouverFichier(MAILS_FILE);
   if (!cible) {
     Logger.log(FICHIER_MAILS_ID

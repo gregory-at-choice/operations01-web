@@ -107,6 +107,18 @@ En haut : un bouton par compte (avec le dernier solde connu), des filtres par é
 
 L'autre face du rapprochement : le filtre **📄 Factures sans transaction** liste les factures du Drive qu'aucune écriture n'utilise, avec pour chacune les opérations qui pourraient la payer (montant égal ou proche, même tiers, dans les 120 jours). Un clic ouvre la facture et « Relier » l'attache à l'opération choisie.
 
+## Économie de ressources (v155, relais v19)
+
+- **App** : le fichier des événements (plusieurs Mo) n'est plus téléchargé que s'il a changé
+  (vérification de sa date d'abord), et aucune relecture périodique n'a lieu tant que l'onglet est
+  caché ; au retour au premier plan, tout ce qui est périmé est relu d'un coup. La relecture des
+  données elle-même ne coûtait déjà qu'un appel de métadonnées.
+- **Relais v19** : `GET ?action=stamp` renvoie les dates de modification des fichiers sans les lire ;
+  le Mac mini ne demande l'export complet que si les données ont changé (contrat, section 9), et
+  passe à un cycle de 5 minutes la nuit et le week-end.
+- **Scripts mails et correspondances** : la nuit (23 h – 7 h) et le week-end, un passage sur deux est
+  sauté (travail toutes les 30 minutes au lieu de 15 ; réglable en tête de script, `HEURES_CREUSES`).
+
 ## Banque : relevés et factures déjà sur le Drive (Finances → Banque)
 
 Un script Apps Script (`appsscript-banque.gs`) lit les relevés de compte PDF — Société Générale

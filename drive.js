@@ -469,13 +469,16 @@
     const made = await createNamed(EVENTS_FILE, EMPTY_EVENTS());
     return made.id;
   }
-  async function readEvenements() {
+  // `known` : modifiedTime de la dernière lecture ; si le fichier n'a pas bougé, on ne le
+  // télécharge pas (il pèse plusieurs Mo) et on renvoie { _unchanged: true }.
+  async function readEvenements(known) {
     if (!accessToken) return null;
     const f = await findByName(EVENTS_FILE);
     if (!f) {
       try { await createNamed(EVENTS_FILE, EMPTY_EVENTS()); } catch (e) {}
       return null;
     }
+    if (known && f.modifiedTime === known) return { _unchanged: true, _fileId: f.id, _modifiedTime: known };
     try { const j = JSON.parse(await download(f.id)); j._fileId = f.id; j._modifiedTime = f.modifiedTime; return j; } catch (e) { return null; }
   }
   // Réécrit le fichier. L'appelant le relit juste avant, pour ne pas écraser un

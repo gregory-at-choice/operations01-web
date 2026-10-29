@@ -439,3 +439,34 @@ premier usage : `cle: "nyt-<date>"`, `tache: "New York Times du JJ/MM/AAAA"`, la
 2. Renvoyer la même entrée avec `reponse` → la section affiche « Ma réponse (date) ».
 3. Poster un événement avec `proposition.contexte` → dans l'app, À traiter → la page du message
    montre « étayée » et les éléments de contexte avec leurs liens.
+
+## 9. Économie de ressources (v155, relais v19)
+
+Le pipeline doit coûter le moins possible quand il ne se passe rien : la nuit, le week-end, et entre
+deux mails. Règles à appliquer par le Mac mini.
+
+1. **Interroger `GET ?action=stamp` chaque minute, pas l'export.** Réponse :
+   `{ ok, version, maintenant, data, evenements, assistant }` : dates de dernière modification des
+   trois fichiers, sans en lire le contenu. **Ne demander `action=export` que si `data` a changé**
+   depuis la dernière lecture (demandes de réponse, enregistrements, abonnements, lexique, tâches…).
+   Les fichiers `evenements` et `assistant` sont écrits par le Mac mini lui-même : leur date sert
+   seulement à détecter une écriture faite par l'app (décision sur un événement).
+2. **Cycle de nuit** : de 23 h à 7 h et le week-end, le cycle passe de 60 s à **5 minutes** (stamp
+   compris), sauf si une demande est en attente (`evRequests` non servie) ou qu'un audio attend
+   une transcription : dans ce cas le cycle à 60 s reprend jusqu'à ce que ce soit fait.
+3. **N'écrire `operations01-evenements.json` que si son contenu a changé** (comparer au dernier
+   écrit) : chaque écriture déclenche un téléchargement de plusieurs Mo par chaque appareil ouvert.
+4. **Alléger ce fichier** : y garder les événements des **90 derniers jours** et ceux encore
+   ouverts ; déplacer le reste dans `operations01-evenements-archive.json` (même dossier, jamais lu
+   par l'app, consultable pour les statistiques et les réponses étayées). Objectif : moins de 1 Mo.
+5. **Dictaphone** : surveiller le dossier des mémos par événement (`fswatch`, ou FSEvents) plutôt
+   que par relecture toutes les 60 s ; garder une relecture de sécurité toutes les 10 minutes.
+6. **Ollama** : laisser le modèle de classement se décharger après 10 minutes d'inactivité
+   (`keep_alive: "10m"`) ; le recharger coûte quelques secondes, le garder coûte de la mémoire en
+   permanence. Whisper n'est chargé que le temps d'une transcription.
+7. **Lots** : regrouper les écritures au relais d'un même cycle (événements, correspondances) en
+   une seule requête quand l'action le permet, et ne jamais relire un fichier déjà lu dans le cycle.
+
+Ce qui ne change pas : la transcription locale (Whisper turbo), le classement local des mails,
+et Claude Opus seulement à la demande et pour le compte rendu des réunions.
+

@@ -47,7 +47,7 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 18;
+var VERSION = 19;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -74,6 +74,7 @@ function doGet(e) {
   if (p.action === "audio") return reponse(lireAudio(p.id));
   if (p.action === "transcriptions") return reponse(listerTranscriptions());
   if (p.action === "audios") return reponse(listerAudios());
+  if (p.action === "stamp") return reponse(stamp());
   if (p.action !== "export") return reponse({ ok: true, service: "relais-evenements", version: VERSION });
   var data = lireJson(FICHIER_DATA) || {};
   var exporte = {};
@@ -550,6 +551,15 @@ function fusionnerInterlocuteur(dossier, donnees, cle, nom, nouvelles, index) {
   return true;
 }
 
+// v19 : dates de dernière modification des fichiers, sans en lire le contenu. Le Mac mini
+// interroge « stamp » chaque minute et ne demande l'export complet que si `data` a changé.
+function stamp() {
+  var out = { ok: true, version: VERSION, maintenant: new Date().toISOString() };
+  [["data", FICHIER_DATA], ["evenements", FICHIER_EVENEMENTS], ["assistant", FICHIER_ASSISTANT]].forEach(function (c) {
+    var f = trouver(c[1]); out[c[0]] = f ? f.getLastUpdated().toISOString() : null;
+  });
+  return out;
+}
 function trouver(nom) { var it = DriveApp.getFilesByName(nom); return it.hasNext() ? it.next() : null; }
 function lireJson(nom) { var f = trouver(nom); if (!f) return null; try { return JSON.parse(f.getBlob().getDataAsString() || "{}"); } catch (e) { return null; } }
 function reponse(obj) { return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); }

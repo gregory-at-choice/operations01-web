@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v154";
+const APP_VERSION = "v155";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3049,8 +3049,9 @@ async function loadEvenements() {
   eventLoadedAt = Date.now(); eventLoading = true;
   if (eventVisible()) render();
   try {
-    const d = await DriveSync.readEvenements();
-    if (d) { repairEvents(d); applyEventDecisions(d); eventStore = d; eventError = ""; } else eventError = "absent";
+    const d = await DriveSync.readEvenements(eventStore && eventStore._modifiedTime);   // v155 : pas de téléchargement si le fichier n'a pas changé
+    if (d && d._unchanged) eventError = "";
+    else if (d) { repairEvents(d); applyEventDecisions(d); eventStore = d; eventError = ""; } else eventError = "absent";
   } catch (e) { eventError = e.message || "erreur"; }
   eventLoading = false;
   updateAppBadge();
@@ -3293,6 +3294,7 @@ function scheduleRequestPoll() {
   if (evRequestTimer) return;
   evRequestTimer = setInterval(() => {
     if (!pendingRequests().length) { clearInterval(evRequestTimer); evRequestTimer = null; return; }
+    if (document.visibilityState === "hidden") return;
     if (eventsReady() && !eventLoading) { eventLoadedAt = 0; loadEvenements(); }
   }, 30000);
 }
@@ -9112,11 +9114,16 @@ refreshNotifications();
 setInterval(refreshNotifications, 5 * 60000);
 if (pendingRequests().length) scheduleRequestPoll();
 // Événements du Mac mini : relecture périodique pour tenir la pastille à jour.
-setInterval(() => {
+// v155 : rien n'est relu tant que l'onglet est caché (batterie, données) ; au retour au premier plan,
+// tout ce qui est périmé est relu d'un coup.
+function periodicReads() {
+  if (document.visibilityState === "hidden") return;
   if (eventsReady() && Date.now() - eventLoadedAt > EVENT_FRESH) loadEvenements();
   if (assistantReady() && Date.now() - assistantLoadedAt > EVENT_FRESH) loadAssistant();
   loadLivraisons(false);
-}, 60000);
+}
+setInterval(periodicReads, 60000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { periodicReads(); if (view.section === "reunions") loadTranscriptions(false); } });
 setInterval(() => {
   document.querySelectorAll("[data-entry-time]").forEach((span) => {
     const id = span.dataset.entryTime;
@@ -9782,7 +9789,7 @@ function setRecordingMission(r, mid) {
 }
 function scheduleTranscriptPoll() {
   if (transcriptTimer) return;
-  transcriptTimer = setInterval(() => { if (!transcriptPending().length) { clearInterval(transcriptTimer); transcriptTimer = null; return; } loadTranscriptions(true); }, 60000);
+  transcriptTimer = setInterval(() => { if (!transcriptPending().length) { clearInterval(transcriptTimer); transcriptTimer = null; return; } if (document.visibilityState !== "hidden") loadTranscriptions(true); }, 60000);
 }
 // --- Écran ---
 function recStatusHtml(r) {
