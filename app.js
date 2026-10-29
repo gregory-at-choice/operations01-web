@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v155";
+const APP_VERSION = "v156";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -7922,7 +7922,7 @@ function wire() {
   // liaison générique des champs top-niveau : data-bind="collection|id|field"
   c.querySelectorAll("[data-bind]").forEach((el) => {
     const [coll, id, field] = el.dataset.bind.split("|");
-    const h = () => { const o = (state[coll] || []).find((x) => x.id === id); if (!o) return; const nv = el.type === "number" ? (parseFloat(el.value) || 0) : el.value; if (coll === "missions" && field === "statusCode" && o[field] !== nv) journalLog(id, "projet", `Statut du projet : ${statusLabel(nv)}`); o[field] = nv; save(); if (el.dataset.rerender !== undefined) render(); };
+    const h = () => { const o = (state[coll] || []).find((x) => x.id === id); if (!o) return; const nv = el.type === "number" ? (parseFloat(el.value) || 0) : el.value; if (coll === "missions" && field === "statusCode" && o[field] !== nv) journalLog(id, "projet", `Statut du projet : ${statusLabel(nv)}`); o[field] = nv; if (coll === "recordings" && field === "title") journalRecording(o); save(); if (el.dataset.rerender !== undefined) render(); };
     el.addEventListener("change", h); el.addEventListener("blur", h);
   });
 
@@ -9740,12 +9740,13 @@ async function loadTranscriptions(force) {
     const fileId = t.fileId || tid.slice(6);
     if ((state.recordings || []).some((r) => r.id === tid || r.fileId === fileId)) return;
     state.recordings = state.recordings || [];
-    state.recordings.push({ id: tid, title: String(t.titre || t.nom || "Enregistrement").replace(/\.[a-z0-9]{2,4}$/i, ""), kind: t.kind === "note" ? "note" : "reunion", missionId: null, startedAt: t.enregistreLe || t.genereeLe || new Date().toISOString(), durationSec: Number(t.dureeSec) || 0, mime: t.mime || "", size: Number(t.taille) || 0, fileId, fileName: t.nom || "", statut: "pret", source: "drive", createdAt: Date.now() });
+    state.recordings.push({ id: tid, title: recTitleFromTranscript(t) || REC_DEFAULT_TITLE, kind: t.kind === "note" ? "note" : "reunion", missionId: null, startedAt: t.enregistreLe || t.genereeLe || new Date().toISOString(), durationSec: Number(t.dureeSec) || 0, mime: t.mime || "", size: Number(t.taille) || 0, fileId, fileName: t.nom || "", statut: "pret", source: "drive", createdAt: Date.now() });
     changed = true;
   });
   (state.recordings || []).forEach((r) => {
     const t = transcriptOf(r.id); if (!t) return;
     if (r.statut !== "pret") { r.statut = "pret"; changed = true; }
+    if ((!r.title || r.title === REC_DEFAULT_TITLE) && recTitleFromTranscript(t)) { r.title = recTitleFromTranscript(t); r.journalVersion = 0; changed = true; }   // v156 : titre tiré du résumé
     if (r.missionId && findMission(r.missionId) && (!r.journaled || r.journalVersion !== 2)) { journalRecording(r); changed = true; }   // v154 : compte rendu complet (les entrées tronquées sont réécrites)
   });
   if (changed) { save(); if (view.section === "reunions") render(); toast("Transcription reçue ✓"); }
@@ -9754,6 +9755,18 @@ async function loadTranscriptions(force) {
 // ---- Compte rendu dans le journal de bord du projet ----
 // Texte complet (résumé, décisions, actions, questions), une seule entrée par enregistrement ;
 // changer le projet déplace l'entrée dans l'autre journal.
+// Titre d'un enregistrement dont la transcription n'en donne pas : l'objet du résumé
+// (« **Objet** : weekly Icarus du 28/10/2026 » → « Weekly Icarus du 28/10/2026 »).
+const REC_DEFAULT_TITLE = "Enregistrement";
+function recTitleFromTranscript(t) {
+  if (!t) return "";
+  const direct = String(t.titre || t.nom || "").replace(/\.[a-z0-9]{2,4}$/i, "").trim(); if (direct) return direct;
+  const m = /\*{0,2}Objet\s*\*{0,2}\s*:\s*\*{0,2}\s*([^\n]+)/i.exec(String(t.resume || ""));
+  if (!m) return "";
+  let o = m[1].replace(/\*+/g, "").split(/\.\s+/)[0].replace(/[.\s]+$/, "").trim(); if (!o) return "";   // première phrase seulement
+  if (o.length > 80) o = o.slice(0, 77).replace(/\s+\S*$/, "") + "…";
+  return o.charAt(0).toUpperCase() + o.slice(1);
+}
 function recordingJournalText(r, t) {
   const lines = [`${recKindLabel(r.kind)} « ${r.title} » (${fmtDuration(r.durationSec || t.dureeSec || 0)}) — compte rendu`];
   const resume = String(t.resume || "").trim(); if (resume) lines.push(resume);
