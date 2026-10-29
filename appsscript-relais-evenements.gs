@@ -47,7 +47,7 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 21;
+var VERSION = 22;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -70,7 +70,7 @@ function doGet(e) {
   // Sans paramètre : la version seulement (contrôle après déploiement), rien d'autre n'est lisible sans secret.
   if (!p.secret && !p.action) return reponse({ ok: true, service: "relais-evenements", version: VERSION });
   if (!SECRET || p.secret !== SECRET) return reponse({ ok: false, erreur: "secret invalide" });
-  if (p.action === "stamp" || p.action === "export") verifierIndex();   // v21 : index vide ou absent → reconstruction automatique
+  if (p.action === "stamp" || p.action === "export") verifierIndex();   // v22 : index vide ou absent → reconstruit par tranches, dans l'appel
   if (p.action === "agenda") return reponse(lireAgenda(Number(p.jours) || 7));
   if (p.action === "correspondances") return reponse(indexCorrespondances());
   if (p.action === "correspondance") return reponse(lireCorrespondance(p.cle, p.depuis, p.max));
@@ -460,28 +460,24 @@ function nomIndexPerso() { return "index-relais.json"; }
 // Reconstruit index.json à partir de tous les fichiers _données/<clé>.json (à lancer à la main une fois,
 // ou après un incident). Les clés déjà présentes et lisibles sont conservées puis mises à jour.
 // Une relance ne relit que les fichiers absents de l'index (reconstruireIndexComplet() relit tout).
-// v21 : si index.json manque ou est vide (écriture interrompue), une reconstruction est lancée en
-// arrière-plan par un déclencheur ponctuel, qui se relance de lui-même jusqu'à ce que tout soit indexé.
-// Vérification au plus une fois par heure (cache), pour ne pas coûter de lecture Drive à chaque appel.
+// v22 : si index.json manque ou est vide (écriture interrompue), il est reconstruit par tranches de
+// 20 s dans les appels du Mac mini eux-mêmes (stamp/export, toutes les minutes), sans déclencheur ni
+// service supplémentaire. reconstruireIndex() reprend là où elle s'est arrêtée : une dizaine d'appels
+// suffisent pour 600 fichiers. Une fois complet, vérification au plus une fois par heure (cache).
+var RECONSTRUCTION_TRANCHE_MS = 20000;
 function verifierIndex() {
   try {
     var cache = CacheService.getScriptCache(); if (cache.get("indexVerifie")) return;
     var dossier = dossierCorrespondances(); if (!dossier) return;
     var f = fichierDans(sousDossier(dossier, "_données"), "index.json");
-    if (!f || f.getSize() === 0) planifierReconstruction(); else cache.put("indexVerifie", "1", 3600);
+    if (!cache.get("indexEnCours") && f && f.getSize() > 0) { cache.put("indexVerifie", "1", 3600); return; }
+    var r = reconstruireIndex(false, RECONSTRUCTION_TRANCHE_MS);
+    if (r && r.restants > 0) cache.put("indexEnCours", "1", 1800);
+    else { cache.remove("indexEnCours"); cache.put("indexVerifie", "1", 3600); }
   } catch (e) { Logger.log("verifierIndex : " + e); }
 }
-function planifierReconstruction(delaiMs) {
-  var deja = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === "reconstruireIndexAuto"; });
-  if (!deja) ScriptApp.newTrigger("reconstruireIndexAuto").timeBased().after(delaiMs || 5000).create();
-}
-function reconstruireIndexAuto() {
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === "reconstruireIndexAuto") ScriptApp.deleteTrigger(t); });
-  var r = reconstruireIndex(false);
-  if (r && r.restants > 0) planifierReconstruction(60000); else { try { CacheService.getScriptCache().put("indexVerifie", "1", 3600); } catch (e) {} }
-}
 function reconstruireIndexComplet() { reconstruireIndex(true); }
-function reconstruireIndex(complet) {
+function reconstruireIndex(complet, budgetMs) {
   var dossier = dossierCorrespondances(); if (!dossier) { Logger.log("Dossier des correspondances introuvable."); return null; }
   var donnees = sousDossier(dossier, "_données"), debut = Date.now();
   var f = fichierDans(donnees, "index.json"), lu = f ? lireJsonDe(f) : null, cles = (lu && lu.cles) || {};
@@ -492,7 +488,7 @@ function reconstruireIndex(complet) {
     var fj = it.next(), nomF = fj.getName();
     if (!/\.json$/i.test(nomF) || nomF === "index.json" || nomF.indexOf("_etat-") === 0) continue;
     if (!complet && dejaNoms[nomF]) { sautes++; continue; }
-    if (Date.now() - debut > 5 * 60000) { restants++; continue; }
+    if (Date.now() - debut > (budgetMs || 5 * 60000)) { restants++; continue; }
     var j = lireJsonDe(fj); if (!j || !j.cle || !Array.isArray(j.entrees)) continue;
     var nom = j.nom || j.cle, fMd = null;
     if (cles[j.cle] && cles[j.cle].fichierId) { try { fMd = DriveApp.getFileById(cles[j.cle].fichierId); if (fMd.isTrashed()) fMd = null; } catch (e) { fMd = null; } }
