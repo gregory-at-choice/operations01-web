@@ -47,7 +47,7 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 20;
+var VERSION = 21;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -67,7 +67,10 @@ var DOSSIER_ENREGISTREMENTS = "Enregistrements choice";   // v15 : créé par l'
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
+  // Sans paramètre : la version seulement (contrôle après déploiement), rien d'autre n'est lisible sans secret.
+  if (!p.secret && !p.action) return reponse({ ok: true, service: "relais-evenements", version: VERSION });
   if (!SECRET || p.secret !== SECRET) return reponse({ ok: false, erreur: "secret invalide" });
+  if (p.action === "stamp" || p.action === "export") verifierIndex();   // v21 : index vide ou absent → reconstruction automatique
   if (p.action === "agenda") return reponse(lireAgenda(Number(p.jours) || 7));
   if (p.action === "correspondances") return reponse(indexCorrespondances());
   if (p.action === "correspondance") return reponse(lireCorrespondance(p.cle, p.depuis, p.max));
@@ -457,9 +460,29 @@ function nomIndexPerso() { return "index-relais.json"; }
 // Reconstruit index.json à partir de tous les fichiers _données/<clé>.json (à lancer à la main une fois,
 // ou après un incident). Les clés déjà présentes et lisibles sont conservées puis mises à jour.
 // Une relance ne relit que les fichiers absents de l'index (reconstruireIndexComplet() relit tout).
+// v21 : si index.json manque ou est vide (écriture interrompue), une reconstruction est lancée en
+// arrière-plan par un déclencheur ponctuel, qui se relance de lui-même jusqu'à ce que tout soit indexé.
+// Vérification au plus une fois par heure (cache), pour ne pas coûter de lecture Drive à chaque appel.
+function verifierIndex() {
+  try {
+    var cache = CacheService.getScriptCache(); if (cache.get("indexVerifie")) return;
+    var dossier = dossierCorrespondances(); if (!dossier) return;
+    var f = fichierDans(sousDossier(dossier, "_données"), "index.json");
+    if (!f || f.getSize() === 0) planifierReconstruction(); else cache.put("indexVerifie", "1", 3600);
+  } catch (e) { Logger.log("verifierIndex : " + e); }
+}
+function planifierReconstruction(delaiMs) {
+  var deja = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === "reconstruireIndexAuto"; });
+  if (!deja) ScriptApp.newTrigger("reconstruireIndexAuto").timeBased().after(delaiMs || 5000).create();
+}
+function reconstruireIndexAuto() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === "reconstruireIndexAuto") ScriptApp.deleteTrigger(t); });
+  var r = reconstruireIndex(false);
+  if (r && r.restants > 0) planifierReconstruction(60000); else { try { CacheService.getScriptCache().put("indexVerifie", "1", 3600); } catch (e) {} }
+}
 function reconstruireIndexComplet() { reconstruireIndex(true); }
 function reconstruireIndex(complet) {
-  var dossier = dossierCorrespondances(); if (!dossier) { Logger.log("Dossier des correspondances introuvable."); return; }
+  var dossier = dossierCorrespondances(); if (!dossier) { Logger.log("Dossier des correspondances introuvable."); return null; }
   var donnees = sousDossier(dossier, "_données"), debut = Date.now();
   var f = fichierDans(donnees, "index.json"), lu = f ? lireJsonDe(f) : null, cles = (lu && lu.cles) || {};
   var avant = Object.keys(cles).length, n = 0, sansMd = 0, sautes = 0, restants = 0;
@@ -483,6 +506,7 @@ function reconstruireIndex(complet) {
   var contenu = JSON.stringify({ version: VERSION, misAJour: new Date().toISOString(), cles: cles });
   if (f) f.setContent(contenu); else donnees.createFile("index.json", contenu, "application/json");
   Logger.log("Index reconstruit : " + n + " fichier(s) lus, " + sautes + " déjà indexés, " + Object.keys(cles).length + " clé(s) (" + avant + " avant), " + sansMd + " sans fichier .md" + (restants ? ", " + restants + " restant(s) : relancer reconstruireIndex()." : "."));
+  return { lus: n, cles: Object.keys(cles).length, restants: restants };
 }
 // (copie à l'identique de appsscript-correspondances.gs — garder les deux fichiers synchrones)
 function nomFichierSur(nom) {

@@ -406,9 +406,10 @@ envoyée** (ou « pas de réponse envoyée »). Les fichiers sont régénérés 
 
 ### Index des correspondances : un fichier par compte (relais v20, correspondances v3)
 
-`Correspondances/_données/index.json` est la base, reconstruite à la main (`reconstruireIndex` dans le
-projet du relais, à relancer jusqu'à « 0 restants » : chaque exécution reprend où la précédente s'est
-arrêtée). Chaque compte qui archive écrit ensuite son propre `index-<adresse>.json`, le relais le sien
+`Correspondances/_données/index.json` est la base. S'il manque ou est vide, le relais (v21) le
+reconstruit tout seul en arrière-plan, par un déclencheur ponctuel qui se relance jusqu'à ce que tout
+soit indexé (vérification au plus une fois par heure ; `reconstruireIndex` reste disponible à la main).
+L'adresse du relais ouverte sans paramètre affiche sa version. Chaque compte qui archive écrit ensuite son propre `index-<adresse>.json`, le relais le sien
 (`index-relais.json`) ; à la lecture, tous sont fusionnés et la clé la plus récemment mise à jour
 l'emporte. Plus d'écriture concurrente des trois boîtes sur un même fichier, et un fichier vidé par une
 écriture interrompue (ce qui est arrivé le 27 octobre) est simplement ignoré au lieu de bloquer
