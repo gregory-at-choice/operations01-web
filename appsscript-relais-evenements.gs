@@ -47,7 +47,7 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 19;
+var VERSION = 20;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -423,20 +423,37 @@ function dossierCorrespondances() { var it = DriveApp.getRootFolder().getFolders
 function sousDossier(d, nom) { var it = d.getFoldersByName(nom); return it.hasNext() ? it.next() : d.createFolder(nom); }
 function fichierDans(d, nom) { var it = d.getFilesByName(nom); return it.hasNext() ? it.next() : null; }
 function lireJsonDe(fichier) { try { return JSON.parse(fichier.getBlob().getDataAsString("UTF-8")); } catch (e) { return null; } }
-function lireIndex(donnees) { var f = fichierDans(donnees, "index.json"); var j = f ? lireJsonDe(f) : null; return (j && j.cles) || {}; }
+// Index partagé (relais v20 / correspondances v3) : index.json est la base, reconstruite à la main
+// (reconstruireIndex) ; chaque compte qui écrit tient son propre fichier index-<compte>.json. Plus aucune
+// écriture concurrente sur un même fichier par les trois boîtes. Lecture : fusion de tous les
+// index*.json, la clé la plus récemment mise à jour l'emporte. Un fichier vide ou illisible est ignoré
+// (il ne bloque plus les écritures : avant, un index.json vidé par une écriture interrompue restait vide).
+function fichiersIndex(donnees) {
+  var out = [], it = donnees.getFiles();
+  while (it.hasNext()) { var f = it.next(), n = f.getName(); if (/^index(-.*)?\.json$/i.test(n)) out.push(f); }
+  out.sort(function (a, b) { return a.getName() === "index.json" ? -1 : b.getName() === "index.json" ? 1 : a.getName() < b.getName() ? -1 : 1; });
+  return out;
+}
+function lireIndex(donnees) {
+  var cles = {}, quand = {};
+  fichiersIndex(donnees).forEach(function (f) {
+    var j = lireJsonDe(f); if (!j || typeof j.cles !== "object") return;
+    Object.keys(j.cles).forEach(function (k) {
+      var m = String((j.cles[k] && j.cles[k].misAJour) || "");
+      if (!(k in cles) || m >= String(quand[k] || "")) { cles[k] = j.cles[k]; quand[k] = m; }
+    });
+  });
+  return cles;
+}
 function ecrireIndex(donnees, index) {
-  var f = fichierDans(donnees, "index.json");
-  // Un autre compte a pu écrire entre-temps : on repart de sa version et on y pose nos clés.
-  // Un index présent mais illisible (lecture tronquée, écriture concurrente) n'est JAMAIS écrasé :
-  // on le laisse tel quel, on le signale, et reconstruireIndex() le refait à partir des fichiers.
-  var lu = f ? lireJsonDe(f) : null;
-  if (f && (!lu || typeof lu.cles !== "object")) { Logger.log("index.json présent mais illisible : non réécrit (lancer reconstruireIndex())."); return false; }
-  var actuel = (lu && lu.cles) || {};
+  var nom = nomIndexPerso(), f = fichierDans(donnees, nom);
+  var lu = f ? lireJsonDe(f) : null, actuel = (lu && typeof lu.cles === "object") ? lu.cles : {};
   Object.keys(index).forEach(function (k) { actuel[k] = index[k]; });
-  var contenu = JSON.stringify({ version: VERSION, misAJour: new Date().toISOString(), cles: actuel });
-  if (f) f.setContent(contenu); else donnees.createFile("index.json", contenu, "application/json");
+  var contenu = JSON.stringify({ version: VERSION, compte: nom, misAJour: new Date().toISOString(), cles: actuel });
+  if (f) f.setContent(contenu); else donnees.createFile(nom, contenu, "application/json");
   return true;
 }
+function nomIndexPerso() { return "index-relais.json"; }
 // Reconstruit index.json à partir de tous les fichiers _données/<clé>.json (à lancer à la main une fois,
 // ou après un incident). Les clés déjà présentes et lisibles sont conservées puis mises à jour.
 // Une relance ne relit que les fichiers absents de l'index (reconstruireIndexComplet() relit tout).

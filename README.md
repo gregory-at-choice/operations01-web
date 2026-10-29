@@ -404,6 +404,16 @@ envoyée** (ou « pas de réponse envoyée »). Les fichiers sont régénérés 
   temps, étapes, contre ce qui était proposé) et chaque correction de réponse sont exportées par le
   relais (v5) au Mac mini, qui s'en sert pour apprendre (section 4 du contrat).
 
+### Index des correspondances : un fichier par compte (relais v20, correspondances v3)
+
+`Correspondances/_données/index.json` est la base, reconstruite à la main (`reconstruireIndex` dans le
+projet du relais, à relancer jusqu'à « 0 restants » : chaque exécution reprend où la précédente s'est
+arrêtée). Chaque compte qui archive écrit ensuite son propre `index-<adresse>.json`, le relais le sien
+(`index-relais.json`) ; à la lecture, tous sont fusionnés et la clé la plus récemment mise à jour
+l'emporte. Plus d'écriture concurrente des trois boîtes sur un même fichier, et un fichier vidé par une
+écriture interrompue (ce qui est arrivé le 27 octobre) est simplement ignoré au lieu de bloquer
+l'index.
+
 ## Lire les mails dans l'app (Gmail, lecture seule)
 
 Sur la page d'un message « À traiter », la carte **Message complet** affiche le mail lui-même
