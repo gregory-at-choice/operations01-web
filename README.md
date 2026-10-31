@@ -122,6 +122,14 @@ toutes les 10 minutes, tout `.gs` modifié est poussé, le relais reçoit une no
 déploiement existant, et la version qui répond est vérifiée. Mise en place unique : trois connexions
 `clasp login` (Grégory clique « Autoriser ») et l'API Apps Script activée dans chaque compte.
 
+## Crédits API du forfait Ultra
+
+Le forfait Ultra inclut 200 $ de crédits API par mois (Console liée au forfait). Le contrat, section
+10, fait passer les appels Opus du Mac mini (réponses détaillées, comptes rendus de réunion) sur ces
+crédits avec une clé API dédiée, gardée sur le Mac mini seulement : les fenêtres d'usage de Grégory
+restent libres. Ordre de repli : crédits → forfait → modèle local. Le brief du matin donne le cumul du
+cycle.
+
 ## Économie de ressources (v155, relais v19)
 
 - **App** : le fichier des événements (plusieurs Mo) n'est plus téléchargé que s'il a changé

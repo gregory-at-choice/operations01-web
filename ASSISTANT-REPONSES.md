@@ -186,19 +186,20 @@ résumé d'une phrase), les tâches proposées et les notifications poussées co
 - Les tâches proposées (`tache`, `processus`) et le classement ne changent pas : ils restent
   systématiques et locaux.
 
-### Modèle : Claude Opus 5.5 via mon forfait Claude (Claude Code en mode headless)
+### Modèle : Claude Opus 5.5 via Claude Code en mode headless
 
-La rédaction des réponses se fait avec **Claude Opus 5.5**, facturé sur **mon abonnement Claude**
-(pas de clé API, pas de facturation au jeton), en appelant Claude Code sans interface depuis le
-pipeline. Le modèle local (Ollama) reste chargé du **classement**, des **vecteurs** et de la
+La rédaction des réponses se fait avec **Claude Opus 5.5**, en appelant Claude Code sans interface
+depuis le pipeline. **Depuis le 31/10/2026, les appels à Opus passent par les crédits API du forfait
+Ultra (section 10) ; la connexion au forfait décrite ci-dessous devient le premier repli.** Le modèle local (Ollama) reste chargé du **classement**, des **vecteurs** et de la
 **présélection du contexte** ; il sert aussi de **repli** quand le forfait est épuisé.
 
 Mise en place (une fois, sur le Mac mini, avec le compte Claude Code déjà connecté) :
 
 1. `claude setup-token` → jeton OAuth valable un an, lié à l'abonnement. Le stocker dans le
    trousseau ou un fichier `chmod 600`, et le fournir au pipeline par la variable
-   `CLAUDE_CODE_OAUTH_TOKEN`. Ne **jamais** définir `ANTHROPIC_API_KEY` dans l'environnement du
-   pipeline : en mode `-p`, une clé API présente l'emporte toujours sur le forfait.
+   `CLAUDE_CODE_OAUTH_TOKEN`. En mode `-p`, une clé API présente l'emporte toujours sur le forfait :
+   c'est voulu pour les appels du pipeline (section 10), et c'est pourquoi la clé ne doit jamais être
+   dans l'environnement global du Mac mini, seulement dans la commande du pipeline.
 2. Claude Code ≥ 2.1.280 (Opus 5.5). Vérifier avec `claude --version`.
 3. Lancer chaque génération depuis un dossier **sans** `CLAUDE.md`, hooks ni serveurs MCP (par
    exemple `/Users/choice/assistants/claude-vide/`), pour que rien du contexte de développement ne
@@ -248,8 +249,8 @@ Cadence et journal :
 - Une proposition peut être **régénérée** (nouvel élément de contexte, réponse de ma part arrivée
   entre-temps) : renvoyer l'événement avec un `genereeLe` plus récent, le relais remplace.
 - Journaliser dans `~/Library/Logs/assistants/reponses.log` : id, urgence, sources consultées,
-  durée, modèle (`claude-opus-5-5` ou repli), et le `total_cost_usd` renvoyé (indicatif : avec le
-  forfait il n'est pas facturé).
+  durée, modèle (`claude-opus-5-5` ou repli), la source de facturation (crédits API, forfait,
+  local) et le `total_cost_usd` renvoyé (réel avec la clé API, indicatif avec le forfait).
 
 ## 3. Ce que l'app fait déjà (v119)
 
@@ -469,4 +470,55 @@ deux mails. Règles à appliquer par le Mac mini.
 
 Ce qui ne change pas : la transcription locale (Whisper turbo), le classement local des mails,
 et Claude Opus seulement à la demande et pour le compte rendu des réunions.
+
+## 10. Crédits API du forfait Ultra : Opus payé par les crédits, plus par les fenêtres d'usage
+
+Le forfait Ultra inclut **200 $ de crédits API par mois** sur la Claude Platform (Console), qui
+expirent en fin de cycle sans report. Ils couvrent l'API, l'Agent SDK et `claude -p` **quand l'appel
+est fait avec une clé API de l'organisation Console liée au forfait**. Ils ne couvrent pas Claude
+Code interactif. Objectif : les réponses détaillées et les comptes rendus de réunion ne touchent plus
+aux fenêtres de 5 heures ni au plafond hebdomadaire de Grégory.
+
+**Mise en place (Grégory lie l'organisation et crée la clé ; le Mac mini range la clé).**
+1. La clé est fournie par Grégory via le presse-papiers du Mac mini : la lire avec `pbpaste`, l'écrire
+   dans `~/.assistants/api-key` (`chmod 600`), puis vider le presse-papiers (`pbcopy < /dev/null`).
+   Ne jamais l'afficher, la journaliser, l'exporter ni la mettre dans un dépôt. Ne jamais la définir
+   dans le profil du shell ni dans l'environnement global : **uniquement dans la commande** du
+   pipeline.
+2. Vérifier une fois : un appel court `claude -p "ok" --model claude-haiku-5-5` avec la clé doit
+   réussir et renvoyer un `total_cost_usd` non nul ; la page Cost de la Console le montre.
+
+**Appel type** (remplace celui de la section 2 ; même prompt, mêmes options) :
+
+```bash
+cd /Users/choice/assistants/claude-vide && env -u CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY="$(cat ~/.assistants/api-key)" \
+  claude -p "$(cat /tmp/prompt-$ID.md)" --model claude-opus-5-5 --effort xhigh \
+    --tools "" --disallowedTools "mcp__*" --system-prompt-file … --output-format json --json-schema … \
+    --no-session-persistence
+```
+
+**Périmètre.** Avec la clé : réponses détaillées (Opus, xhigh), comptes rendus de réunion (Opus,
+high), et tout autre appel à un modèle Claude du pipeline (notes de lecture du New York Times si un
+modèle Claude y participe). Toujours en local et gratuits : classement, vecteurs, transcription
+Whisper, résumés de notes vocales.
+
+**Ordre de repli.**
+1. Clé API (crédits). Erreur « credit balance is too low » (HTTP 400, facturation) ou crédits à 0 →
+2. Connexion au forfait (`CLAUDE_CODE_OAUTH_TOKEN`, sans `ANTHROPIC_API_KEY`), règles de la section 2 →
+3. Modèle local, `genereePar: "qwen3:8b (repli)"`, événement remis en file pour régénération.
+Une erreur 429 (limite de débit) avec la clé : attendre la durée indiquée par `retry-after` et
+réessayer une fois, sans changer de source. `genereePar` indique la source : `"claude-opus-5-5
+(extra, crédits API)"` ou `"claude-opus-5-5 (extra, forfait)"`.
+
+**Suivi des dépenses.**
+- Cumuler `total_cost_usd` par cycle dans `~/.assistants/couts.json` (date de début du cycle = date
+  de renouvellement du forfait, indiquée par Grégory ; à défaut le 1er du mois).
+- Le brief du matin indique « Crédits API : 37,20 $ utilisés sur 200 $, cycle jusqu'au JJ/MM ».
+- Notification poussée à 80 % (« Crédits API : 160 $ utilisés, repli sur le forfait au-delà de 200 $ »)
+  et au passage sur le repli.
+- Ne jamais acheter de crédits ni activer la recharge automatique : au-delà des 200 $, c'est le
+  forfait puis le local.
+
+**Sécurité.** Si la clé fuit ou se retrouve dans un journal : la désactiver immédiatement dans la
+Console (Paramètres → Clés API) et le dire à Grégory, qui en crée une autre.
 
