@@ -47,7 +47,7 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 22;
+var VERSION = 23;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
@@ -124,7 +124,7 @@ function lireAudio(id) {
 // Fichiers audio du dossier (ceux de l'app et ceux déposés depuis Dictaphone ou l'app Drive) : le Mac mini
 // transcrit ceux qui ne figurent ni dans data.recordings (fileId) ni dans les transcriptions (id "drive:<fileId>").
 function listerAudios() {
-  var it = DriveApp.getRootFolder().getFoldersByName(DOSSIER_ENREGISTREMENTS);
+  var dEnr = dossierNomme(DOSSIER_ENREGISTREMENTS), it = { hasNext: function () { return !!dEnr; }, next: function () { var d = dEnr; dEnr = null; return d; } };
   if (!it.hasNext()) return { ok: true, dossier: null, fichiers: [] };
   var d = it.next(), files = d.getFiles(), out = [];
   while (files.hasNext()) {
@@ -139,8 +139,7 @@ function listerAudios() {
 // Grégory puisse l'écouter depuis l'app (« Écouter sur le Drive »). Base64, 45 Mo au plus par appel.
 function posterAudio(corps) {
   if (!corps.base64 || !corps.nom) return reponse({ ok: false, erreur: "nom et base64 requis" });
-  var it = DriveApp.getRootFolder().getFoldersByName(DOSSIER_ENREGISTREMENTS);
-  var d = it.hasNext() ? it.next() : DriveApp.getRootFolder().createFolder(DOSSIER_ENREGISTREMENTS);
+  var d = dossierNomme(DOSSIER_ENREGISTREMENTS) || DriveApp.getRootFolder().createFolder(DOSSIER_ENREGISTREMENTS);
   var octets; try { octets = Utilities.base64Decode(corps.base64); } catch (e) { return reponse({ ok: false, erreur: "base64 invalide" }); }
   if (octets.length > AUDIO_MAX_OCTETS) return reponse({ ok: false, erreur: "fichier trop volumineux" });
   var deja = d.getFilesByName(corps.nom);
@@ -422,7 +421,10 @@ function mesCles(contacts) {
   Object.keys(contacts || {}).forEach(function (k) { if (out[contacts[k].cle]) out[k] = true; });
   return out;
 }
-function dossierCorrespondances() { var it = DriveApp.getRootFolder().getFoldersByName(DOSSIER_CORRESPONDANCES); return it.hasNext() ? it.next() : null; }
+// v23 : les dossiers de l'app (Correspondances, Enregistrements choice) peuvent être rangés n'importe où dans
+// le Drive (par exemple sous soft/choice) : on les cherche par leur nom, hors corbeille.
+function dossierNomme(nom) { var it = DriveApp.getFoldersByName(nom); while (it.hasNext()) { var d = it.next(); if (!d.isTrashed()) return d; } return null; }
+function dossierCorrespondances() { return dossierNomme(DOSSIER_CORRESPONDANCES); }
 function sousDossier(d, nom) { var it = d.getFoldersByName(nom); return it.hasNext() ? it.next() : d.createFolder(nom); }
 function fichierDans(d, nom) { var it = d.getFilesByName(nom); return it.hasNext() ? it.next() : null; }
 function lireJsonDe(fichier) { try { return JSON.parse(fichier.getBlob().getDataAsString("UTF-8")); } catch (e) { return null; } }

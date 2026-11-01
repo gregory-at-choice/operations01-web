@@ -37,7 +37,7 @@
  * EXTRAIT_CARACTERES caractères du dernier message (0 pour ne rien extraire).
  */
 
-var VERSION = 1;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
+var VERSION = 2;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
 var FICHIER_MAILS_ID = "";        // vide = boîte principale (fichier trouvé par son nom)
 var DATA_FILE = "operations01-data.json";
 var MAILS_FILE = "operations01-mails.json";
@@ -188,6 +188,7 @@ function analyserMails() {
   if (!FICHIER_MAILS_ID) { try { rangerJournaux(data); } catch (e) { Logger.log("Rangement des journaux impossible : " + e); } }
   Logger.log(unread.length + " non lus, " + relance.length + " à relancer, " + nouveau.length + " nouveaux, " + rdvPrep.length + " RDV, " + threads.length + " fils indexés (" + relus + " relus" + (complet ? ", index complet" : "") + ").");
   try { rangerFichiersJson(); } catch (e) { Logger.log("Rangement des JSON impossible : " + e); }
+  if (!FICHIER_MAILS_ID) { try { rangerFichiersApp(45000); } catch (e) { Logger.log("Rangement des fichiers de l'app impossible : " + e); } }
 }
 
 // Range dans DOSSIER_JSON tous les fichiers « operations01-*.json » que possède ce
@@ -208,6 +209,33 @@ function rangerFichiersJson() {
   }
   if (n) Logger.log(n + " fichier(s) JSON rangé(s) dans « " + DOSSIER_JSON + " ».");
   try { nettoyerCopies(60000); } catch (e) { Logger.log("Nettoyage des copies impossible : " + e); }
+}
+// v2 : plus rien de l'app ne traîne à la racine du Drive. Tout ce qu'elle crée à la racine (portée drive.file :
+// elle ne peut créer qu'à la racine) est rangé à chaque passage dans DOSSIER_APP : documents du lecteur
+// (operations01-doc-*, operations01-pdf-*) → Documents ; projets Apps Script « Operations01 … » → Scripts ;
+// journaux de bord restés à la racine plus de 20 minutes sans dossier choisi → Journaux (rangerJournaux les
+// déplace ensuite dans le dossier choisi). Les fichiers de Grégory ne sont jamais touchés.
+var DOSSIER_APP = "soft/choice";
+function rangerFichiersApp(budgetMs) {
+  if (FICHIER_MAILS_ID || !DOSSIER_APP) return;
+  var debut = Date.now(), racine = DriveApp.getRootFolder(), racineId = racine.getId(), n = 0;
+  var estRacine = function (f) { var p = f.getParents(); return p.hasNext() && p.next().getId() === racineId; };
+  var cibles = [
+    { it: DriveApp.searchFiles("(title contains 'operations01-doc-' or title contains 'operations01-pdf-') and trashed = false and 'me' in owners"), test: function (nom) { return /^operations01-(doc|pdf)-/.test(nom); }, sous: "Documents" },
+    { it: racine.getFilesByType(MimeType.GOOGLE_APPS_SCRIPT), test: function (nom) { return /^Operations01/i.test(nom); }, sous: "Scripts" },
+    { it: racine.searchFiles("title contains 'Journal de bord' and trashed = false and 'me' in owners"), test: function (nom) { return /^Journal de bord/.test(nom); }, sous: "Journaux", ageMin: 20 }
+  ];
+  cibles.forEach(function (c) {
+    var dossier = null;
+    while (c.it.hasNext() && Date.now() - debut < (budgetMs || 60000)) {
+      var f = c.it.next();
+      if (!c.test(f.getName()) || !estRacine(f)) continue;
+      if (c.ageMin && Date.now() - f.getDateCreated().getTime() < c.ageMin * 60000) continue;
+      dossier = dossier || dossierParChemin(DOSSIER_APP + "/" + c.sous);
+      f.moveTo(dossier); n++;
+    }
+  });
+  if (n) Logger.log(n + " fichier(s) de l'app rangé(s) dans « " + DOSSIER_APP + " ».");
 }
 // Copies de sûreté conservées : les plus récentes seulement, le reste part à la corbeille (récupérable 30 jours).
 var GARDER_CONFLITS = 20;         // copies « operations01-conflit-… » (deux versions avant une fusion entre appareils)

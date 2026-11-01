@@ -51,7 +51,7 @@ var MAX_FILS_PAR_PASSAGE = 60;         // historique : fils relus par passage (q
 var MAX_FILS_RECENTS = 150;            // fils ayant bougé depuis le dernier passage
 var MAX_CARACTERES = 4000;             // longueur maximale conservée par message
 var DUREE_MAX_MS = 4.5 * 60 * 1000;    // garde-fou : Apps Script coupe à 6 minutes
-var VERSION = 3;
+var VERSION = 4;
 
 var MOI = "";          // adresse du compte courant
 var MES_ADRESSES = {}; // adresse → true (compte + alias)
@@ -387,8 +387,10 @@ function dossierCorrespondances() {
     try { return DriveApp.getFolderById(DOSSIER_CORRESPONDANCES_ID); }
     catch (e) { Logger.log("Dossier introuvable : vérifiez DOSSIER_CORRESPONDANCES_ID et que la boîte principale l'a partagé avec ce compte."); return null; }
   }
-  var racine = DriveApp.getRootFolder(), it = racine.getFoldersByName(DOSSIER_NOM);
-  var d = it.hasNext() ? it.next() : racine.createFolder(DOSSIER_NOM);
+  // v4 : le dossier peut être rangé n'importe où (soft/choice) : cherché par son nom, hors corbeille.
+  var racine = DriveApp.getRootFolder(), it = DriveApp.getFoldersByName(DOSSIER_NOM), d = null;
+  while (it.hasNext()) { var cand = it.next(); if (!cand.isTrashed()) { d = cand; break; } }
+  if (!d) d = racine.createFolder(DOSSIER_NOM);
   partagerAvecBoitesSecondaires(d);
   return d;
 }

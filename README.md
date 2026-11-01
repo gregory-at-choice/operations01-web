@@ -146,6 +146,16 @@ jamais des réglages existants. Si le compteur a été remis à zéro avant la c
 ressaisir le mois de départ et le solde initial dans Congés → réglages : l'historique des temps est
 intact, le solde se recalcule.
 
+## Rangement du Drive : plus rien de l'app à la racine
+
+L'app ne peut créer ses fichiers qu'à la racine du Drive (portée `drive.file`). Le script des mails
+(v2) range à chaque passage, dans `soft/choice/`, tout ce qui vient de l'app : `Documents/` (documents du
+lecteur `operations01-doc-*` et `operations01-pdf-*`), `Scripts/` (projets Apps Script « Operations01 … »),
+`Journaux/` (journaux de bord restés à la racine plus de 20 minutes sans dossier choisi ; ils rejoignent
+ensuite le dossier choisi). Les dossiers `Correspondances`, `Enregistrements choice` et `Justificatifs
+choice` peuvent être déplacés dans `soft/choice/` : relais v23, correspondances v4 et banque les
+retrouvent par leur nom où qu'ils soient. Les fichiers de Grégory ne sont jamais déplacés.
+
 ## Économie de ressources (v155, relais v19)
 
 - **App** : le fichier des événements (plusieurs Mo) n'est plus téléchargé que s'il a changé
