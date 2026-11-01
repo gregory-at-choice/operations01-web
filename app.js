@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v159";
+const APP_VERSION = "v160";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -6646,7 +6646,7 @@ function renderTimeProject(r) {
         ${e.content ? `<div class="muted" style="font-size:12px;white-space:pre-wrap">${esc(String(e.content).slice(0, 300))}${String(e.content).length > 300 ? "…" : ""}</div>` : ""}
         ${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener" style="font-size:12px">${icon("external")} lien</a>` : ""}</div>
       <span class="timer tm-val">${fmtDuration(s)}</span></div>`;
-  return `<button class="back" data-time-back>‹ ${r.kind === "mois" ? "Mois" : "Semaine"}</button>
+  return `<button class="back" data-time-back>‹ ${r.kind === "mois" ? "Mois" : r.kind === "annee" ? "Année" : "Semaine"}</button>
     <div class="card"><div class="inline"><strong class="grow">${esc(m.title || "Sans titre")}</strong><span class="timer" style="color:var(--primary);font-size:19px">${fmtDuration(total)}</span></div>
       <div class="muted" style="font-size:13px;margin-top:4px;text-transform:capitalize">${esc(r.label)}</div>
       <div style="margin-top:8px"><button class="btn ghost small" data-open-mission="${m.id}">Ouvrir le projet</button></div></div>
@@ -6657,6 +6657,10 @@ const iso = localISO;
 // Renvoie la période courante : bornes, libellé, et si elle contient aujourd'hui.
 function timeRange() {
   const ref = new Date(timeRef + "T12:00:00");
+  if (timeTab === "annee") {   // v160 : année civile
+    const start = new Date(ref.getFullYear(), 0, 1), end = new Date(ref.getFullYear() + 1, 0, 1);
+    return { start, end, label: String(ref.getFullYear()), sub: "Année civile · janvier → décembre", kind: "annee" };
+  }
   if (timeTab === "mois") {
     const start = new Date(ref.getFullYear(), ref.getMonth(), 1);
     const end = new Date(ref.getFullYear(), ref.getMonth() + 1, 1);
@@ -6823,7 +6827,7 @@ function leaveAdjust() {
 function renderTime() {
   const r = timeRange();
   const { total, per } = timeBreakdown(r.start, r.end);
-  const tabs = [["semaine", "Semaine"], ["mois", "Mois"], ["conges", "Congés"]]
+  const tabs = [["semaine", "Semaine"], ["mois", "Mois"], ["annee", "Année"], ["conges", "Congés"]]
     .map(([id, lbl]) => `<button class="chip ${timeTab === id ? "active" : ""}" data-ttab="${id}">${lbl}</button>`).join("");
   if (timeTab === "conges") {
     return `<div class="toolbar"><div class="page-title grow" style="margin:0">Temps</div></div>
@@ -6843,7 +6847,22 @@ function renderTime() {
       ws.length ? ws.map((w) => `<div class="tm-row"><span class="tm-name">${esc(fmtDate(iso(w.from)))} → ${esc(fmtDate(iso(new Date(w.to - 86400000))))}</span>${bar(w.total)}<span class="timer tm-val">${fmtDuration(w.total)}</span></div>`).join("")
         : '<div class="muted">—</div>'}</div>`;
   }
-  const moyenne = r.kind === "mois" && per.length
+  // v160 : vue annuelle, projets × mois (heures) et courbe des mois.
+  let yearly = "";
+  if (r.kind === "annee") {
+    const y = r.start.getFullYear();
+    const months = Array.from({ length: 12 }, (_, i) => ({ i, start: new Date(y, i, 1), end: new Date(y, i + 1, 1), short: new Date(y, i, 1).toLocaleDateString("fr-FR", { month: "short" }).replace(".", "") }));
+    const perMonth = months.map((mo) => timeBreakdown(mo.start, mo.end));
+    const hrs = (sec) => sec > 0 ? (sec / 3600).toFixed(1).replace(".", ",").replace(/,0$/, "") : "";
+    const body = per.map((p) => { const cells = perMonth.map((pm) => { const x = pm.per.find((q) => q.id === p.id); return `<td class="num">${hrs(x ? x.s : 0)}</td>`; }).join(""); return `<tr><th class="tm-mx-name"><span class="tm-click" data-time-project="${p.id}" title="Détail jour par jour">${esc(p.title)}</span></th>${cells}<td class="num tm-mx-total">${hrs(p.s)}</td></tr>`; }).join("");
+    const foot = `<tr class="tm-mx-foot"><th class="tm-mx-name">Total</th>${perMonth.map((pm) => `<td class="num">${hrs(pm.total)}</td>`).join("")}<td class="num tm-mx-total">${hrs(total)}</td></tr>`;
+    const chart = svgBarChart(months.map((mo, i) => ({ label: mo.short, value: Math.round(perMonth[i].total / 360) / 10 })), { color: "#18c1d8" });
+    const nbMois = perMonth.filter((pm) => pm.total > 0).length;
+    yearly = `<div class="section-h">Par mois <span class="muted">(heures${nbMois ? ` · moyenne ${fmtDuration(total / nbMois)} sur ${nbMois} mois actif${nbMois > 1 ? "s" : ""}` : ""})</span></div><div class="card">${chart}</div>
+      <div class="section-h">Projets × mois <span class="muted">(heures)</span></div>
+      <div class="card tm-mx-wrap"><table class="tm-mx"><thead><tr><th class="tm-mx-name">Projet</th>${months.map((mo) => `<th class="num">${esc(mo.short)}</th>`).join("")}<th class="num tm-mx-total">Année</th></tr></thead><tbody>${body || `<tr><td colspan="14" class="muted" style="text-align:center;padding:14px">Aucun temps cette année.</td></tr>`}</tbody>${per.length ? `<tfoot>${foot}</tfoot>` : ""}</table></div>`;
+  }
+  const moyenne = (r.kind === "mois" || r.kind === "annee") && per.length
     ? `<div class="muted" style="font-size:12px;margin-top:6px">${per.length} projet(s) · moyenne ${fmtDuration(total / per.length)} par projet</div>` : "";
   const head = `<div class="toolbar"><div class="page-title grow" style="margin:0">Temps</div>
       <button class="btn secondary small" data-export-temps-csv>${icon("download")} CSV</button>
@@ -6855,10 +6874,11 @@ function renderTime() {
         <div class="muted" style="font-size:13px">${esc(r.sub)}</div>
         <strong style="text-transform:capitalize">${esc(r.label)}</strong></div>
       <button class="btn ghost small" data-time-nav="1" title="Période suivante">›</button>
-      <button class="btn secondary small" data-time-now>${r.kind === "mois" ? "Ce mois" : "Cette semaine"}</button></div>`;
+      <button class="btn secondary small" data-time-now>${r.kind === "mois" ? "Ce mois" : r.kind === "annee" ? "Cette année" : "Cette semaine"}</button></div>`;
   if (timeProject) { const det = renderTimeProject(r); if (det) return head + det; }
   return head + `<div class="card"><div class="inline"><strong class="grow">Temps total</strong>
       <span class="timer" style="color:var(--primary);font-size:19px">${fmtDuration(total)}</span></div>${moyenne}</div>
+    ${yearly}
     <div class="section-h">Par projet</div><div class="card">${rows}</div>
     ${weekly}`;
 }
@@ -8079,7 +8099,7 @@ function wire() {
   tNav.forEach((b) => b.onclick = () => {
     const step = Number(b.dataset.timeNav);
     const d = new Date(timeRef + "T12:00:00");
-    if (timeTab === "mois") d.setMonth(d.getMonth() + step); else d.setDate(d.getDate() + 7 * step);
+    if (timeTab === "annee") d.setFullYear(d.getFullYear() + step); else if (timeTab === "mois") d.setMonth(d.getMonth() + step); else d.setDate(d.getDate() + 7 * step);
     timeRef = iso(d); render();
   });
   const tNow = c.querySelector("[data-time-now]"); if (tNow) tNow.onclick = () => { timeRef = todayISO(); render(); };
@@ -9137,10 +9157,20 @@ function exportFacturesCSV() {
 function exportTempsCSV() {
   const r = timeRange();
   const { total, per } = timeBreakdown(r.start, r.end);
-  const H = ["Projet", "Heures", "Durée"];
-  const rows = per.map((p) => [p.title, (p.s / 3600).toFixed(2).replace(".", ","), fmtDuration(p.s)]);
-  rows.push(["TOTAL", (total / 3600).toFixed(2).replace(".", ","), fmtDuration(total)]);
-  const entete = [[r.kind === "mois" ? "Mois" : "Semaine", r.label, ""]];
+  const h2 = (sec) => (sec / 3600).toFixed(2).replace(".", ",");
+  let H = ["Projet", "Heures", "Durée"], rows, entete;
+  if (r.kind === "annee") {
+    const y = r.start.getFullYear(), months = Array.from({ length: 12 }, (_, i) => new Date(y, i, 1).toLocaleDateString("fr-FR", { month: "short" }));
+    const pm = Array.from({ length: 12 }, (_, i) => timeBreakdown(new Date(y, i, 1), new Date(y, i + 1, 1)));
+    H = ["Projet"].concat(months, ["Heures", "Durée"]);
+    rows = per.map((p) => [p.title].concat(pm.map((x) => { const q = x.per.find((z) => z.id === p.id); return h2(q ? q.s : 0); }), [h2(p.s), fmtDuration(p.s)]));
+    rows.push(["TOTAL"].concat(pm.map((x) => h2(x.total)), [h2(total), fmtDuration(total)]));
+    entete = [["Année", r.label].concat(Array(H.length - 2).fill(""))];
+  } else {
+    rows = per.map((p) => [p.title, h2(p.s), fmtDuration(p.s)]);
+    rows.push(["TOTAL", h2(total), fmtDuration(total)]);
+    entete = [[r.kind === "mois" ? "Mois" : "Semaine", r.label, ""]];
+  }
   const csv = "\ufeff" + [...entete, [], H, ...rows].map((x) => x.map(csvCell).join(";")).join("\r\n");
   downloadFile(`operations01-temps-${r.kind}.csv`, csv, "text/csv;charset=utf-8");
 }

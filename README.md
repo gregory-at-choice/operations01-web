@@ -130,6 +130,13 @@ crédits avec une clé API dédiée, gardée sur le Mac mini seulement : les fen
 restent libres. Ordre de repli : crédits → forfait → modèle local. Le brief du matin donne le cumul du
 cycle.
 
+## Temps : vue annuelle par projet (v160)
+
+Temps → **Année** : total de l'année civile, courbe des heures par mois, et tableau **projets × mois**
+en heures avec le total par projet et par mois (colonne de gauche figée, défilement horizontal sur
+téléphone). Un clic sur un projet ouvre son détail jour par jour sur l'année ; ‹ › changent d'année,
+« Cette année » revient à l'année en cours. L'export CSV de cette vue a une colonne par mois.
+
 ## Congés : le compteur ne repart plus de zéro (v159)
 
 Jusqu'à la v158, un appareil ou un profil de navigateur ouvert pour la première fois écrasait les

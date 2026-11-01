@@ -912,3 +912,14 @@ label.field.inline-check > span { margin-bottom: 0; }
 .jn-more[open] summary::after { content: " · replier"; }
 .jn-md { white-space: normal; padding: 6px 0 0; background: transparent; font-size: 13px; }
 .jn-md ul { padding-left: 18px; margin: 4px 0; }
+
+/* v160 : Temps → Année, tableau projets × mois */
+.tm-mx-wrap { overflow-x: auto; padding: 6px 8px; }
+.tm-mx { border-collapse: collapse; font-size: 12px; white-space: nowrap; width: 100%; }
+.tm-mx th, .tm-mx td { padding: 5px 7px; border-bottom: 1px solid var(--line); }
+.tm-mx thead th { font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+.tm-mx .num { text-align: right; font-variant-numeric: tabular-nums; }
+.tm-mx .tm-mx-name { text-align: left; position: sticky; left: 0; background: var(--card, #fff); font-weight: 500; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.tm-mx .tm-mx-total { font-weight: 700; }
+.tm-mx tfoot .tm-mx-foot th, .tm-mx tfoot .tm-mx-foot td { font-weight: 700; border-top: 2px solid var(--line); border-bottom: 0; }
+.tm-mx .tm-click { cursor: pointer; }
