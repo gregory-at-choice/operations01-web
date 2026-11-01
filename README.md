@@ -130,6 +130,15 @@ crédits avec une clé API dédiée, gardée sur le Mac mini seulement : les fen
 restent libres. Ordre de repli : crédits → forfait → modèle local. Le brief du matin donne le cumul du
 cycle.
 
+## Congés : le compteur ne repart plus de zéro (v159)
+
+Jusqu'à la v158, un appareil ou un profil de navigateur ouvert pour la première fois écrasait les
+réglages des congés (mois de départ, solde initial) par ses valeurs par défaut : mois courant et
+solde 0. Le solde affiché repartait alors de zéro. Depuis la v159, des réglages par défaut n'écrasent
+jamais des réglages existants. Si le compteur a été remis à zéro avant la correction, il suffit de
+ressaisir le mois de départ et le solde initial dans Congés → réglages : l'historique des temps est
+intact, le solde se recalcule.
+
 ## Économie de ressources (v155, relais v19)
 
 - **App** : le fichier des événements (plusieurs Mo) n'est plus téléchargé que s'il a changé

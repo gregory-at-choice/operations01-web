@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v158";
+const APP_VERSION = "v159";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -210,7 +210,13 @@ function mergeStates(base, local, remote) {
   SYNC_COLLECTIONS.forEach((k) => { out[k] = mergeList(base[k], local[k], remote[k], ctx, k, SYNC_NESTED[k]); });
   SYNC_MAPS.forEach((k) => { out[k] = mergeMap(base[k], local[k], remote[k]); });
   // Congés : réglages = côté modifié (local prioritaire), ajustements fusionnés.
-  const lv = Object.assign({}, remote.leave || {}, JSON.stringify(local.leave) !== JSON.stringify(base.leave) ? (local.leave || {}) : {});
+  // v159 : un appareil neuf (réglages par défaut, mois de départ = mois courant, solde 0) n'écrase
+  // jamais des réglages existants : c'est ce qui remettait le compteur de congés à zéro à chaque
+  // nouvel appareil ou nouveau profil de navigateur.
+  const leaveDefaultLike = (lv) => !lv || ((Number(lv.initialBalance) || 0) === 0 && !(lv.adjustments || []).length && (lv.monthlyCredit == null || Number(lv.monthlyCredit) === 20) && (lv.weeklyQuota == null || Number(lv.weeklyQuota) === 40) && (lv.hoursPerDay == null || Number(lv.hoursPerDay) === 8));
+  const localTouched = base.leave ? JSON.stringify(local.leave) !== JSON.stringify(base.leave) : !leaveDefaultLike(local.leave);
+  const localWins = localTouched && !(leaveDefaultLike(local.leave) && remote.leave && !leaveDefaultLike(remote.leave));
+  const lv = Object.assign({}, remote.leave || {}, localWins ? (local.leave || {}) : {});
   lv.adjustments = mergeList((base.leave || {}).adjustments, (local.leave || {}).adjustments, (remote.leave || {}).adjustments, ctx, "adjustments");
   out.leave = lv;
   ["readerOrder", "readerCurrent", "pdfOrder", "pdfCurrent"].forEach((k) => {
