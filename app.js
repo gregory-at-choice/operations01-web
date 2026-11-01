@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v156";
+const APP_VERSION = "v157";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -4060,30 +4060,54 @@ function parseTaskDate(v) {
   return "";
 }
 // Colonne reconnue à partir de son en-tête (sans accents ni casse).
+// v157 : colonnes d'un plan de projet complet (ID, type, phase, responsable, durée en minutes, dates de
+// début et de fin, dépendances par ID, livrable, statut, étiquettes), en plus du tableau de suivi simple.
 function taskColumn(header) {
-  const h = noAccents(header);
-  if (/^section/.test(h)) return "section";
-  if (/^tache|^titre|^intitule|^task/.test(h)) return "title";
-  if (/en charge|responsable|assign|qui$/.test(h)) return "assignee";
-  if (/date limite|echeance|deadline|date d/.test(h)) return "dueDate";
+  const h = noAccents(header).replace(/[_\-]+/g, " ").trim();
+  if (/^(id|cle|clef|ref|reference|key|identifiant)$/.test(h)) return "extKey";
+  if (/^type/.test(h)) return "type";
+  if (/^epic/.test(h)) return "epic";
+  if (/^(section|phase|lot|etape|sprint)/.test(h)) return "section";
+  if (/^tache|^titre|^intitule|^task|^nom$|^libelle/.test(h)) return "title";
+  if (/en charge|responsable|assign|qui$|owner/.test(h)) return "assignee";
+  if (/depend|predecesseur|bloque par|blocked/.test(h)) return "dependsOn";
+  if (/livrable|deliverable|resultat attendu/.test(h)) return "deliverable";
+  if (/^statut|^status|^etat/.test(h)) return "status";
+  if (/label|etiquette|^tags?$/.test(h)) return "labels";
+  if (/priorite|priority/.test(h)) return "priority";
+  if (/date limite|echeance|deadline|date de fin|date fin|^fin$|^due/.test(h)) return "dueDate";
+  if (/date de debut|date debut|^debut$|^start|commence/.test(h)) return "startDate";
   if (/avancement|progress|%/.test(h)) return "progress";
   if (/remarque|detail|precision/.test(h)) return "remark";
-  if (/communication|note|commentaire/.test(h)) return "notes";
+  if (/communication|note|commentaire|description/.test(h)) return "notes";
+  if (/sec(onde)?s?\b/.test(h) && /duree|temps/.test(h)) return null;   // durée en secondes : redondante avec les minutes
+  if (/estimation|minutes?|^min$|duree min|temps min/.test(h)) return "estimationMin";
   if (/temps|duree|jours/.test(h)) return "durationDays";
   return null;
 }
+const IMPORT_ME = /^(moi|me|gregory|gregory arbia|g arbia|greg)$/;
+function importStatus(v) { const h = noAccents(v); if (/termin|fait|done|clos|close|fini/.test(h)) return "termine"; if (/en cours|progress|doing/.test(h)) return "enCours"; if (/attente|bloqu|wait|hold/.test(h)) return "enAttente"; return "aFaire"; }
+function importPriority(v) { const h = noAccents(v); if (/haut|high|urgent|^1$|^p1$/.test(h)) return "haute"; if (/bas|low|^3$|^p3$/.test(h)) return "basse"; return "moyenne"; }
 // Normalise une ligne (JSON ou CSV déjà mappée) en tâche du projet.
 function normImportedTask(m, r) {
   const t = {
-    id: uid(), title: String(r.title || "").trim(), status: "aFaire", missionId: m.id,
+    id: uid(), title: String(r.title || "").trim(), status: r.status ? importStatus(r.status) : "aFaire", missionId: m.id,
     section: String(r.section || "").trim(), assignee: String(r.assignee || "").trim(),
-    progress: 0, origin: "import", dueDate: parseTaskDate(r.dueDate), createdAt: Date.now()
+    progress: 0, origin: "import", dueDate: parseTaskDate(r.dueDate), createdAt: Date.now(), priority: r.priority ? importPriority(r.priority) : "moyenne", labels: []
   };
   if (!t.title) return null;
+  if (IMPORT_ME.test(noAccents(t.assignee))) t.assignee = "";   // moi : vide dans l'app
+  const sd = parseTaskDate(r.startDate); if (sd) t.startDate = sd;
+  const est = Number(String(r.estimationMin == null ? "" : r.estimationMin).replace(",", ".")); if (isFinite(est) && est > 0) t.estimationMin = Math.round(est);
+  const ty = noAccents(r.type || ""); t.type = /jalon|milestone/.test(ty) || /^jalon\b/i.test(t.title) ? "jalon" : /bug|anomalie|defaut/.test(ty) ? "bug" : "tache";
+  if (r.labels) t.labels = String(r.labels).split(/[;,|]/).map((x) => x.trim()).filter(Boolean);
+  if (r.epic && !t.labels.length) t.labels.push(String(r.epic).trim());   // l'epic sert d'étiquette à défaut d'étiquettes
+  if (r.extKey) { t.importKey = String(r.extKey).trim(); t._dependsOn = String(r.dependsOn || "").split(/[;,|]/).map((x) => x.trim()).filter(Boolean); }
+  const deliverable = String(r.deliverable || "").trim(); if (deliverable) t.notes = "Livrable : " + deliverable;
   const remark = String(r.remark || "").trim();
   if (remark) t.title += " · " + remark;
   const notes = String(r.notes || "").trim();
-  if (notes) t.notes = notes;
+  if (notes) t.notes = t.notes ? t.notes + "\n" + notes : notes;
   // « Temps de réalisation » : un nombre de jours, ou parfois une date (fin de
   // tâche saisie dans cette colonne) qui sert alors d'échéance.
   const dur = r.durationDays;
@@ -4113,20 +4137,28 @@ function importTasksInto(m, text, fileName) {
     if (cols.indexOf("title") === -1) throw new Error("Aucune colonne « Tâche » trouvée dans l'en-tête.");
     rows = lines.slice(1).map((cells) => { const r = {}; cols.forEach((c, i) => { if (c && cells[i] != null && cells[i] !== "") r[c] = cells[i]; }); return r; });
   }
-  const existing = {};
-  projectTasks(m).forEach((t) => { existing[(t.section || "") + "|" + (t.title || "") + "|" + (t.dueDate || "")] = 1; });
+  const existing = {}, byKey = {};
+  projectTasks(m).forEach((t) => { existing[(t.section || "") + "|" + (t.title || "") + "|" + (t.dueDate || "")] = 1; if (t.importKey) byKey[t.importKey] = t; });
   m.sections = m.sections || [];
-  let added = 0, skipped = 0;
+  let added = 0, skipped = 0; const created = [];
   rows.forEach((r) => {
     const t = normImportedTask(m, r);
     if (!t) return;
     const key = t.section + "|" + t.title + "|" + t.dueDate;
-    if (existing[key]) { skipped++; return; }
-    existing[key] = 1;
+    if (existing[key] || (t.importKey && byKey[t.importKey])) { skipped++; return; }
+    existing[key] = 1; if (t.importKey) byKey[t.importKey] = t;
     if (t.section && m.sections.indexOf(t.section) === -1) m.sections.push(t.section);
-    state.tasks.push(t); added++;
+    state.tasks.push(t); created.push(t); added++;
   });
-  return { added, skipped };
+  // Dépendances par identifiant du fichier (« Depend_de : INT-0.5;INT-0.6 ») → « bloquée par ».
+  let liens = 0;
+  created.forEach((t) => {
+    const deps = t._dependsOn || []; delete t._dependsOn;
+    const ids = deps.map((k) => byKey[k]).filter((d) => d && d.id !== t.id).map((d) => d.id);
+    if (ids.length) { t.blockedBy = ids.filter((x, i, a) => a.indexOf(x) === i); liens += t.blockedBy.length; }
+  });
+  ensureTaskKeys();
+  return { added, skipped, liens };
 }
 function importTasksClick(mid) {
   const m = findMission(mid); if (!m) return;
@@ -4139,7 +4171,7 @@ function importTasksClick(mid) {
       try {
         const res = importTasksInto(m, String(r.result), f.name);
         save(); render();
-        toast(`${res.added} tâche(s) ajoutée(s)${res.skipped ? ` · ${res.skipped} déjà présente(s)` : ""}`);
+        toast(`${res.added} tâche(s) ajoutée(s)${res.liens ? ` · ${res.liens} dépendance(s)` : ""}${res.skipped ? ` · ${res.skipped} déjà présente(s)` : ""}`);
       } catch (e) { alert("Import impossible : " + e.message); }
     };
     r.readAsText(f);

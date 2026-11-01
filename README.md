@@ -300,6 +300,14 @@ recherche (clé, intitulé, notes), projet, priorité, étiquette, personne.
 - **Partager** : depuis la fiche d'une tâche (« Partager ») ou la chronologie d'un projet (« Partager
   le planning »), un texte brut à copier, envoyer par mail ou via la feuille de partage de l'appareil.
 
+**Importer un plan de projet complet (v157).** Projet → Gestion de projet → « Importer » accepte,
+en plus du tableau de suivi simple, un CSV de plan : `ID`, `Type` (Tâche / Jalon / Anomalie),
+`Epic`, `Phase` (→ section), `Tache`, `Responsable` (« Gregory » ou « Moi » → moi), `Duree_minutes`
+(→ estimation), `Date_debut`, `Date_fin` (→ échéance), `Depend_de` (IDs séparés par « ; » → « bloquée
+par »), `Livrable` (→ notes), `Statut`, `Labels`. Les en-têtes sont reconnus sans accents ni casse,
+avec `_` ou espaces. Un titre commençant par « Jalon » devient un jalon. Réimporter le même fichier
+n'ajoute rien (dédoublonnage par ID, puis par section + intitulé + échéance).
+
 ## Documents livrés par le Mac mini (notes de lecture du New York Times…)
 
 Un traitement autonome du Mac mini peut livrer un document Markdown à l'app (relais v17, action
