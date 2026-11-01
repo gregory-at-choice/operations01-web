@@ -423,15 +423,17 @@ reposter une transcription corrigée.
 
 ## 8. Documents livrés à l'app (v151, relais v17)
 
-Tout traitement autonome qui produit un document pour Grégory (notes de lecture du New York Times,
-compte rendu, synthèse) le livre à l'app par le relais :
+Tout traitement autonome qui produit un document pour Grégory (compte rendu, synthèse, notes de
+lecture) le livre à l'app par le relais :
 `POST { secret, action: "document", cle, titre, nom: "<fichier>.md", texte, message, tache, compteRendu, genereLe }`.
 Le relais l'écrit dans `operations01-livraisons.json` (fichier créé par l'app à l'ouverture de Documents ;
 45 jours conservés, 400 000 caractères par document au plus). L'app en fait un **document du lecteur**
 (lisible à voix haute), le met en tête de la liste et l'ouvre, affiche `message` dans la cloche, et coche la
 tâche ouverte dont le titre commence par `tache`. Envoyer aussi `message` en notification poussée
-(section 6, `url: ./?go=reader`). Le contrat du New York Times (`CONTRAT-NYT.md`, § 10) en est le
-premier usage : `cle: "nyt-<date>"`, `tache: "New York Times du JJ/MM/AAAA"`, lancement à 10 h 45.
+(section 6, `url: ./?go=reader`). L'action reste disponible pour tout traitement de ce type. Les
+notes de lecture du New York Times (`CONTRAT-NYT.md`, clé `nyt-<date>`) en ont été le premier usage,
+du 27/10 au 01/11/2026 ; elles sont **suspendues depuis le 01/11/2026** (blocage de la lecture
+automatique par nytimes.com), aucune livraison `nyt-<date>` n'arrive plus.
 
 ## 5. Vérifier de bout en bout
 
@@ -498,8 +500,8 @@ cd /Users/choice/assistants/claude-vide && env -u CLAUDE_CODE_OAUTH_TOKEN ANTHRO
 ```
 
 **Périmètre.** Avec la clé : réponses détaillées (Opus, xhigh), comptes rendus de réunion (Opus,
-high), et tout autre appel à un modèle Claude du pipeline (notes de lecture du New York Times si un
-modèle Claude y participe). Toujours en local et gratuits : classement, vecteurs, transcription
+high), et tout autre appel à un modèle Claude du pipeline (les notes de lecture du New York Times en
+faisaient partie jusqu'à leur suspension le 01/11/2026). Toujours en local et gratuits : classement, vecteurs, transcription
 Whisper, résumés de notes vocales.
 
 **Ordre de repli.**

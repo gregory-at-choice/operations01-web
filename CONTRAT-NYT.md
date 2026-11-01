@@ -1,5 +1,13 @@
 # Contrat — Notes de lecture « New York Times du jour »
 
+> **Statut : suspendu le 01/11/2026, sur décision de Grégory.** Depuis le 30/10/2026, nytimes.com
+> bloque la lecture automatique : « Accès temporairement restreint » (détection de robot) dès le
+> deuxième article ouvert. Résultat : 1 article lu sur 51, 50 puis 43 les 30/10, 31/10 et 01/11. Se
+> reconnecter à l'abonnement n'a rien changé, et ce blocage ne se contourne pas. Côté Mac mini, la
+> tâche de 10 h 45 est retirée et le code est conservé ; le relais ne reçoit plus d'action « document »
+> avec la clé `nyt-<date>`. La tâche récurrente « New York Times du JJ/MM/AAAA » du projet Veille n'est
+> plus cochée automatiquement. Le reste du contrat est conservé tel quel, pour une reprise éventuelle.
+
 ## 1. Objet
 
 Chaque jour, produire un fichier Markdown de notes de lecture en français à partir de la newsletter « Today's Headlines » du New York Times reçue par Grégory. Le traitement s'exécute en autonomie, sans personne pour suivre la session en direct. Tous les textes produits sont en français.

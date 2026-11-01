@@ -308,14 +308,16 @@ par »), `Livrable` (→ notes), `Statut`, `Labels`. Les en-têtes sont reconnus
 avec `_` ou espaces. Un titre commençant par « Jalon » devient un jalon. Réimporter le même fichier
 n'ajoute rien (dédoublonnage par ID, puis par section + intitulé + échéance).
 
-## Documents livrés par le Mac mini (notes de lecture du New York Times…)
+## Documents livrés par le Mac mini (comptes rendus, synthèses…)
 
 Un traitement autonome du Mac mini peut livrer un document Markdown à l'app (relais v17, action
 `document`, fichier `operations01-livraisons.json`). L'app en fait un document de **Documents** (lecture
 à voix haute), le met en tête de la liste de lecture et l'ouvre, prévient par la cloche (et par
 notification poussée via le Mac mini), et coche la tâche dont le titre commence par celui indiqué.
-Premier usage : les notes de lecture quotidiennes du New York Times (`CONTRAT-NYT.md`), qui cochent la
-tâche récurrente « New York Times du JJ/MM/AAAA » du projet Veille.
+Premier usage, du 27/10 au 01/11/2026 : les notes de lecture quotidiennes du New York Times
+(`CONTRAT-NYT.md`), **suspendues le 01/11/2026** parce que nytimes.com bloque la lecture automatique dès
+le deuxième article. La tâche récurrente « New York Times du JJ/MM/AAAA » du projet Veille n'est donc
+plus cochée automatiquement ; l'action `document` du relais reste disponible pour d'autres traitements.
 
 ## Réunions et notes vocales : enregistrer, transcrire, résumer
 
