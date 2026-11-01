@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v157";
+const APP_VERSION = "v158";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -2374,7 +2374,7 @@ function journalMarkdown(m) {
     const d = journalDay(e.at);
     if (d !== day) { day = d; lines.push(`## ${journalLongDay(d)}`, ""); }
     const txt = String(e.text || "").split("\n");
-    lines.push(`- **${journalTime(e.at)}** ${journalIcon(e.type)} ${txt[0]}${e.auto ? "" : " _(note)_"}`);
+    lines.push(`- **${journalTime(e.at)}** ${journalIcon(e.type)} ${txt[0]}${e.ref && e.ref.url ? ` — [ouvrir](${e.ref.url})` : ""}${e.auto || (e.ref && e.ref.kind === "doc") ? "" : " _(note)_"}`);
     txt.slice(1).forEach((l) => lines.push(`  ${l}`));
   });
   if (!es.length) lines.push("_Aucune entrée pour l'instant._");
@@ -2491,7 +2491,7 @@ function renderProjectJournal(m) {
     html += `<div class="jn-row ${e.auto ? "auto" : "manual"}"${ref}>
       <span class="jn-time">${journalTime(e.at)}</span><span class="jn-ic">${journalIcon(e.type)}</span>
       ${journalTextHtml(e)}
-      <span class="pm-tag jn-tag">${e.auto ? "auto" : "note"}</span>
+      ${e.ref && e.ref.kind === "doc" && e.ref.url ? `<a class="btn ghost small" href="${esc(e.ref.url)}" target="_blank" rel="noopener" title="Ouvrir dans Drive">↗</a>` : ""}<span class="pm-tag jn-tag">${e.auto ? "auto" : e.ref && e.ref.kind === "doc" ? "document" : "note"}</span>
       ${e.auto ? "" : `<button class="btn ghost small" data-jn-edit="${e.id}" title="Modifier">✎</button>`}
       <button class="btn ghost small" data-jn-del="${e.id}" title="Retirer du journal">✕</button></div>`;
   });
@@ -2512,7 +2512,7 @@ function renderProjectJournal(m) {
   const draft = journalDraft(m.id);
   const form = `<div class="card jn-form"><div class="section-h" style="margin-top:0">Nouvelle entrée${draft ? ` <span class="muted" style="font-weight:400;font-size:12px">· brouillon conservé (${esc(journalTime(new Date(draft.savedAt).toISOString()))})</span>` : ""}</div>
       <textarea data-jn-text data-autogrow data-m="${m.id}" rows="5" placeholder="Ce que je veux consigner : décision, appel, point d'étape, idée…">${draft ? esc(draft.text) : ""}</textarea>
-      <div class="inline" style="flex-wrap:wrap;gap:8px;margin-top:8px"><input type="datetime-local" data-jn-at value="${esc((draft && draft.at) || local)}" style="width:auto"/><span class="muted" style="font-size:12px">Le texte est gardé sur cet appareil jusqu'à « Consigner », même si l'écran se redessine.</span><span class="grow"></span>${draft ? `<button class="btn ghost small" data-jn-discard="${m.id}">Effacer le brouillon</button>` : ""}<button class="btn" data-jn-add="${m.id}">📝 Consigner</button></div></div>`;
+      <div class="inline" style="flex-wrap:wrap;gap:8px;margin-top:8px"><input type="datetime-local" data-jn-at value="${esc((draft && draft.at) || local)}" style="width:auto"/><span class="muted" style="font-size:12px">Le texte est gardé sur cet appareil jusqu'à « Consigner », même si l'écran se redessine.</span><span class="grow"></span>${draft ? `<button class="btn ghost small" data-jn-discard="${m.id}">Effacer le brouillon</button>` : ""}<label class="btn secondary small" style="cursor:pointer" title="Joindre un document .md ou .txt : il devient un document de l'app et le journal en garde la trace">📎 Joindre un document<input type="file" accept=".md,.txt,.markdown,text/markdown,text/plain" data-jn-attach="${m.id}" style="display:none"/></label><button class="btn" data-jn-add="${m.id}">📝 Consigner</button></div></div>`;
   return `${head}${form}
     <div class="chip-row" style="margin:12px 0">${chips}</div>
     <div class="jn-list">${html || `<div class="center-empty">Aucune entrée${journalFilter !== "tous" ? " de ce type" : ""}.</div>`}</div>`;
@@ -8401,10 +8401,11 @@ function wire() {
   c.querySelectorAll("[data-jn-read]").forEach((b) => b.onclick = () => { const id = b.dataset.jnRead; state.readerCurrent = id; reader.kind = "md"; saveReader(); save({ silent: true }); go("reader"); ensureDocText(id); });
   c.querySelectorAll("[data-jn-text]").forEach((ta) => { const keep = () => { const at = c.querySelector("[data-jn-at]"); saveJournalDraft(ta.dataset.m, ta.value, at ? at.value : ""); }; ta.addEventListener("input", keep); const at = c.querySelector("[data-jn-at]"); if (at) at.addEventListener("change", keep); });
   c.querySelectorAll("[data-jn-discard]").forEach((b) => b.onclick = () => { if (!confirm("Effacer le brouillon non consigné ?")) return; saveJournalDraft(b.dataset.jnDiscard, "", ""); render(); });
+  c.querySelectorAll("[data-jn-attach]").forEach((inp) => inp.onchange = () => { const f = inp.files && inp.files[0], m = findMission(inp.dataset.jnAttach); if (!f || !m) return; const r = new FileReader(); r.onload = () => attachJournalDoc(m, f.name, String(r.result || "")); r.readAsText(f); });
   c.querySelectorAll("[data-jn-add]").forEach((b) => b.onclick = () => { const ta = c.querySelector("[data-jn-text]"), at = c.querySelector("[data-jn-at]"); const txt = ((ta && ta.value) || "").trim(); if (!txt) { toast("Écris d'abord ta note"); if (ta) ta.focus(); return; } const when = at && at.value ? new Date(at.value).toISOString() : new Date().toISOString(); journalLog(b.dataset.jnAdd, "note", txt, null, { manual: true, at: when }); saveJournalDraft(b.dataset.jnAdd, "", ""); save(); render(); toast("Consigné ✓"); });
   c.querySelectorAll("[data-jn-del]").forEach((b) => b.onclick = () => { const i = (state.journalEntries || []).findIndex((e) => e.id === b.dataset.jnDel); if (i < 0) return; if (!confirm("Retirer cette entrée du journal ?")) return; const e = state.journalEntries.splice(i, 1)[0]; scheduleJournalWrite(e.missionId); save(); render(); });
   c.querySelectorAll("[data-jn-edit]").forEach((b) => b.onclick = () => { const e = (state.journalEntries || []).find((x) => x.id === b.dataset.jnEdit); if (!e) return; const v = prompt("Modifier la note", e.text); if (v == null || !v.trim()) return; e.text = v.trim(); scheduleJournalWrite(e.missionId); save(); render(); });
-  c.querySelectorAll("[data-jn-open]").forEach((r) => r.onclick = (ev) => { if (ev.target.closest("button, a, summary, details")) return; const k = r.dataset.jnOpen, id = r.dataset.jnId; if (k === "task" && state.tasks.some((t) => t.id === id)) openTask(id); else if (k === "action" && state.actions.some((a) => a.id === id)) openDetail("actions", id); else if (k === "recording" && (state.recordings || []).some((r) => r.id === id)) openDetail("reunions", id); else if (k === "event") go("atraiter"); });
+  c.querySelectorAll("[data-jn-open]").forEach((r) => r.onclick = (ev) => { if (ev.target.closest("button, a, summary, details")) return; const k = r.dataset.jnOpen, id = r.dataset.jnId; if (k === "task" && state.tasks.some((t) => t.id === id)) openTask(id); else if (k === "action" && state.actions.some((a) => a.id === id)) openDetail("actions", id); else if (k === "recording" && (state.recordings || []).some((r) => r.id === id)) openDetail("reunions", id); else if (k === "doc" && id) openJournalDoc(id); else if (k === "event") go("atraiter"); });
   c.querySelectorAll("[data-goto-gestion]").forEach((r) => r.onclick = () => { projectTab = "gestion"; render(); });
   c.querySelectorAll("[data-project-timer]").forEach((b) => b.onclick = () => { const m = findMission(b.dataset.projectTimer); if (!m) return; startProjectTimer(m, null); save(); render(); toast("Chrono lancé sur le projet ▶"); });
   c.querySelectorAll("[data-task-timer]").forEach((b) => b.onclick = () => {
@@ -9744,6 +9745,20 @@ function seedLexique() {
   try { localStorage.setItem("op01_lexSeeded", "1"); } catch (e) {}
   if (n) { missions.forEach((mid) => scheduleJournalWrite(mid)); storeState(); }
 }
+// Document joint au journal (v158) : le fichier devient un document de l'app (lisible, à voix haute),
+// et le journal garde une entrée « Document joint » qui l'ouvre d'un clic ; le .md du journal porte le lien.
+async function attachJournalDoc(m, name, text) {
+  if (!(window.DriveSync && DriveSync.uploadDoc && DriveSync.isConnected())) { toast("Connecte le Drive pour joindre un document"); return; }
+  toast("Envoi du document…");
+  try {
+    const id = await DriveSync.uploadDoc(name, text);
+    readerLib.docs.push({ id, name, size: text.length }); readerLib.texts[id] = text; readerOrder().push(id);
+    const title = ((/^#\s+(.+)$/m.exec(text) || [])[1] || name.replace(/\.(md|txt|markdown)$/i, "")).trim();
+    journalLog(m.id, "document", `Document joint : « ${title} » (${name})`, { kind: "doc", id, url: `https://drive.google.com/file/d/${id}/view` }, { manual: true });
+    save(); render(); toast("Document joint au journal ✓");
+  } catch (e) { reportError(e, "document joint au journal"); toast("Envoi impossible : " + ((e && e.message) || e)); }
+}
+function openJournalDoc(id) { state.readerCurrent = id; reader.kind = "md"; saveReader(); go("reader"); ensureDocText(id); }
 function openLexiqueDialog(faux) {
   const rows = lexiqueEntries().map((e) => `<div class="inline" style="gap:8px;padding:4px 0;border-bottom:1px solid var(--line)"><span class="muted" style="text-decoration:line-through">${esc(e.faux)}</span><span>→</span><strong class="grow">${esc(e.juste)}</strong>${e.builtin ? '<span class="muted" style="font-size:12px">intégré</span>' : `<button class="btn ghost small" data-lx-del="${esc(e.faux)}">✕</button>`}</div>`).join("");
   showModal(`<div class="modal-head"><strong class="grow">Lexique des transcriptions</strong><button class="btn ghost small" data-modal-close>✕</button></div>

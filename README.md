@@ -396,6 +396,11 @@ dans **Documents** (avec la lecture à voix haute) et avec n'importe quel édite
 - **Lecture** : « Lire » ouvre le journal dans Documents ; il y figure dans la liste de lecture,
   marqué 📓, sans bouton de suppression. « ↗ Drive » l'ouvre sur le Drive.
 
+**Joindre un document au journal (v158).** Dans l'onglet Journal de bord, « 📎 Joindre un document »
+accepte un fichier `.md` ou `.txt` (dossier projet, compte rendu, cahier des charges) : il devient un
+document de l'app (rubrique Documents, lisible et lu à voix haute), et le journal garde une entrée
+« Document joint : « titre » » qui l'ouvre d'un clic ; le `.md` du journal porte le lien Drive.
+
 ## Correspondances : un fichier par interlocuteur sur le Drive, réponses étayées
 
 Le dossier **Correspondances/** du Drive (racine de « Mon Drive ») contient **un `.md` par
