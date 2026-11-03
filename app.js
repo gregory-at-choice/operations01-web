@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v160";
+const APP_VERSION = "v161";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -8089,7 +8089,7 @@ function wire() {
   onclick("[data-export-cdr]", () => printReport("choice - Compte de resultat", "Compte de résultat", reportCDR()));
   onclick("[data-export-treso]", () => printReport("choice - Tresorerie", "Trésorerie", reportTresorerie()));
   onclick("[data-export-dashboard]", () => printReport("choice - Tableau de bord", "Tableau de bord", reportDashboard()));
-  onclick("[data-export-temps-pdf]", () => printReport("choice - Suivi du temps", "Suivi du temps (semaine)", reportTemps()));
+  onclick("[data-export-temps-pdf]", openTempsPdfDialog);
   onclick("[data-export-temps-csv]", exportTempsCSV);
   // Temps : bascule semaine/mois et navigation dans les périodes
   c.querySelectorAll("[data-ttab]").forEach((b) => b.onclick = () => { timeTab = b.dataset.ttab; render(); });
@@ -9113,15 +9113,73 @@ function reportTresorerie() {
     <div class="rep-section">Par société</div>
     <table class="rep-table"><thead><tr><th>Société</th><th class="num">Solde</th></tr></thead><tbody>${rows || '<tr><td colspan="2">—</td></tr>'}</tbody></table>`;
 }
+// Libellé de la période affichée dans Temps (semaine, mois, année).
+function tempsPeriodeLabel(r) {
+  if (r.kind === "annee") return `Année ${r.label}`;
+  if (r.kind === "mois") return r.label.charAt(0).toUpperCase() + r.label.slice(1);
+  return `Semaine du ${fmtDate(iso(r.start))} au ${fmtDate(iso(new Date(r.end - 86400000)))}`;
+}
+const repH = (sec) => (sec / 3600).toFixed(2).replace(".", ",");
+// Vue globale : une ligne par projet (année : une colonne par mois en plus).
 function reportTemps() {
   const r = timeRange();
   const { total, per } = timeBreakdown(r.start, r.end);
-  const rows = per.map((p) => `<tr><td>${esc(p.title)}</td><td class="num">${(p.s / 3600).toFixed(2).replace(".", ",")}</td><td class="num">${fmtDuration(p.s)}</td></tr>`).join("");
-  const titre = r.kind === "mois" ? `Mois de ${r.label}` : `Semaine du ${fmtDate(iso(r.start))} au ${fmtDate(iso(new Date(r.end - 86400000)))}`;
-  return `<div class="rep-date">${esc(titre)}</div>
-    <table class="rep-table"><thead><tr><th>Projet</th><th class="num">Heures</th><th class="num">Durée</th></tr></thead><tbody>
-    ${rows || '<tr><td colspan="3">Aucun temps sur cette période.</td></tr>'}
-    <tr class="rep-total"><td>Total</td><td class="num">${(total / 3600).toFixed(2).replace(".", ",")}</td><td class="num">${fmtDuration(total)}</td></tr></tbody></table>`;
+  let months = [], perMonth = [];
+  if (r.kind === "annee") {
+    const y = r.start.getFullYear();
+    months = Array.from({ length: 12 }, (_, i) => new Date(y, i, 1).toLocaleDateString("fr-FR", { month: "short" }).replace(".", ""));
+    perMonth = Array.from({ length: 12 }, (_, i) => timeBreakdown(new Date(y, i, 1), new Date(y, i + 1, 1)));
+  }
+  const mcells = (fn) => months.map((_, i) => `<td class="num rep-small">${fn(perMonth[i])}</td>`).join("");
+  const rows = per.map((p) => `<tr><td>${esc(p.title)}</td>${mcells((pm) => { const q = pm.per.find((z) => z.id === p.id); return q ? repH(q.s) : ""; })}<td class="num">${repH(p.s)}</td><td class="num">${fmtDuration(p.s)}</td></tr>`).join("");
+  return `<div class="rep-date">${esc(tempsPeriodeLabel(r))} · vue globale par projet</div>
+    <table class="rep-table"><thead><tr><th>Projet</th>${months.map((m) => `<th class="num rep-small">${esc(m)}</th>`).join("")}<th class="num">Heures</th><th class="num">Durée</th></tr></thead><tbody>
+    ${rows || `<tr><td colspan="${3 + months.length}">Aucun temps sur cette période.</td></tr>`}
+    <tr class="rep-total"><td>Total</td>${mcells((pm) => pm.total ? repH(pm.total) : "")}<td class="num">${repH(total)}</td><td class="num">${fmtDuration(total)}</td></tr></tbody></table>`;
+}
+// Vue détaillée : pour chaque projet, les journées et leurs éléments (titre, précisions), avec les sous-totaux.
+function reportTempsDetail(ids) {
+  const r = timeRange();
+  const { per } = timeBreakdown(r.start, r.end);
+  const list = per.filter((p) => !ids || ids.indexOf(p.id) > -1);
+  if (!list.length) return `<div class="rep-date">${esc(tempsPeriodeLabel(r))}</div><p>Aucun temps sur cette période.</p>`;
+  const dayLabel = (d) => { const t = new Date(d + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: r.kind === "annee" ? "numeric" : undefined }); return t.charAt(0).toUpperCase() + t.slice(1); };
+  const blocks = list.map((p, idx) => {
+    const m = findMission(p.id); if (!m) return "";
+    const days = timeDetail(m, r.start, r.end).sort((a, b) => a.date.localeCompare(b.date));
+    const rows = days.map((d) => `<tr class="rep-day"><td colspan="2">${esc(dayLabel(d.date))}</td><td class="num">${fmtDuration(d.total)}</td></tr>` +
+      d.items.sort((a, b) => (a.e.createdAt || 0) - (b.e.createdAt || 0)).map(({ e, s }) => `<tr><td class="rep-kind">${esc(kindMeta(e.kind).label)}</td><td><div>${esc(e.title || kindMeta(e.kind).label)}</div>${e.content ? `<div class="rep-sub">${esc(String(e.content)).replace(/\n/g, "<br>")}</div>` : ""}</td><td class="num">${fmtDuration(s)}</td></tr>`).join("")).join("");
+    return `<div class="rep-project${idx ? " rep-break" : ""}"><div class="rep-section">${esc(m.title || "Sans titre")} <span class="rep-h">${fmtDuration(p.s)} · ${repH(p.s)} h</span></div>
+      <table class="rep-table rep-detail"><thead><tr><th style="width:16%">Type</th><th>Élément</th><th class="num" style="width:14%">Durée</th></tr></thead><tbody>${rows}
+      <tr class="rep-total"><td colspan="2">Total ${esc(m.title || "")}</td><td class="num">${fmtDuration(p.s)}</td></tr></tbody></table></div>`;
+  }).join("");
+  const total = list.reduce((t, p) => t + p.s, 0);
+  const recap = list.length > 1 ? `<table class="rep-table"><thead><tr><th>Projet</th><th class="num">Heures</th><th class="num">Durée</th></tr></thead><tbody>${list.map((p) => `<tr><td>${esc(p.title)}</td><td class="num">${repH(p.s)}</td><td class="num">${fmtDuration(p.s)}</td></tr>`).join("")}<tr class="rep-total"><td>Total</td><td class="num">${repH(total)}</td><td class="num">${fmtDuration(total)}</td></tr></tbody></table>` : "";
+  return `<div class="rep-date">${esc(tempsPeriodeLabel(r))} · ${list.length > 1 ? "vue détaillée par projet" : "détail du projet"}</div>${recap}${blocks}`;
+}
+// Choix de l'export PDF du suivi de temps : global, détaillé (tous les projets) ou un projet.
+function openTempsPdfDialog() {
+  const r = timeRange(), { per } = timeBreakdown(r.start, r.end);
+  const sel = timeProject && per.some((p) => p.id === timeProject) ? timeProject : (per[0] ? per[0].id : "");
+  const opts = per.map((p) => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.title)} · ${fmtDuration(p.s)}</option>`).join("");
+  const mode0 = timeProject ? "projet" : "global";
+  showModal(`<div class="modal-head"><strong class="grow">Exporter le suivi de temps en PDF</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <div class="muted" style="font-size:13px;margin-bottom:10px">${esc(tempsPeriodeLabel(r))} · ${per.length} projet${per.length > 1 ? "s" : ""}</div>
+    <label class="field inline-check"><input type="radio" name="tpdf" value="global" ${mode0 === "global" ? "checked" : ""}/><span><strong>Vue globale</strong> · une ligne par projet, heures et durée</span></label>
+    <label class="field inline-check"><input type="radio" name="tpdf" value="detail" ${mode0 === "detail" ? "checked" : ""}/><span><strong>Vue détaillée, tous les projets</strong> · récapitulatif puis, projet par projet, les journées et leurs éléments</span></label>
+    <label class="field inline-check"><input type="radio" name="tpdf" value="projet" ${mode0 === "projet" ? "checked" : ""} ${per.length ? "" : "disabled"}/><span><strong>Détail d'un projet</strong></span></label>
+    <select data-tpdf-projet style="margin:0 0 8px 26px;width:calc(100% - 26px)" ${per.length ? "" : "disabled"}>${opts}</select>
+    <div class="inline" style="justify-content:flex-end;margin-top:12px;gap:8px"><button class="btn secondary" data-modal-close>Annuler</button><button class="btn" data-tpdf-ok>${icon("file-text")} Générer le PDF</button></div>`);
+  document.querySelectorAll("[data-modal-close]").forEach((b) => b.onclick = closeModal);
+  const selEl = document.querySelector("[data-tpdf-projet]"); if (selEl) selEl.onfocus = () => { const rb = document.querySelector('input[name="tpdf"][value="projet"]'); if (rb) rb.checked = true; };
+  document.querySelector("[data-tpdf-ok]").onclick = () => {
+    const mode = (document.querySelector('input[name="tpdf"]:checked') || {}).value || "global";
+    const periode = tempsPeriodeLabel(r);
+    closeModal();
+    if (mode === "detail") printReport(`choice - Suivi du temps détaillé - ${periode}`, `Suivi du temps · ${periode}`, reportTempsDetail(null));
+    else if (mode === "projet" && selEl && selEl.value) { const m = findMission(selEl.value); printReport(`choice - Suivi du temps - ${m ? m.title : ""} - ${periode}`, `Suivi du temps · ${m ? m.title : ""}`, reportTempsDetail([selEl.value])); }
+    else printReport(`choice - Suivi du temps - ${periode}`, `Suivi du temps · ${periode}`, reportTemps());
+  };
 }
 function reportDashboard() {
   const now = new Date();

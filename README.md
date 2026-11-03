@@ -130,6 +130,14 @@ crédits avec une clé API dédiée, gardée sur le Mac mini seulement : les fen
 restent libres. Ordre de repli : crédits → forfait → modèle local. Le brief du matin donne le cumul du
 cycle.
 
+## Temps : export PDF en trois vues (v161)
+
+Le bouton PDF de Temps ouvre un choix : **vue globale** (une ligne par projet, heures et durée ; sur
+l'année, une colonne par mois), **vue détaillée tous projets** (récapitulatif, puis un projet par page
+avec ses journées et leurs éléments, titres et précisions), ou **détail d'un projet** (présélectionné
+quand un projet est ouvert dans Temps). Période = celle affichée (semaine, mois, année). Le rapport est
+imprimé par le navigateur (« Enregistrer en PDF ») dans la police Ubuntu du logo, embarquée avec l'app.
+
 ## Temps : vue annuelle par projet (v160)
 
 Temps → **Année** : total de l'année civile, courbe des heures par mois, et tableau **projets × mois**

@@ -457,9 +457,14 @@ textarea { min-height: 72px; resize: vertical; }
   .md-print p, .md-print li { orphans: 2; widows: 2; }
   .md-print table { display: table; width: 100%; }
   @page { margin: 15mm; }
+  html, body { background: #fff !important; }
   body * { visibility: hidden; }
   #printArea, #printArea * { visibility: visible; }
   #printArea { display: block; position: absolute; left: 0; top: 0; width: 100%; background: #fff; padding: 0; }
+  #printArea, #printArea * { font-family: "Ubuntu", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .rep-break { break-before: page; page-break-before: always; }
+  .rep-table tr, .rep-project .rep-section { break-inside: avoid; page-break-inside: avoid; }
+  .rep-table thead { display: table-header-group; }
   .app, .tabbar, .install-banner { display: none !important; }
 }
 .field-b { display: block; margin: 12px 0; }
@@ -923,3 +928,13 @@ label.field.inline-check > span { margin-bottom: 0; }
 .tm-mx .tm-mx-total { font-weight: 700; }
 .tm-mx tfoot .tm-mx-foot th, .tm-mx tfoot .tm-mx-foot td { font-weight: 700; border-top: 2px solid var(--line); border-bottom: 0; }
 .tm-mx .tm-click { cursor: pointer; }
+
+/* v161 : rapports du suivi de temps (PDF) */
+#printArea { font-family: "Ubuntu", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #111; }
+.rep-h { font-weight: 400; font-size: 13px; color: #666; margin-left: 8px; }
+.rep-small { font-size: 11px; }
+.rep-detail td { vertical-align: top; }
+.rep-detail .rep-kind { font-size: 12px; color: #666; white-space: nowrap; }
+.rep-detail .rep-sub { font-size: 12px; color: #555; margin-top: 2px; line-height: 1.35; }
+.rep-detail .rep-day td { background: #f6fbfc; font-weight: 700; font-size: 13px; color: #0e7f90; border-top: 1px solid #cfe9ee; }
+.rep-project { margin-top: 10px; }
