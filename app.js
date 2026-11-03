@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v161";
+const APP_VERSION = "v162";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -9068,9 +9068,11 @@ const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 210" 
   <text x="8" y="165" font-family="'Baloo 2','Quicksand','Nunito','Segoe UI',Helvetica,Arial,sans-serif" font-weight="800" font-size="200" fill="url(#choiceGrad)">choice</text></svg>`;
 function reportHeader(subtitle) {
   const d = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+  // « Suivi du temps · Projet » : le rapport sur la première ligne, le complément (projet, période) sur la seconde.
+  const i = String(subtitle || "").indexOf(" · "), t1 = i > -1 ? subtitle.slice(0, i) : subtitle, t2 = i > -1 ? subtitle.slice(i + 3) : "";
   return `<div class="rep-head"><div>${LOGO_SVG}</div>
     <div style="flex:1"></div>
-    <div style="text-align:right"><div class="rep-title">${esc(subtitle)}</div><div class="rep-date">Édité le ${d} · choice</div></div></div>`;
+    <div style="text-align:right"><div class="rep-title">${esc(t1)}</div>${t2 ? `<div class="rep-title2">${esc(t2)}</div>` : ""}<div class="rep-date">Édité le ${d} · choice</div></div></div>`;
 }
 function printReport(fileTitle, subtitle, bodyHtml) {
   let pa = document.getElementById("printArea");

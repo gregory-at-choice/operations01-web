@@ -425,6 +425,7 @@ textarea { min-height: 72px; resize: vertical; }
 #printArea { display: none; }
 .rep-head { display: flex; align-items: flex-end; gap: 16px; border-bottom: 3px solid #18c1d8; padding-bottom: 12px; margin-bottom: 20px; }
 .rep-title { font-size: 23px; font-weight: 700; color: #111; }
+.rep-title2 { font-size: 17px; font-weight: 500; color: #333; margin-top: 2px; }
 .rep-date { font-size: 13px; color: #666; }
 .rep-section { font-size: 16px; font-weight: 700; margin: 18px 0 4px; color: #0e7f90; }
 .rep-table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 6px 0 14px; }
