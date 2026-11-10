@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v163";
+const APP_VERSION = "v164";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3183,6 +3183,7 @@ function mailFoldersFor(ev) {
   const k = eventSenderKey(ev); if (k && learn.senderDossier && learn.senderDossier[k]) add(learn.senderDossier[k]);
   ((learn.dossiersRecents || {})[boite || "*"] || []).forEach(add);
   Object.keys(mailStore).forEach((key) => { const d = mailStore[key]; if (d && String(d.mailbox || "").toLowerCase() === boite) (d.etiquettes || []).forEach(add); });
+  (((assistantStore && assistantStore.dossiersMail) || {})[ev.compte] || []).forEach(add);   // dossiers envoyés par le Mac mini (relais v25)
   if (!boite) ((learn.dossiersRecents || {})["*"] || []).forEach(add);
   return out;
 }

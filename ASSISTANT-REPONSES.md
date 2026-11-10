@@ -524,7 +524,7 @@ réessayer une fois, sans changer de source. `genereePar` indique la source : `"
 **Sécurité.** Si la clé fuit ou se retrouve dans un journal : la désactiver immédiatement dans la
 Console (Paramètres → Clés API) et le dire à Grégory, qui en crée une autre.
 
-## 11. « Traité » : marquer lu et classer dans la boîte d'origine (v163, relais v24, mails v3)
+## 11. « Traité » : marquer lu et classer dans la boîte d'origine (v163, relais v25, mails v4)
 
 Quand Grégory appuie sur **Traité** dans « À traiter », l'app note une décision dans
 `data.evClassement[idEvt]` (export du relais, clé `data.evClassement`) :
@@ -542,14 +542,17 @@ Quand Grégory appuie sur **Traité** dans « À traiter », l'app note une déc
 
 | Source / compte | Qui | Quoi |
 |---|---|---|
-| mail, comptes Gmail (choicefinance, icarus, majandco) | script `appsscript-mails.gs` v3 du compte, à chaque passage (15 min, 30 min en heures creuses) | marquer lu, étiquette `dossier` (créée au besoin), archiver ; exporte la liste des étiquettes (`etiquettes`) et confirme dans `classements[idEvt]` de son fichier d'analyse |
-| mail, compte `outlook` (et tout compte sans script mails) | **Mac mini** | marquer lu dans Outlook, déplacer dans le dossier `dossier` (créé au besoin, `archiver` ignoré) ; écrire `assistant.classements[idEvt]`, et la liste des dossiers Outlook dans `assistant.dossiersMail["outlook"]` (l'app la proposera dans le dialogue) |
+| mail, comptes Google (choicefinance, icarus, majandco, et `gmail` / `outlook` qui arrivent tous deux dans gy.arbia@gmail.com, Outlook n'étant qu'un transfert) | script `appsscript-mails.gs` v4 du compte, à chaque passage (15 min, 30 min en heures creuses) | marquer lu, étiquette `dossier` (créée au besoin), archiver ; exporte la liste des étiquettes (`etiquettes`) et confirme dans `classements[idEvt]` de son fichier d'analyse. Message retrouvé par Message-ID, sinon par expéditeur + objet (60 jours) |
+| mail d'un compte sans script mails (aucun aujourd'hui) | **Mac mini** | marquer lu, déplacer dans le dossier `dossier` ; confirmer par le relais (ci-dessous) et, facultatif, envoyer la liste des dossiers dans `dossiersMail:{ compte:[…] }` |
 | `sms` / `imessage` | **Mac mini** | marquer la conversation comme lue dans Messages (au mieux : ouverture de la conversation dans Messages, ou `chat.db` si une méthode fiable existe) ; confirmer dans `assistant.classements[idEvt]` |
 | `whatsapp` | **Mac mini** | marquer la conversation comme lue dans WhatsApp Desktop (au mieux : ouverture de la conversation) ; confirmer |
 
-Confirmation attendue : `assistant.classements[idEvt] = { "le": ISO, "ok": true }` ou
-`{ "le": ISO, "ok": false, "erreur": "message introuvable" }`. L'app affiche ⏳ tant qu'aucune
-confirmation n'est arrivée, ✓ ensuite, et l'erreur sinon. Règles :
+Confirmation du Mac mini (relais v25) : `POST { secret, action: "assistant", classements: { idEvt:
+{ "le": ISO, "ok": true } | { "le": ISO, "ok": false, "erreur": "conversation introuvable" } } }`. Le
+relais fusionne par identifiant dans `assistant.classements` et répond `{ ok, classements: n }` (nombre
+reçu) ; il oublie les confirmations de plus de 45 jours. Plusieurs confirmations peuvent partir dans le
+même POST que le brief ou les estimations. L'app affiche ⏳ tant qu'aucune confirmation n'est arrivée,
+✓ ensuite, et l'erreur sinon. Règles :
 - Traiter une décision **une seule fois** (mémoriser les identifiants appliqués) ; trois échecs → abandonner
   et confirmer `ok: false`. Rien à faire pour les décisions qui ne concernent pas le Mac mini (boîtes Gmail).
 - Lire `evClassement` à chaque cycle d'export (toutes les 5 minutes le jour), jamais plus souvent.

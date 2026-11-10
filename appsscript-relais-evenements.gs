@@ -22,6 +22,9 @@
  *        evClassement (v24) : { idEvt: { at, source, compte, boite, externalId, lu, dossier, archiver } },
  *        décisions « Traité » à appliquer dans la boîte d'origine (Gmail : script mails ; Outlook,
  *        SMS / iMessage, WhatsApp : Mac mini, qui confirme dans assistant.classements[idEvt]).
+ *   POST { secret, action:"assistant", classements:{ idEvt:{ le, ok, erreur? } } }  (v25)
+ *        → fusion par identifiant dans assistant.classements ; réponse { ok, classements: n reçus }.
+ *        Facultatif : dossiersMail:{ compte:[…] } (dossiers d'une boîte tenue par le Mac mini).
  *   GET  ?secret=…&action=agenda&jours=7          → { ok, du, au, evenements:[…], jours:{ "AAAA-MM-JJ": { libres:[["12:00","14:00"]…], midi, soir } } }
  *        tous les agendas Google du compte principal (y compris ceux partagés : Icarus, perso, Majandco en
  *        occupé/libre), pour proposer de vrais créneaux dans une réponse (déjeuner, rendez-vous, visio).
@@ -50,9 +53,10 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 24;
+var VERSION = 25;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
+var CLASSEMENTS_JOURS = 45;   // v25 : durée de conservation des confirmations « Traité » du Mac mini
 var FICHIER_DATA = "operations01-data.json";
 var EXPORT_CLES = ["missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "pushSubscriptions", "recordings", "lexique"];   // v12 : abonnements aux notifications poussées ; v14 : enregistrements audio ; v18 : lexique des transcriptions
 var EXPORT_OBJETS = ["evEdits", "evDecisions", "evClassement", "evLearn", "evSteps", "evRequests"];   // evClassement (v24) : « Traité » → lu / dossier, à appliquer par le Mac mini (Outlook, SMS, WhatsApp)   // corrections et décisions de Grégory (apprentissage)
@@ -283,9 +287,29 @@ function posterAssistant(corps) {
         n++;
       });
     }
+    // v25 : confirmations « Traité » du Mac mini (SMS, iMessage, WhatsApp, et toute boîte sans script
+    // mails) : fusion par identifiant d'événement, { le, ok, erreur? }. Les confirmations de plus de
+    // CLASSEMENTS_JOURS jours sont oubliées (l'app oublie ses décisions après 30 jours).
+    var nc = 0;
+    if (corps.classements && typeof corps.classements === "object") {
+      data.classements = data.classements || {};
+      Object.keys(corps.classements).forEach(function (id) {
+        var c = corps.classements[id]; if (!c || typeof c !== "object") return;
+        var deja = data.classements[id] || {};
+        data.classements[id] = { le: c.le || maintenant, ok: c.ok !== false, erreur: c.ok === false ? String(c.erreur || "") : undefined, dossier: c.dossier || deja.dossier || undefined };
+        nc++;
+      });
+      var horizon = Date.now() - CLASSEMENTS_JOURS * 86400000;
+      Object.keys(data.classements).forEach(function (id) { var t = new Date(data.classements[id].le || 0).getTime(); if (!t || t < horizon) delete data.classements[id]; });
+    }
+    // Dossiers d'une boîte tenue par le Mac mini (facultatif) : { compte: ["Dossier", …] }.
+    if (corps.dossiersMail && typeof corps.dossiersMail === "object") {
+      data.dossiersMail = data.dossiersMail || {};
+      Object.keys(corps.dossiersMail).forEach(function (k) { if (Array.isArray(corps.dossiersMail[k])) data.dossiersMail[k] = corps.dossiersMail[k].map(String).slice(0, 200); });
+    }
     data.updatedAt = Date.now(); data.generatedAt = maintenant;
     fichier.setContent(JSON.stringify(data));
-    return reponse({ ok: true, brief: !!corps.brief, estimations: n, push: !!corps.push });
+    return reponse({ ok: true, brief: !!corps.brief, estimations: n, push: !!corps.push, classements: nc });
   } finally { verrou.releaseLock(); }
 }
 

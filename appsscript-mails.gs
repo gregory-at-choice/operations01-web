@@ -42,7 +42,7 @@
  * EXTRAIT_CARACTERES caractères du dernier message (0 pour ne rien extraire).
  */
 
-var VERSION = 3;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
+var VERSION = 4;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
 var FICHIER_MAILS_ID = "";        // vide = boîte principale (fichier trouvé par son nom)
 var DATA_FILE = "operations01-data.json";
 var MAILS_FILE = "operations01-mails.json";
@@ -225,6 +225,12 @@ function appliquerClassements(data, precedent, budgetMs) {
     try {
       var mid = String(d.externalId || "").replace(/^<|>$/g, "");
       var threads = mid ? GmailApp.search("rfc822msgid:" + mid, 0, 1) : [];
+      // Message-ID inconnu ou modifié (mail transféré depuis Outlook, par exemple) : même expéditeur
+      // et même objet, parmi les 60 derniers jours.
+      if (!threads.length && d.expediteur && d.sujet) {
+        var sujet = String(d.sujet).replace(/^\s*(re|tr|fwd?)\s*:\s*/i, "").replace(/"/g, " ").trim().slice(0, 80);
+        if (sujet) threads = GmailApp.search("from:" + d.expediteur + " subject:\"" + sujet + "\" newer_than:60d", 0, 1);
+      }
       if (!threads.length) throw new Error("message introuvable");
       var th = threads[0];
       th.markRead();

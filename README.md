@@ -88,7 +88,7 @@ mini), `operations01-mails.json` (index des mails et des correspondances) et
 appareils, uniquement si cet appareil avait des modifications non écrites, au plus une paire par
 quart d'heure, 20 conservées). Une simple relecture périodique ne crée jamais de copie « conflit ».
 
-## « Traité » : marqué lu et classé dans la boîte d'origine (v163, mails v3, relais v24)
+## « Traité » : marqué lu et classé dans la boîte d'origine (v163, mails v4, relais v25)
 
 Dans « À traiter », **Traité** ne se contente plus de ranger la ligne dans l'app :
 - **SMS, iMessage, WhatsApp** : la conversation est marquée lue dans Messages / WhatsApp, par le Mac mini
@@ -102,8 +102,9 @@ Dans « À traiter », **Traité** ne se contente plus de ranger la ligne dans l
   sans demander de dossier.
 
 L'app n'écrit jamais dans les boîtes (accès en lecture seule) : elle note la décision dans le fichier de
-données (`evClassement`), et c'est le **script mails v3** de chaque compte Gmail (toutes les 15 minutes)
-ou le **Mac mini** (Outlook, SMS, WhatsApp) qui l'applique puis confirme. Sous « Traité le … », la ligne
+données (`evClassement`), et c'est le **script mails v4** de chaque compte Google (toutes les 15 minutes ;
+le compte perso gy.arbia@gmail.com reçoit aussi les mails Outlook, transférés) ou le **Mac mini** (SMS,
+iMessage, WhatsApp, confirmations envoyées au relais v25) qui l'applique puis confirme. Sous « Traité le … », la ligne
 affiche le dossier choisi avec ⏳ en attendant, ✓ une fois appliqué, ou l'erreur. Les décisions sont
 oubliées après 30 jours.
 

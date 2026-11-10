@@ -11,10 +11,19 @@ afficher ni les déplacer.
 | Fichier du dépôt | Projet Apps Script | Comptes | Type |
 |---|---|---|---|
 | `appsscript-relais-evenements.gs` | relais événements (`doGet`/`doPost`) | choicefinance | application web, **déploiement versionné** |
-| `appsscript-mails.gs` | Operations01 Mails (`analyserMails`) | choicefinance, icarus, majandco | déclencheur horaire, pas de déploiement |
+| `appsscript-mails.gs` | Operations01 Mails (`analyserMails`) | choicefinance, icarus, majandco, **perso** (gy.arbia@gmail.com, depuis mails v4 : comptes `gmail` et `outlook` de l'app) | déclencheur horaire, pas de déploiement |
 | `appsscript-correspondances.gs` | correspondances (`archiverCorrespondances`) | choicefinance, icarus, majandco | déclencheur horaire |
 | `appsscript-banque.gs` | banque (`parcourir`) | choicefinance | déclencheur horaire |
 | `appsscript-actions-daily.gs` | Operations01 Rappels | choicefinance | déclencheur horaire |
+
+Quatrième compte (perso), à ajouter comme les trois autres : `clasp login --user perso` (Grégory
+choisit gy.arbia@gmail.com et autorise), interrupteur API Apps Script sur ce compte, projet
+« Operations01 Mails » créé par `clasp create --type standalone --title "Operations01 Mails"
+--user perso` dans `~/choice-deploiement/perso/mails/`, puis déploiement normal du fichier. Le réglage
+propre à ce compte, `FICHIER_MAILS_ID`, est l'identifiant du fichier d'analyse créé par l'app
+(Relances → Boîtes mail → « + Ajouter une boîte », adresse gy.arbia@gmail.com) : Grégory le lit dans
+l'aide de la boîte, et il est saisi **une fois en ligne** (règle 4), jamais dans le dépôt. Première
+exécution de `installerAnalyseMails` : autorisation Gmail + Drive à donner par Grégory sur ce compte.
 
 Le numéro de version est en tête de chaque fichier (`var VERSION = …`). Le relais répond sa version
 sur son adresse sans paramètre ; les autres scripts n'ont pas de point d'entrée public.
