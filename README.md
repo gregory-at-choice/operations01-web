@@ -88,6 +88,25 @@ mini), `operations01-mails.json` (index des mails et des correspondances) et
 appareils, uniquement si cet appareil avait des modifications non écrites, au plus une paire par
 quart d'heure, 20 conservées). Une simple relecture périodique ne crée jamais de copie « conflit ».
 
+## « Traité » : marqué lu et classé dans la boîte d'origine (v163, mails v3, relais v24)
+
+Dans « À traiter », **Traité** ne se contente plus de ranger la ligne dans l'app :
+- **SMS, iMessage, WhatsApp** : la conversation est marquée lue dans Messages / WhatsApp, par le Mac mini
+  (contrat `ASSISTANT-REPONSES.md` §11).
+- **Mail** : un dialogue « Marquer lu et classer » propose les dossiers de la boîte (étiquettes Gmail
+  exportées par le script mails, dossiers déjà utilisés, et le dossier choisi la dernière fois pour cet
+  expéditeur, présélectionné). « Classer » marque le mail lu, lui met l'étiquette (créée si besoin) et le
+  retire de la boîte de réception (case décochable) ; « Marquer lu seulement » ne classe pas. Plusieurs
+  mails cochés d'un coup (« Tout traité ») : un seul dossier pour tous.
+- Créer une action ou une tâche depuis un message, ou cocher le message dans le brief, marque le mail lu
+  sans demander de dossier.
+
+L'app n'écrit jamais dans les boîtes (accès en lecture seule) : elle note la décision dans le fichier de
+données (`evClassement`), et c'est le **script mails v3** de chaque compte Gmail (toutes les 15 minutes)
+ou le **Mac mini** (Outlook, SMS, WhatsApp) qui l'applique puis confirme. Sous « Traité le … », la ligne
+affiche le dossier choisi avec ⏳ en attendant, ✓ une fois appliqué, ou l'erreur. Les décisions sont
+oubliées après 30 jours.
+
 ## Transactions : la vue façon Pennylane (Finances → Transactions)
 
 C'est l'onglet qui s'ouvre par défaut dans Finances. Chaque ligne est une opération d'un relevé lu sur le Drive, avec sa date, son libellé lisible, sa catégorie, son montant (vert pour les encaissements, rouge pour les décaissements) et l'état de son justificatif :

@@ -18,7 +18,10 @@
  *        une demande est satisfaite dès qu'une proposition avec genereeLe > at est postée.
  *        data contient aussi evEdits (réponses corrigées par Grégory : { idEvt: {reponse, original, at…} }),
  *        evDecisions (tâches créées depuis un message : projet, échéance, temps alloué, étapes, et ce qui
- *        était proposé) et evLearn.senderMission (expéditeur → projet) : matière à apprentissage.
+ *        était proposé) et evLearn.senderMission (expéditeur → projet) : matière à apprentissage ;
+ *        evClassement (v24) : { idEvt: { at, source, compte, boite, externalId, lu, dossier, archiver } },
+ *        décisions « Traité » à appliquer dans la boîte d'origine (Gmail : script mails ; Outlook,
+ *        SMS / iMessage, WhatsApp : Mac mini, qui confirme dans assistant.classements[idEvt]).
  *   GET  ?secret=…&action=agenda&jours=7          → { ok, du, au, evenements:[…], jours:{ "AAAA-MM-JJ": { libres:[["12:00","14:00"]…], midi, soir } } }
  *        tous les agendas Google du compte principal (y compris ceux partagés : Icarus, perso, Majandco en
  *        occupé/libre), pour proposer de vrais créneaux dans une réponse (déjeuner, rendez-vous, visio).
@@ -47,12 +50,12 @@
 // recoller le code ne l'efface plus. À défaut, la valeur SECRET_CODE ci-dessous.
 var SECRET_CODE = "";
 var SECRET = (function () { try { return PropertiesService.getScriptProperties().getProperty("SECRET") || SECRET_CODE; } catch (e) { return SECRET_CODE; } })();
-var VERSION = 23;
+var VERSION = 24;
 var FICHIER_EVENEMENTS = "operations01-evenements.json";
 var FICHIER_ASSISTANT = "operations01-assistant.json";
 var FICHIER_DATA = "operations01-data.json";
 var EXPORT_CLES = ["missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "pushSubscriptions", "recordings", "lexique"];   // v12 : abonnements aux notifications poussées ; v14 : enregistrements audio ; v18 : lexique des transcriptions
-var EXPORT_OBJETS = ["evEdits", "evDecisions", "evLearn", "evSteps", "evRequests"];   // corrections et décisions de Grégory (apprentissage)
+var EXPORT_OBJETS = ["evEdits", "evDecisions", "evClassement", "evLearn", "evSteps", "evRequests"];   // evClassement (v24) : « Traité » → lu / dossier, à appliquer par le Mac mini (Outlook, SMS, WhatsApp)   // corrections et décisions de Grégory (apprentissage)
 var CONSERVER_JOURS = 30;
 var MAX_EVENEMENTS = 3000;   // ~95 événements par jour : 1000 ne couvrait que dix jours
 var DOSSIER_CORRESPONDANCES = "Correspondances";   // dossier à la racine du Drive (créé par appsscript-correspondances.gs)

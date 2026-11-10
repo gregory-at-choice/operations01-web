@@ -14,7 +14,12 @@
  *   4. écrit le résultat dans le fichier d'analyse (Drive), que la web app lit ;
  *   5. (boîte principale) y joint l'index du dossier « Correspondances » (un .md par
  *      interlocuteur, voir appsscript-correspondances.gs) : la web app affiche alors
- *      « Correspondance archivée (n) » sur les messages et les contacts.
+ *      « Correspondance archivée (n) » sur les messages et les contacts ;
+ *   6. (v3) applique les décisions « Traité » prises dans l'app pour cette boîte
+ *      (data.evClassement) : le mail est marqué lu, rangé sous l'étiquette choisie
+ *      (créée au besoin) et retiré de la boîte de réception ; la confirmation est
+ *      écrite dans le fichier d'analyse (classements[id]) et la liste des étiquettes
+ *      de la boîte y est exportée (etiquettes) pour le dialogue de classement.
  *
  * ── Boîte PRINCIPALE (le compte relié à la web app) ─────────────────────────
  *   Laissez FICHIER_MAILS_ID vide. Ouvrez une fois l'onglet « Relances » dans la
@@ -37,7 +42,7 @@
  * EXTRAIT_CARACTERES caractères du dernier message (0 pour ne rien extraire).
  */
 
-var VERSION = 2;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
+var VERSION = 3;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
 var FICHIER_MAILS_ID = "";        // vide = boîte principale (fichier trouvé par son nom)
 var DATA_FILE = "operations01-data.json";
 var MAILS_FILE = "operations01-mails.json";
@@ -180,6 +185,8 @@ function analyserMails() {
 
   var out = { updatedAt: Date.now(), generatedAt: new Date().toISOString(), mailbox: moi,
     unread: unread, relance: relance, nouveau: nouveau, rdvPrep: rdvPrep, threads: threads };
+  try { out.etiquettes = GmailApp.getUserLabels().map(function (l) { return l.getName(); }).sort(); } catch (e) { Logger.log("Étiquettes illisibles : " + e); }
+  try { out.classements = appliquerClassements(data, precedent, 40000); } catch (e) { Logger.log("Classements impossibles : " + e); out.classements = precedent.classements || {}; }
   if (!FICHIER_MAILS_ID) {
     try { out.correspondances = indexCorrespondances(); } catch (e) { Logger.log("Index des correspondances illisible : " + e); }
     try { out.dossiers = listerDossiers(); } catch (e) { Logger.log("Liste des dossiers impossible : " + e); }
@@ -189,6 +196,54 @@ function analyserMails() {
   Logger.log(unread.length + " non lus, " + relance.length + " à relancer, " + nouveau.length + " nouveaux, " + rdvPrep.length + " RDV, " + threads.length + " fils indexés (" + relus + " relus" + (complet ? ", index complet" : "") + ").");
   try { rangerFichiersJson(); } catch (e) { Logger.log("Rangement des JSON impossible : " + e); }
   if (!FICHIER_MAILS_ID) { try { rangerFichiersApp(45000); } catch (e) { Logger.log("Rangement des fichiers de l'app impossible : " + e); } }
+}
+
+// « Traité » dans l'app (v163) : data.evClassement[id] = { at, boite, externalId, lu, dossier, archiver }.
+// Pour chaque décision qui concerne CETTE boîte (boite = mon adresse) et pas encore
+// appliquée : retrouver le message par son Message-ID, le marquer lu, lui mettre
+// l'étiquette (créée si besoin) et l'archiver. Les décisions déjà appliquées sont
+// mémorisées dans les propriétés du script (pas dans le fichier de données, que
+// seule l'app écrit) et reportées dans le fichier d'analyse (classements[id]).
+var CLASSEMENTS_MAX = 20;          // par passage
+var CLASSEMENTS_ESSAIS = 3;        // un message introuvable est retenté à N passages
+function appliquerClassements(data, precedent, budgetMs) {
+  var debut = Date.now();
+  var decisions = (data && data.evClassement) || {};
+  var props = PropertiesService.getScriptProperties();
+  var faits = {}; try { faits = JSON.parse(props.getProperty("classementsFaits") || "{}") || {}; } catch (e) { faits = {}; }
+  var rapport = (precedent && precedent.classements) || {};
+  var ids = Object.keys(decisions).filter(function (id) {
+    var d = decisions[id]; return d && d.source === "mail" && String(d.boite || "").toLowerCase() === MOI && !(faits[id] && faits[id].ok);
+  });
+  var n = 0;
+  for (var i = 0; i < ids.length && n < CLASSEMENTS_MAX; i++) {
+    if (Date.now() - debut > budgetMs) break;
+    var id = ids[i], d = decisions[id], essai = faits[id] || { essais: 0 };
+    if (essai.essais >= CLASSEMENTS_ESSAIS) continue;
+    n++;
+    var res = { le: new Date().toISOString(), ok: false };
+    try {
+      var mid = String(d.externalId || "").replace(/^<|>$/g, "");
+      var threads = mid ? GmailApp.search("rfc822msgid:" + mid, 0, 1) : [];
+      if (!threads.length) throw new Error("message introuvable");
+      var th = threads[0];
+      th.markRead();
+      if (d.dossier) {
+        var label = GmailApp.getUserLabelByName(d.dossier) || GmailApp.createLabel(d.dossier);
+        th.addLabel(label);
+        if (d.archiver !== false) th.moveToArchive();
+        res.dossier = d.dossier;
+      }
+      res.ok = true;
+    } catch (e) { res.erreur = String(e && e.message || e); }
+    essai.essais = (essai.essais || 0) + 1; essai.ok = res.ok; essai.le = res.le;
+    faits[id] = essai; rapport[id] = res;
+  }
+  // Oubli des décisions disparues du fichier de données (l'app les efface après 30 jours).
+  Object.keys(faits).forEach(function (id) { if (!decisions[id]) { delete faits[id]; delete rapport[id]; } });
+  props.setProperty("classementsFaits", JSON.stringify(faits));
+  if (n) Logger.log(n + " classement(s) appliqué(s).");
+  return rapport;
 }
 
 // Range dans DOSSIER_JSON tous les fichiers « operations01-*.json » que possède ce

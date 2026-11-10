@@ -524,3 +524,37 @@ réessayer une fois, sans changer de source. `genereePar` indique la source : `"
 **Sécurité.** Si la clé fuit ou se retrouve dans un journal : la désactiver immédiatement dans la
 Console (Paramètres → Clés API) et le dire à Grégory, qui en crée une autre.
 
+## 11. « Traité » : marquer lu et classer dans la boîte d'origine (v163, relais v24, mails v3)
+
+Quand Grégory appuie sur **Traité** dans « À traiter », l'app note une décision dans
+`data.evClassement[idEvt]` (export du relais, clé `data.evClassement`) :
+
+```json
+{ "at": "2026-11-10T09:12:00.000Z", "source": "mail", "compte": "outlook", "boite": "gy.arbia@gmail.com",
+  "externalId": "<CAF…@mail.gmail.com>", "expediteur": "contact@exemple.fr", "sujet": "…",
+  "lu": true, "dossier": "Clients / Exemple", "archiver": true }
+```
+
+- `source` : `mail`, `sms`, `imessage`, `whatsapp`… ; `compte` : celui de l'événement ; `boite` : adresse
+  de la boîte mail (vide hors mail) ; `externalId` : Message-ID du mail ; `dossier` absent = marquer lu
+  seulement ; `archiver` : retirer de la boîte de réception après classement.
+- L'app ne touche jamais aux boîtes (accès en lecture seule). Qui applique quoi :
+
+| Source / compte | Qui | Quoi |
+|---|---|---|
+| mail, comptes Gmail (choicefinance, icarus, majandco) | script `appsscript-mails.gs` v3 du compte, à chaque passage (15 min, 30 min en heures creuses) | marquer lu, étiquette `dossier` (créée au besoin), archiver ; exporte la liste des étiquettes (`etiquettes`) et confirme dans `classements[idEvt]` de son fichier d'analyse |
+| mail, compte `outlook` (et tout compte sans script mails) | **Mac mini** | marquer lu dans Outlook, déplacer dans le dossier `dossier` (créé au besoin, `archiver` ignoré) ; écrire `assistant.classements[idEvt]`, et la liste des dossiers Outlook dans `assistant.dossiersMail["outlook"]` (l'app la proposera dans le dialogue) |
+| `sms` / `imessage` | **Mac mini** | marquer la conversation comme lue dans Messages (au mieux : ouverture de la conversation dans Messages, ou `chat.db` si une méthode fiable existe) ; confirmer dans `assistant.classements[idEvt]` |
+| `whatsapp` | **Mac mini** | marquer la conversation comme lue dans WhatsApp Desktop (au mieux : ouverture de la conversation) ; confirmer |
+
+Confirmation attendue : `assistant.classements[idEvt] = { "le": ISO, "ok": true }` ou
+`{ "le": ISO, "ok": false, "erreur": "message introuvable" }`. L'app affiche ⏳ tant qu'aucune
+confirmation n'est arrivée, ✓ ensuite, et l'erreur sinon. Règles :
+- Traiter une décision **une seule fois** (mémoriser les identifiants appliqués) ; trois échecs → abandonner
+  et confirmer `ok: false`. Rien à faire pour les décisions qui ne concernent pas le Mac mini (boîtes Gmail).
+- Lire `evClassement` à chaque cycle d'export (toutes les 5 minutes le jour), jamais plus souvent.
+- L'app efface les décisions de plus de 30 jours : oublier alors les identifiants correspondants.
+- Ne jamais supprimer un message, ni marquer lu autre chose que le message ou la conversation visés.
+- `evLearn.senderDossier[expediteur] = dossier` : dossier choisi par expéditeur. À réutiliser pour proposer
+  le dossier dans `proposition.dossier` des prochains événements du même expéditeur (l'app le
+  présélectionnera).

@@ -39,14 +39,14 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v162";
+const APP_VERSION = "v163";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
 let state = load();
 
 function blankState() {
-  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], journalEntries: [], pushSubscriptions: [], recordings: [], lexique: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evLearn: {}, evRequests: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
+  return { companies: [], contacts: [], categories: [], invoices: [], missions: [], tasks: [], actions: [], rendezvous: [], recurrences: [], slots: [], accounts: [], ccaMovements: [], salaries: [], journalEntries: [], pushSubscriptions: [], recordings: [], lexique: [], leave: defaultLeave(), readerOrder: [], readerCurrent: null, pdfOrder: [], pdfCurrent: null, mailboxes: [], mailLinks: {}, notifs: [], notifSeen: {}, evSteps: {}, evEdits: {}, evDecisions: {}, evClassement: {}, evLearn: {}, evRequests: {}, bankRules: [], bankMap: {}, bankSkip: {}, vipSenders: [], budgets: [], pipelines: [], deals: [], contactIgnore: {}, updatedAt: 0 };
 }
 function load() {
   try {
@@ -113,7 +113,7 @@ function applyLexique(text, entries) {
 }
 const SYNC_COLLECTIONS = ["companies", "contacts", "categories", "invoices", "missions", "tasks", "actions", "rendezvous", "recurrences", "slots", "accounts", "ccaMovements", "salaries", "mailboxes", "notifs", "bankRules", "vipSenders", "budgets", "pipelines", "deals", "journalEntries", "pushSubscriptions", "recordings", "lexique"];
 const SYNC_NESTED = { missions: "entries" };
-const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evLearn", "evRequests", "evRequested", "livraisonsVues", "bankMap", "bankSkip", "contactIgnore"];
+const SYNC_MAPS = ["mailLinks", "notifSeen", "evSteps", "evEdits", "evDecisions", "evClassement", "evLearn", "evRequests", "evRequested", "livraisonsVues", "bankMap", "bankSkip", "contactIgnore"];
 const sigOf = (r) => JSON.stringify(r, (k, v) => (k === "_t" ? undefined : v));
 let syncBase = (() => { try { const r = localStorage.getItem(BASE_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } })();
 function setSyncBase(obj) {
@@ -1797,6 +1797,7 @@ async function loadMails() {
   }
   mailLoading = false; if (mailVisible()) render();
   refreshNotifications();
+  try { pruneClassements(); } catch (e) {}
 }
 // Ajoute une boîte secondaire : crée son fichier d'analyse, le partage avec ce
 // compte (écriture) ainsi que le fichier de données (lecture, pour les contacts).
@@ -3134,6 +3135,102 @@ async function flushEventDecisions() {
     throw new Error("le fichier change sans arrêt");
   } catch (e) { toast("Statut non enregistré (nouvel essai à la prochaine action) : " + (e.message || e)); return false; }
 }
+// ---- « Traité » : marquer lu et classer dans la boîte d'origine (v163) ----
+// L'app n'a qu'un accès en lecture seule aux boîtes : elle n'y touche jamais
+// elle-même. Elle note la décision dans evClassement (synchronisé dans le fichier
+// de données), et c'est le script « mails » du compte concerné (Gmail : marquer lu,
+// étiquette, archivage) ou le Mac mini (Outlook, SMS / iMessage, WhatsApp) qui
+// l'applique, puis confirme dans son fichier d'analyse (classements[id]).
+const EV_CLASSEMENT_JOURS = 30;    // une décision non confirmée est oubliée après ce délai
+const eventBoite = (ev) => (ev.source === "mail" ? String(eventAccountAddress(ev.compte) || "").toLowerCase() : "");
+const classementOf = (id) => (state.evClassement || {})[id] || null;
+// Confirmation renvoyée par le script mails (fichier d'analyse de la boîte) ou par le
+// Mac mini (fichier assistant) : { le, ok, erreur }.
+function classementDone(id) {
+  for (const k of Object.keys(mailStore)) { const d = mailStore[k]; if (d && d.classements && d.classements[id]) return d.classements[id]; }
+  if (assistantStore && assistantStore.classements && assistantStore.classements[id]) return assistantStore.classements[id];
+  return null;
+}
+function recordClassement(ev, opts) {
+  if (!ev || !ev.id) return;
+  const o = opts || {};
+  state.evClassement = state.evClassement || {};
+  const d = { at: new Date().toISOString(), source: ev.source || "mail", compte: ev.compte || "", boite: eventBoite(ev), externalId: String(ev.external_id || ""), expediteur: eventSenderKey(ev), sujet: ev.sujet || "", lu: true };
+  if (o.dossier) { d.dossier = o.dossier; d.archiver = o.archiver !== false; }
+  state.evClassement[ev.id] = d;
+  if (o.dossier) {
+    const k = eventSenderKey(ev);
+    state.evLearn = state.evLearn || {};
+    if (k) { state.evLearn.senderDossier = state.evLearn.senderDossier || {}; state.evLearn.senderDossier[k] = o.dossier; }
+    const rec = state.evLearn.dossiersRecents = state.evLearn.dossiersRecents || {};
+    const list = (rec[d.boite || "*"] = rec[d.boite || "*"] || []).filter((x) => x !== o.dossier); list.unshift(o.dossier); rec[d.boite || "*"] = list.slice(0, 12);
+  }
+  save();
+}
+// Oubli des décisions anciennes (confirmées ou non) pour que le fichier reste léger.
+function pruneClassements() {
+  const c = state.evClassement || {}; let changed = false;
+  const limit = Date.now() - EV_CLASSEMENT_JOURS * 86400000;
+  Object.keys(c).forEach((id) => { const t = new Date(c[id] && c[id].at || 0).getTime(); if (!t || t < limit) { delete c[id]; changed = true; } });
+  if (changed) save();
+}
+// Dossiers proposés pour un mail : étiquettes de la boîte (exportées par le script
+// mails), dossiers déjà utilisés, et celui choisi la dernière fois pour cet expéditeur.
+function mailFoldersFor(ev) {
+  const boite = eventBoite(ev), learn = state.evLearn || {};
+  const out = [], seen = {};
+  const add = (n) => { const v = String(n || "").trim(); if (v && !seen[v.toLowerCase()]) { seen[v.toLowerCase()] = 1; out.push(v); } };
+  const k = eventSenderKey(ev); if (k && learn.senderDossier && learn.senderDossier[k]) add(learn.senderDossier[k]);
+  ((learn.dossiersRecents || {})[boite || "*"] || []).forEach(add);
+  Object.keys(mailStore).forEach((key) => { const d = mailStore[key]; if (d && String(d.mailbox || "").toLowerCase() === boite) (d.etiquettes || []).forEach(add); });
+  if (!boite) ((learn.dossiersRecents || {})["*"] || []).forEach(add);
+  return out;
+}
+// Traité : SMS / iMessage / WhatsApp → marqué lu dans l'app d'origine ; mail → marqué
+// lu et dialogue de classement. Plusieurs mails d'un coup : un seul dossier pour tous.
+function markTraite(ids) {
+  const all = eventsAll(), evs = ids.map((id) => all.find((e) => e.id === id)).filter(Boolean);
+  const mails = evs.filter((e) => e.source === "mail"), autres = evs.filter((e) => e.source !== "mail");
+  autres.forEach((e) => recordClassement(e, {}));
+  if (!mails.length) return setEventStatuts(ids, "traite");
+  // Étiquettes de la boîte : lues dans les fichiers d'analyse (chargés au démarrage ; sinon maintenant).
+  const ready = Object.keys(mailStore).some((k) => mailStore[k]) || mailLoading || !(window.DriveSync && DriveSync.isConnected()) ? Promise.resolve() : loadMails().catch(() => {});
+  return ready.then(() => openClasserDialog(mails, () => setEventStatuts(ids, "traite")));
+}
+function openClasserDialog(mails, done) {
+  const ev = mails[0], boite = eventBoite(ev), folders = mailFoldersFor(ev);
+  const k = eventSenderKey(ev), learned = k && (state.evLearn || {}).senderDossier && state.evLearn.senderDossier[k] || "";
+  const who = mails.length > 1 ? `${mails.length} mails` : `${esc(eventSenderName(ev) || eventSenderKey(ev) || "?")}${ev.sujet ? " · « " + esc(ev.sujet) + " »" : ""}`;
+  const chips = folders.map((f) => `<button class="chip${f === learned ? " active" : ""}" data-cl-chip="${esc(f)}">${esc(f)}</button>`).join("");
+  showModal(`<div class="modal-head"><strong class="grow">Marquer lu et classer</strong><button class="btn ghost small" data-modal-close>✕</button></div>
+    <div class="muted" style="font-size:13px;line-height:1.45;margin-bottom:10px">${who}${boite ? ` · boîte ${esc(boite)}` : ""}<br>Le message sera marqué comme lu dans la boîte, et rangé dans le dossier choisi (une étiquette Gmail, créée si elle n'existe pas).</div>
+    <label class="field"><span>Dossier</span><input data-cl-dossier value="${esc(learned)}" placeholder="Nom du dossier (ex. Clients / Icarus)" list="cl-folders" autocomplete="off"/></label>
+    <datalist id="cl-folders">${folders.map((f) => `<option value="${esc(f)}">`).join("")}</datalist>
+    ${chips ? `<div class="chip-row" style="margin:8px 0 4px">${chips}</div>` : `<div class="muted" style="font-size:12px">Les étiquettes de cette boîte apparaîtront ici dès le prochain passage du script mails.</div>`}
+    <label class="inline-check" style="margin-top:10px"><input type="checkbox" data-cl-archiver checked/> Retirer de la boîte de réception (archiver)</label>
+    <div class="inline" style="justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap"><button class="btn ghost" data-cl-lu>Marquer lu seulement</button><button class="btn" data-cl-ok>Classer</button></div>`);
+  const inp = document.querySelector("[data-cl-dossier]"), arch = document.querySelector("[data-cl-archiver]");
+  document.querySelector("[data-modal-close]").onclick = closeModal;
+  document.querySelectorAll("[data-cl-chip]").forEach((b) => b.onclick = () => { inp.value = b.dataset.clChip; document.querySelectorAll("[data-cl-chip]").forEach((x) => x.classList.toggle("active", x === b)); inp.focus(); });
+  inp.oninput = () => document.querySelectorAll("[data-cl-chip]").forEach((x) => x.classList.toggle("active", x.dataset.clChip === inp.value.trim()));
+  const finish = (dossier) => {
+    mails.forEach((m) => recordClassement(m, dossier ? { dossier, archiver: arch.checked } : {}));
+    closeModal(); done();
+    toast(dossier ? `Classé dans « ${dossier} » : appliqué dans la boîte au prochain passage ✓` : "Marqué lu dans la boîte au prochain passage ✓");
+  };
+  document.querySelector("[data-cl-ok]").onclick = () => { const v = inp.value.trim(); if (!v) { inp.focus(); toast("Indique un dossier, ou « Marquer lu seulement »"); return; } finish(v); };
+  document.querySelector("[data-cl-lu]").onclick = () => finish("");
+  inp.onkeydown = (e) => { if (e.key === "Enter") document.querySelector("[data-cl-ok]").click(); };
+  inp.focus(); if (learned) inp.select();
+}
+// Libellé de l'état du classement, sous « Traité le … ».
+function classementLabel(ev) {
+  const c = classementOf(ev.id); if (!c) return "";
+  const done = classementDone(ev.id);
+  const quoi = c.dossier ? `→ ${c.dossier}` : (ev.source === "mail" ? "lu" : "lu dans " + (ev.source === "whatsapp" ? "WhatsApp" : "Messages"));
+  if (done) return ` · ${quoi}${done.ok === false ? ` (échec : ${done.erreur || "?"})` : " ✓"}`;
+  return ` · ${quoi} <span title="Sera appliqué dans la boîte par le script mails ou le Mac mini">⏳</span>`;
+}
 // Échéance proposée d'après l'urgence : immédiat / aujourd'hui → ce jour,
 // cette semaine → J+3, quand possible → J+7.
 function eventDueDate(ev) {
@@ -3383,7 +3480,7 @@ function openTaskDialog(ev, mode) {
     const f = { title: q("[data-td-title]").value.trim(), missionId: q("[data-td-mission]").value || null, due: q("[data-td-due]").value || "", est: Math.max(0, Math.round(Number(q("[data-td-est]").value) || 0)), steps: q("[data-td-steps]").value, perStep: q("[data-td-per-step]").checked };
     if (!f.title) { alert("Donne un intitulé à la tâche."); return; }
     const made = createTasksFromDialog(ev, f, p);
-    setEventStatut(ev.id, "traite"); closeModal();
+    recordClassement(ev, {}); setEventStatut(ev.id, "traite"); closeModal();
     const m = findMission(f.missionId);
     toast(`${made.length} tâche${made.length > 1 ? "s" : ""} créée${made.length > 1 ? "s" : ""}${m ? ` dans « ${m.title} »` : ""}${f.due ? " · " + fmtDate(f.due) : ""} ✓`);
     render();
@@ -3502,7 +3599,7 @@ function eventButtons(ev) {
        ${sameSender > 1 ? `<button class="btn ghost small" data-ev-ignore-sender="${ev.id}" title="Ignorer les ${sameSender} événements nouveaux de cet expéditeur">Ignorer l'expéditeur (${sameSender})</button>` : ""}
        <button class="btn ghost small" data-ev-statut="ignore" data-id="${ev.id}">Ignorer</button>
        <button class="btn small" data-ev-statut="traite" data-id="${ev.id}">Traité</button>`
-    : `<span class="muted" style="font-size:13px">${st === "traite" ? "Traité" : "Ignoré"}${ev.traiteLe ? " le " + esc(fmtDateTimeISO(ev.traiteLe)) : ""}</span>
+    : `<span class="muted" style="font-size:13px">${st === "traite" ? "Traité" : "Ignoré"}${ev.traiteLe ? " le " + esc(fmtDateTimeISO(ev.traiteLe)) : ""}${st === "traite" ? classementLabel(ev) : ""}</span>
        <button class="btn ghost small" data-ev-statut="nouveau" data-id="${ev.id}">Rouvrir</button>`;
 }
 // Liste courante : filtres de l'onglet, tri par urgence puis date.
@@ -3991,7 +4088,7 @@ function briefElementState(el) {
 }
 // Coche directe depuis le brief : l'événement passe « traité », la tâche « terminée ».
 function markBriefDone(type, id) {
-  if (type === "evenement") { if (eventsAll().some((e) => e.id === id)) setEventStatut(id, "traite"); return; }
+  if (type === "evenement") { const ev = eventsAll().find((e) => e.id === id); if (ev) { recordClassement(ev, {}); setEventStatut(id, "traite"); } return; }
   const t = state.tasks.find((x) => x.id === id);
   if (t) { setTaskProgress(t, 100); save(); render(); }
 }
@@ -8353,9 +8450,10 @@ function wire() {
     const ids = (b.dataset.ids || "").split(",").filter(Boolean); if (!ids.length) return;
     const statut = b.dataset.evBulk;
     if (statut === "ignore" && !confirm(`Ignorer ces ${ids.length} messages ?`)) return;
-    setEventStatuts(ids, statut); toast(`${ids.length} message(s) ${statut === "traite" ? "traité(s)" : "ignoré(s)"} ✓`);
+    if (statut === "traite") { markTraite(ids); return; }
+    setEventStatuts(ids, statut); toast(`${ids.length} message(s) ignoré(s) ✓`);
   });
-  c.querySelectorAll("[data-ev-statut]").forEach((b) => b.onclick = () => setEventStatut(b.dataset.id, b.dataset.evStatut));
+  c.querySelectorAll("[data-ev-statut]").forEach((b) => b.onclick = () => b.dataset.evStatut === "traite" ? markTraite([b.dataset.id]) : setEventStatut(b.dataset.id, b.dataset.evStatut));
   c.querySelectorAll("[data-ev-ignore-sender]").forEach((b) => b.onclick = () => {
     const ev = eventsAll().find((e) => e.id === b.dataset.evIgnoreSender); if (!ev) return;
     const n = eventsFromSameSender(ev).length, who = eventFrom(ev).nom || eventFrom(ev).adresse || "cet expéditeur";
@@ -8364,7 +8462,7 @@ function wire() {
   });
   c.querySelectorAll("[data-ev-action]").forEach((b) => b.onclick = () => {
     const ev = eventsAll().find((e) => e.id === b.dataset.evAction); if (!ev) return;
-    const x = eventToAction(ev); setEventStatut(ev.id, "traite"); openDetail("actions", x.id); toast("Action créée à partir de l'événement ✓");
+    const x = eventToAction(ev); recordClassement(ev, {}); setEventStatut(ev.id, "traite"); openDetail("actions", x.id); toast("Action créée à partir de l'événement ✓");
   });
   c.querySelectorAll("[data-ev-task]").forEach((b) => b.onclick = () => {
     const ev = eventsAll().find((e) => e.id === b.dataset.evTask); if (ev) openTaskDialog(ev, "simple");
