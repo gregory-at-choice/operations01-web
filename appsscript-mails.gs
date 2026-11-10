@@ -17,8 +17,8 @@
  *      « Correspondance archivée (n) » sur les messages et les contacts ;
  *   6. (v3) applique les décisions « Traité » prises dans l'app pour cette boîte
  *      (data.evClassement) : le mail est marqué lu, rangé sous l'étiquette choisie
- *      (créée au besoin) et retiré de la boîte de réception, ou (v5, supprimer: true)
- *      mis à la corbeille, récupérable 30 jours, jamais supprimé définitivement ; la confirmation est
+ *      (créée au besoin) et retiré de la boîte de réception, ou (v5-v6, supprimer: true) le seul
+ *      message visé est mis à la corbeille, récupérable 30 jours, jamais supprimé définitivement ; la confirmation est
  *      écrite dans le fichier d'analyse (classements[id]) et la liste des étiquettes
  *      de la boîte y est exportée (etiquettes) pour le dialogue de classement.
  *
@@ -43,7 +43,7 @@
  * EXTRAIT_CARACTERES caractères du dernier message (0 pour ne rien extraire).
  */
 
-var VERSION = 5;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
+var VERSION = 6;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
 var FICHIER_MAILS_ID = "";        // vide = boîte principale (fichier trouvé par son nom)
 var DATA_FILE = "operations01-data.json";
 var MAILS_FILE = "operations01-mails.json";
@@ -199,7 +199,7 @@ function analyserMails() {
   if (!FICHIER_MAILS_ID) { try { rangerFichiersApp(45000); } catch (e) { Logger.log("Rangement des fichiers de l'app impossible : " + e); } }
 }
 
-// « Traité » dans l'app (v163) : data.evClassement[id] = { at, boite, externalId, lu, dossier, archiver, supprimer }.
+// « Traité » dans l'app (v163) : data.evClassement[id] = { at, boite, externalId, expediteur, sujet, recuLe, lu, dossier, archiver, supprimer }.
 // Pour chaque décision qui concerne CETTE boîte (boite = mon adresse) et pas encore
 // appliquée : retrouver le message par son Message-ID, le marquer lu, lui mettre
 // l'étiquette (créée si besoin) et l'archiver. Les décisions déjà appliquées sont
@@ -226,19 +226,24 @@ function appliquerClassements(data, precedent, budgetMs) {
     try {
       var mid = String(d.externalId || "").replace(/^<|>$/g, "");
       var threads = mid ? GmailApp.search("rfc822msgid:" + mid, 0, 1) : [];
-      // Message-ID inconnu ou modifié (mail transféré depuis Outlook, par exemple) : même expéditeur
-      // et même objet, parmi les 60 derniers jours.
-      if (!threads.length && d.expediteur && d.sujet) {
-        var sujet = String(d.sujet).replace(/^\s*(re|tr|fwd?)\s*:\s*/i, "").replace(/"/g, " ").trim().slice(0, 80);
-        if (sujet) threads = GmailApp.search("from:" + d.expediteur + " subject:\"" + sujet + "\" newer_than:60d", 0, 1);
-      }
-      if (!threads.length) throw new Error("message introuvable");
-      var th = threads[0];
       if (d.supprimer) {
-        // v5 : mise à la corbeille demandée par Grégory (récupérable 30 jours) ; jamais de suppression définitive.
-        th.moveToTrash();
+        // v6 : corbeille du SEUL message visé (jamais le fil : il contient les messages précédents et mes
+        // réponses). Message retrouvé par Message-ID ; sinon, repli STRICT : même expéditeur, même objet
+        // exact, date à SUPPRESSION_TOLERANCE_MIN près de la réception de l'événement. Sinon : à la main.
+        var msg = threads.length ? messageParId(threads[0], mid, d) : null;
+        if (!msg) msg = messageStrict(d);
+        if (!msg) throw new Error("message introuvable, à supprimer à la main");
+        msg.moveToTrash();
         res.supprime = true;
       } else {
+        // Message-ID inconnu ou modifié (mail transféré depuis Outlook, par exemple) : même expéditeur
+        // et même objet, parmi les 60 derniers jours ; le fil entier est marqué lu et classé.
+        if (!threads.length && d.expediteur && d.sujet) {
+          var sujet = sujetNettoye(d.sujet).replace(/"/g, " ").slice(0, 80);
+          if (sujet) threads = GmailApp.search("from:" + d.expediteur + " subject:\"" + sujet + "\" newer_than:60d", 0, 1);
+        }
+        if (!threads.length) throw new Error("message introuvable");
+        var th = threads[0];
         th.markRead();
         if (d.dossier) {
           var label = GmailApp.getUserLabelByName(d.dossier) || GmailApp.createLabel(d.dossier);
@@ -257,6 +262,39 @@ function appliquerClassements(data, precedent, budgetMs) {
   props.setProperty("classementsFaits", JSON.stringify(faits));
   if (n) Logger.log(n + " classement(s) appliqué(s).");
   return rapport;
+}
+
+var SUPPRESSION_TOLERANCE_MIN = 10;   // écart admis entre la date du message et la réception de l'événement
+function sujetNettoye(s) { return String(s || "").replace(/^\s*((re|tr|fwd?)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim(); }
+// Dans un fil trouvé par Message-ID : le message qui porte cet identifiant (en-tête), sinon celui dont
+// l'expéditeur et la date correspondent à l'événement, sinon rien.
+function messageParId(th, mid, d) {
+  var msgs = th.getMessages(), i, m;
+  for (i = 0; i < msgs.length; i++) {
+    m = msgs[i];
+    var h = ""; try { h = String(m.getHeader("Message-ID") || "").replace(/^<|>$/g, "").trim(); } catch (e) { h = ""; }
+    if (h && h === mid) return m;
+  }
+  for (i = 0; i < msgs.length; i++) { if (messageCorrespond(msgs[i], d, false)) return msgs[i]; }
+  return null;
+}
+// Repli strict (suppression) : expéditeur identique, objet exact (hors Re:/TR:), date à la tolérance près.
+function messageStrict(d) {
+  if (!d.expediteur || !d.sujet || !d.recuLe) return null;
+  var sujet = sujetNettoye(d.sujet).replace(/"/g, " ").slice(0, 80);
+  if (!sujet) return null;
+  var threads = GmailApp.search("from:" + d.expediteur + " subject:\"" + sujet + "\" newer_than:60d", 0, 5);
+  for (var i = 0; i < threads.length; i++) {
+    var msgs = threads[i].getMessages();
+    for (var j = 0; j < msgs.length; j++) { if (messageCorrespond(msgs[j], d, true)) return msgs[j]; }
+  }
+  return null;
+}
+function messageCorrespond(m, d, objetExact) {
+  if (extraireEmail(m.getFrom()) !== String(d.expediteur || "").toLowerCase()) return false;
+  if (objetExact && sujetNettoye(m.getSubject()).toLowerCase() !== sujetNettoye(d.sujet).toLowerCase()) return false;
+  var recu = new Date(d.recuLe || "").getTime(); if (!recu) return false;
+  return Math.abs(m.getDate().getTime() - recu) <= SUPPRESSION_TOLERANCE_MIN * 60000;
 }
 
 // Range dans DOSSIER_JSON tous les fichiers « operations01-*.json » que possède ce

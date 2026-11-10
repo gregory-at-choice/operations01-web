@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v166";
+const APP_VERSION = "v167";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3155,7 +3155,7 @@ function recordClassement(ev, opts) {
   if (!ev || !ev.id) return;
   const o = opts || {};
   state.evClassement = state.evClassement || {};
-  const d = { at: new Date().toISOString(), source: ev.source || "mail", compte: ev.compte || "", boite: eventBoite(ev), externalId: String(ev.external_id || ""), expediteur: eventSenderKey(ev), sujet: ev.sujet || "", lu: true };
+  const d = { at: new Date().toISOString(), source: ev.source || "mail", compte: ev.compte || "", boite: eventBoite(ev), externalId: String(ev.external_id || ""), expediteur: eventSenderKey(ev), sujet: ev.sujet || "", recuLe: ev.recu_le || "", lu: true };
   if (o.supprimer) d.supprimer = true;                 // mail seulement : mise à la corbeille (récupérable 30 jours)
   else if (o.dossier) { d.dossier = o.dossier; d.archiver = o.archiver !== false; }
   state.evClassement[ev.id] = d;

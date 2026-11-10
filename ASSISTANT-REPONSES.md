@@ -524,7 +524,7 @@ réessayer une fois, sans changer de source. `genereePar` indique la source : `"
 **Sécurité.** Si la clé fuit ou se retrouve dans un journal : la désactiver immédiatement dans la
 Console (Paramètres → Clés API) et le dire à Grégory, qui en crée une autre.
 
-## 11. « Traité » : marquer lu, classer ou supprimer dans la boîte d'origine (v163–v166, relais v25, mails v5)
+## 11. « Traité » : marquer lu, classer ou supprimer dans la boîte d'origine (v163–v167, relais v25, mails v6)
 
 Quand Grégory appuie sur **Traité** dans « À traiter », l'app note une décision dans
 `data.evClassement[idEvt]` (export du relais, clé `data.evClassement`) :
@@ -538,14 +538,17 @@ Quand Grégory appuie sur **Traité** dans « À traiter », l'app note une déc
 - `source` : `mail`, `sms`, `imessage`, `whatsapp`… ; `compte` : celui de l'événement ; `boite` : adresse
   de la boîte mail (vide hors mail) ; `externalId` : Message-ID du mail ; `dossier` absent = marquer lu
   seulement ; `archiver` : retirer de la boîte de réception après classement.
-- `supprimer: true` (v166, bouton « Supprimer » avec confirmation, **mails uniquement**) : le message est
-  mis à la **corbeille** de la boîte (récupérable 30 jours), ni lu ni classé ; jamais de suppression
-  définitive. Confirmation `{ le, ok, supprime: true }`.
+- `supprimer: true` (v166, bouton « Supprimer » avec confirmation, **mails uniquement**) : le **seul message
+  visé** (jamais le fil, qui contient les messages précédents et les réponses de Grégory) est mis à la
+  **corbeille** de la boîte (récupérable 30 jours), ni lu ni classé ; jamais de suppression définitive.
+  Message retrouvé par Message-ID ; sinon repli **strict** : même expéditeur, objet exact (hors Re:/TR:),
+  date à 10 minutes près de `recuLe` (réception de l'événement). Sinon `{ le, ok: false, erreur: "message
+  introuvable, à supprimer à la main" }`. Confirmation `{ le, ok: true, supprime: true }`.
 - L'app ne touche jamais aux boîtes (accès en lecture seule). Qui applique quoi :
 
 | Source / compte | Qui | Quoi |
 |---|---|---|
-| mail, comptes Google (choicefinance, icarus, majandco, et `gmail` / `outlook` qui arrivent tous deux dans gy.arbia@gmail.com, Outlook n'étant qu'un transfert) | script `appsscript-mails.gs` v5 du compte, à chaque passage (15 min, 30 min en heures creuses) | marquer lu, étiquette `dossier` (créée au besoin), archiver, ou corbeille si `supprimer` ; exporte la liste des étiquettes (`etiquettes`) et confirme dans `classements[idEvt]` de son fichier d'analyse. Message retrouvé par Message-ID, sinon par expéditeur + objet (60 jours) |
+| mail, comptes Google (choicefinance, icarus, majandco, et `gmail` / `outlook` qui arrivent tous deux dans gy.arbia@gmail.com, Outlook n'étant qu'un transfert) | script `appsscript-mails.gs` v6 du compte, à chaque passage (15 min, 30 min en heures creuses) | marquer lu, étiquette `dossier` (créée au besoin), archiver, ou corbeille si `supprimer` ; exporte la liste des étiquettes (`etiquettes`) et confirme dans `classements[idEvt]` de son fichier d'analyse. Message retrouvé par Message-ID, sinon par expéditeur + objet (60 jours) |
 | mail d'un compte sans script mails (aucun aujourd'hui) | **Mac mini** | marquer lu, déplacer dans le dossier `dossier` ; confirmer par le relais (ci-dessous) et, facultatif, envoyer la liste des dossiers dans `dossiersMail:{ compte:[…] }` |
 | `sms` / `imessage` | **Mac mini** | marquer la conversation comme lue dans Messages (au mieux : ouverture de la conversation dans Messages, ou `chat.db` si une méthode fiable existe) ; confirmer dans `assistant.classements[idEvt]` |
 | `whatsapp` | **Mac mini** | marquer la conversation comme lue dans WhatsApp Desktop (au mieux : ouverture de la conversation) ; confirmer |
