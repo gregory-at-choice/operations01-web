@@ -43,7 +43,7 @@
  * EXTRAIT_CARACTERES caractères du dernier message (0 pour ne rien extraire).
  */
 
-var VERSION = 6;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
+var VERSION = 7;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
 var FICHIER_MAILS_ID = "";        // vide = boîte principale (fichier trouvé par son nom)
 var DATA_FILE = "operations01-data.json";
 var MAILS_FILE = "operations01-mails.json";
@@ -225,7 +225,9 @@ function appliquerClassements(data, precedent, budgetMs) {
     var res = { le: new Date().toISOString(), ok: false };
     try {
       var mid = String(d.externalId || "").replace(/^<|>$/g, "");
-      var threads = mid ? GmailApp.search("rfc822msgid:" + mid, 0, 1) : [];
+      // v7 : in:anywhere inclut le spam et la corbeille (newsletters déjà filtrées, réponses d'invitation
+      // rangées par Gmail) ; marquer lu ou mettre à la corbeille y reste sans effet de bord.
+      var threads = mid ? GmailApp.search("rfc822msgid:" + mid + " in:anywhere", 0, 1) : [];
       if (d.supprimer) {
         // v6 : corbeille du SEUL message visé (jamais le fil : il contient les messages précédents et mes
         // réponses). Message retrouvé par Message-ID ; sinon, repli STRICT : même expéditeur, même objet
