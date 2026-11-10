@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v165";
+const APP_VERSION = "v166";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3156,7 +3156,8 @@ function recordClassement(ev, opts) {
   const o = opts || {};
   state.evClassement = state.evClassement || {};
   const d = { at: new Date().toISOString(), source: ev.source || "mail", compte: ev.compte || "", boite: eventBoite(ev), externalId: String(ev.external_id || ""), expediteur: eventSenderKey(ev), sujet: ev.sujet || "", lu: true };
-  if (o.dossier) { d.dossier = o.dossier; d.archiver = o.archiver !== false; }
+  if (o.supprimer) d.supprimer = true;                 // mail seulement : mise à la corbeille (récupérable 30 jours)
+  else if (o.dossier) { d.dossier = o.dossier; d.archiver = o.archiver !== false; }
   state.evClassement[ev.id] = d;
   if (o.dossier) {
     const k = eventSenderKey(ev);
@@ -3199,6 +3200,17 @@ function markTraite(ids) {
   return ready.then(() => openClasserDialog(mails, () => setEventStatuts(ids, "traite")));
 }
 const CL_CHIPS_MAX = 12;   // puces affichées sans filtre (dossiers appris et récents d'abord)
+// Supprimer un mail : confirmation, décision « traité » avec supprimer: true ; le script mails du compte
+// met le message à la corbeille (récupérable 30 jours, jamais de suppression définitive).
+function trashMail(id) {
+  const ev = eventsAll().find((e) => e.id === id); if (!ev || ev.source !== "mail") return Promise.resolve(false);
+  const who = eventSenderName(ev) || eventSenderKey(ev) || "?";
+  if (!confirm(`Mettre à la corbeille le mail de ${who}${ev.sujet ? " « " + ev.sujet + " »" : ""} ?
+Il restera récupérable 30 jours dans la corbeille de la boîte ${eventBoite(ev) || ""}.`)) return Promise.resolve(false);
+  recordClassement(ev, { supprimer: true });
+  toast("Mail mis à la corbeille au prochain passage du script mails ✓");
+  return setEventStatuts([id], "traite");
+}
 function openClasserDialog(mails, done) {
   const ev = mails[0], boite = eventBoite(ev), folders = mailFoldersFor(ev);
   const k = eventSenderKey(ev), learned = k && (state.evLearn || {}).senderDossier && state.evLearn.senderDossier[k] || "";
@@ -3239,7 +3251,7 @@ function openClasserDialog(mails, done) {
 function classementLabel(ev) {
   const c = classementOf(ev.id); if (!c) return "";
   const done = classementDone(ev.id);
-  const quoi = c.dossier ? `→ ${c.dossier}` : (ev.source === "mail" ? "lu" : "lu dans " + (ev.source === "whatsapp" ? "WhatsApp" : "Messages"));
+  const quoi = c.supprimer ? "corbeille" : c.dossier ? `→ ${c.dossier}` : (ev.source === "mail" ? "lu" : "lu dans " + (ev.source === "whatsapp" ? "WhatsApp" : "Messages"));
   if (done) return ` · ${quoi}${done.ok === false ? ` (échec : ${done.erreur || "?"})` : " ✓"}`;
   return ` · ${quoi} <span title="Sera appliqué dans la boîte par le script mails ou le Mac mini">⏳</span>`;
 }
@@ -3609,6 +3621,7 @@ function eventButtons(ev) {
     ? `<button class="btn secondary small" data-ev-action="${ev.id}" title="Créer une action à suivre">🎫 Action</button>
        <button class="btn secondary small" data-ev-task="${ev.id}" title="Créer une tâche">✅ Tâche</button>
        ${sameSender > 1 ? `<button class="btn ghost small" data-ev-ignore-sender="${ev.id}" title="Ignorer les ${sameSender} événements nouveaux de cet expéditeur">Ignorer l'expéditeur (${sameSender})</button>` : ""}
+       ${ev.source === "mail" ? `<button class="btn ghost small ev-trash" data-ev-trash="${ev.id}" title="Mettre ce mail à la corbeille dans la boîte (récupérable 30 jours)">Supprimer</button>` : ""}
        <button class="btn ghost small" data-ev-statut="ignore" data-id="${ev.id}">Ignorer</button>
        <button class="btn small" data-ev-statut="traite" data-id="${ev.id}">Traité</button>`
     : `<span class="muted" style="font-size:13px">${st === "traite" ? "Traité" : "Ignoré"}${ev.traiteLe ? " le " + esc(fmtDateTimeISO(ev.traiteLe)) : ""}${st === "traite" ? classementLabel(ev) : ""}</span>
@@ -8466,6 +8479,7 @@ function wire() {
     setEventStatuts(ids, statut); toast(`${ids.length} message(s) ignoré(s) ✓`);
   });
   c.querySelectorAll("[data-ev-statut]").forEach((b) => b.onclick = () => b.dataset.evStatut === "traite" ? markTraite([b.dataset.id]) : setEventStatut(b.dataset.id, b.dataset.evStatut));
+  c.querySelectorAll("[data-ev-trash]").forEach((b) => b.onclick = () => trashMail(b.dataset.evTrash));
   c.querySelectorAll("[data-ev-ignore-sender]").forEach((b) => b.onclick = () => {
     const ev = eventsAll().find((e) => e.id === b.dataset.evIgnoreSender); if (!ev) return;
     const n = eventsFromSameSender(ev).length, who = eventFrom(ev).nom || eventFrom(ev).adresse || "cet expéditeur";

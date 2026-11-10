@@ -524,7 +524,7 @@ réessayer une fois, sans changer de source. `genereePar` indique la source : `"
 **Sécurité.** Si la clé fuit ou se retrouve dans un journal : la désactiver immédiatement dans la
 Console (Paramètres → Clés API) et le dire à Grégory, qui en crée une autre.
 
-## 11. « Traité » : marquer lu et classer dans la boîte d'origine (v163, relais v25, mails v4)
+## 11. « Traité » : marquer lu, classer ou supprimer dans la boîte d'origine (v163–v166, relais v25, mails v5)
 
 Quand Grégory appuie sur **Traité** dans « À traiter », l'app note une décision dans
 `data.evClassement[idEvt]` (export du relais, clé `data.evClassement`) :
@@ -538,11 +538,14 @@ Quand Grégory appuie sur **Traité** dans « À traiter », l'app note une déc
 - `source` : `mail`, `sms`, `imessage`, `whatsapp`… ; `compte` : celui de l'événement ; `boite` : adresse
   de la boîte mail (vide hors mail) ; `externalId` : Message-ID du mail ; `dossier` absent = marquer lu
   seulement ; `archiver` : retirer de la boîte de réception après classement.
+- `supprimer: true` (v166, bouton « Supprimer » avec confirmation, **mails uniquement**) : le message est
+  mis à la **corbeille** de la boîte (récupérable 30 jours), ni lu ni classé ; jamais de suppression
+  définitive. Confirmation `{ le, ok, supprime: true }`.
 - L'app ne touche jamais aux boîtes (accès en lecture seule). Qui applique quoi :
 
 | Source / compte | Qui | Quoi |
 |---|---|---|
-| mail, comptes Google (choicefinance, icarus, majandco, et `gmail` / `outlook` qui arrivent tous deux dans gy.arbia@gmail.com, Outlook n'étant qu'un transfert) | script `appsscript-mails.gs` v4 du compte, à chaque passage (15 min, 30 min en heures creuses) | marquer lu, étiquette `dossier` (créée au besoin), archiver ; exporte la liste des étiquettes (`etiquettes`) et confirme dans `classements[idEvt]` de son fichier d'analyse. Message retrouvé par Message-ID, sinon par expéditeur + objet (60 jours) |
+| mail, comptes Google (choicefinance, icarus, majandco, et `gmail` / `outlook` qui arrivent tous deux dans gy.arbia@gmail.com, Outlook n'étant qu'un transfert) | script `appsscript-mails.gs` v5 du compte, à chaque passage (15 min, 30 min en heures creuses) | marquer lu, étiquette `dossier` (créée au besoin), archiver, ou corbeille si `supprimer` ; exporte la liste des étiquettes (`etiquettes`) et confirme dans `classements[idEvt]` de son fichier d'analyse. Message retrouvé par Message-ID, sinon par expéditeur + objet (60 jours) |
 | mail d'un compte sans script mails (aucun aujourd'hui) | **Mac mini** | marquer lu, déplacer dans le dossier `dossier` ; confirmer par le relais (ci-dessous) et, facultatif, envoyer la liste des dossiers dans `dossiersMail:{ compte:[…] }` |
 | `sms` / `imessage` | **Mac mini** | marquer la conversation comme lue dans Messages (au mieux : ouverture de la conversation dans Messages, ou `chat.db` si une méthode fiable existe) ; confirmer dans `assistant.classements[idEvt]` |
 | `whatsapp` | **Mac mini** | marquer la conversation comme lue dans WhatsApp Desktop (au mieux : ouverture de la conversation) ; confirmer |
@@ -557,7 +560,10 @@ même POST que le brief ou les estimations. L'app affiche ⏳ tant qu'aucune con
   et confirmer `ok: false`. Rien à faire pour les décisions qui ne concernent pas le Mac mini (boîtes Gmail).
 - Lire `evClassement` à chaque cycle d'export (toutes les 5 minutes le jour), jamais plus souvent.
 - L'app efface les décisions de plus de 30 jours : oublier alors les identifiants correspondants.
-- Ne jamais supprimer un message, ni marquer lu autre chose que le message ou la conversation visés.
+- Ne jamais supprimer un message, sauf la mise à la corbeille demandée par Grégory (`supprimer: true`,
+  mails uniquement, jamais définitive) ; ne jamais marquer lu autre chose que le message ou la
+  conversation visés. SMS, iMessage et WhatsApp ne sont jamais supprimés : le Mac mini ne fait que lire
+  ces bases.
 - `evLearn.senderDossier[expediteur] = dossier` : dossier choisi par expéditeur. À réutiliser pour proposer
   le dossier dans `proposition.dossier` des prochains événements du même expéditeur (l'app le
   présélectionnera).

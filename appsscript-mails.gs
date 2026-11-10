@@ -17,7 +17,8 @@
  *      « Correspondance archivée (n) » sur les messages et les contacts ;
  *   6. (v3) applique les décisions « Traité » prises dans l'app pour cette boîte
  *      (data.evClassement) : le mail est marqué lu, rangé sous l'étiquette choisie
- *      (créée au besoin) et retiré de la boîte de réception ; la confirmation est
+ *      (créée au besoin) et retiré de la boîte de réception, ou (v5, supprimer: true)
+ *      mis à la corbeille, récupérable 30 jours, jamais supprimé définitivement ; la confirmation est
  *      écrite dans le fichier d'analyse (classements[id]) et la liste des étiquettes
  *      de la boîte y est exportée (etiquettes) pour le dialogue de classement.
  *
@@ -42,7 +43,7 @@
  * EXTRAIT_CARACTERES caractères du dernier message (0 pour ne rien extraire).
  */
 
-var VERSION = 4;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
+var VERSION = 5;                  // à incrémenter à chaque modification (déploiement automatique par le Mac mini)
 var FICHIER_MAILS_ID = "";        // vide = boîte principale (fichier trouvé par son nom)
 var DATA_FILE = "operations01-data.json";
 var MAILS_FILE = "operations01-mails.json";
@@ -198,7 +199,7 @@ function analyserMails() {
   if (!FICHIER_MAILS_ID) { try { rangerFichiersApp(45000); } catch (e) { Logger.log("Rangement des fichiers de l'app impossible : " + e); } }
 }
 
-// « Traité » dans l'app (v163) : data.evClassement[id] = { at, boite, externalId, lu, dossier, archiver }.
+// « Traité » dans l'app (v163) : data.evClassement[id] = { at, boite, externalId, lu, dossier, archiver, supprimer }.
 // Pour chaque décision qui concerne CETTE boîte (boite = mon adresse) et pas encore
 // appliquée : retrouver le message par son Message-ID, le marquer lu, lui mettre
 // l'étiquette (créée si besoin) et l'archiver. Les décisions déjà appliquées sont
@@ -233,12 +234,18 @@ function appliquerClassements(data, precedent, budgetMs) {
       }
       if (!threads.length) throw new Error("message introuvable");
       var th = threads[0];
-      th.markRead();
-      if (d.dossier) {
-        var label = GmailApp.getUserLabelByName(d.dossier) || GmailApp.createLabel(d.dossier);
-        th.addLabel(label);
-        if (d.archiver !== false) th.moveToArchive();
-        res.dossier = d.dossier;
+      if (d.supprimer) {
+        // v5 : mise à la corbeille demandée par Grégory (récupérable 30 jours) ; jamais de suppression définitive.
+        th.moveToTrash();
+        res.supprime = true;
+      } else {
+        th.markRead();
+        if (d.dossier) {
+          var label = GmailApp.getUserLabelByName(d.dossier) || GmailApp.createLabel(d.dossier);
+          th.addLabel(label);
+          if (d.archiver !== false) th.moveToArchive();
+          res.dossier = d.dossier;
+        }
       }
       res.ok = true;
     } catch (e) { res.erreur = String(e && e.message || e); }

@@ -88,7 +88,7 @@ mini), `operations01-mails.json` (index des mails et des correspondances) et
 appareils, uniquement si cet appareil avait des modifications non écrites, au plus une paire par
 quart d'heure, 20 conservées). Une simple relecture périodique ne crée jamais de copie « conflit ».
 
-## « Traité » : marqué lu et classé dans la boîte d'origine (v163, mails v4, relais v25)
+## « Traité » : marqué lu, classé ou supprimé dans la boîte d'origine (v163–v166, mails v5, relais v25)
 
 Dans « À traiter », **Traité** ne se contente plus de ranger la ligne dans l'app :
 - **SMS, iMessage, WhatsApp** : la conversation est marquée lue dans Messages / WhatsApp, par le Mac mini
@@ -100,6 +100,9 @@ Dans « À traiter », **Traité** ne se contente plus de ranger la ligne dans l
   mails cochés d'un coup (« Tout traité ») : un seul dossier pour tous.
 - Créer une action ou une tâche depuis un message, ou cocher le message dans le brief, marque le mail lu
   sans demander de dossier.
+- **Supprimer** (mails seulement, v166) : après confirmation, le mail passe en traité et le script mails le met
+  à la **corbeille** de la boîte, récupérable 30 jours ; rien n'est jamais supprimé définitivement. Pas de
+  suppression pour les SMS, iMessage et WhatsApp.
 
 L'app n'écrit jamais dans les boîtes (accès en lecture seule) : elle note la décision dans le fichier de
 données (`evClassement`), et c'est le **script mails v4** de chaque compte Google (toutes les 15 minutes ;
