@@ -39,7 +39,7 @@ const TASK_TYPES = [["tache", "Tâche"], ["jalon", "Jalon"], ["bug", "Anomalie"]
 
 // Version de l'application : affichée dans le menu pour vérifier d'un coup d'œil
 // que l'appareil exécute bien la dernière version publiée.
-const APP_VERSION = "v164";
+const APP_VERSION = "v165";
 
 // ----------------------------- Données -----------------------------
 const STORE_KEY = "operations01";
@@ -3198,22 +3198,33 @@ function markTraite(ids) {
   const ready = Object.keys(mailStore).some((k) => mailStore[k]) || mailLoading || !(window.DriveSync && DriveSync.isConnected()) ? Promise.resolve() : loadMails().catch(() => {});
   return ready.then(() => openClasserDialog(mails, () => setEventStatuts(ids, "traite")));
 }
+const CL_CHIPS_MAX = 12;   // puces affichées sans filtre (dossiers appris et récents d'abord)
 function openClasserDialog(mails, done) {
   const ev = mails[0], boite = eventBoite(ev), folders = mailFoldersFor(ev);
   const k = eventSenderKey(ev), learned = k && (state.evLearn || {}).senderDossier && state.evLearn.senderDossier[k] || "";
   const who = mails.length > 1 ? `${mails.length} mails` : `${esc(eventSenderName(ev) || eventSenderKey(ev) || "?")}${ev.sujet ? " · « " + esc(ev.sujet) + " »" : ""}`;
-  const chips = folders.map((f) => `<button class="chip${f === learned ? " active" : ""}" data-cl-chip="${esc(f)}">${esc(f)}</button>`).join("");
   showModal(`<div class="modal-head"><strong class="grow">Marquer lu et classer</strong><button class="btn ghost small" data-modal-close>✕</button></div>
     <div class="muted" style="font-size:13px;line-height:1.45;margin-bottom:10px">${who}${boite ? ` · boîte ${esc(boite)}` : ""}<br>Le message sera marqué comme lu dans la boîte, et rangé dans le dossier choisi (une étiquette Gmail, créée si elle n'existe pas).</div>
-    <label class="field"><span>Dossier</span><input data-cl-dossier value="${esc(learned)}" placeholder="Nom du dossier (ex. Clients / Icarus)" list="cl-folders" autocomplete="off"/></label>
-    <datalist id="cl-folders">${folders.map((f) => `<option value="${esc(f)}">`).join("")}</datalist>
-    ${chips ? `<div class="chip-row" style="margin:8px 0 4px">${chips}</div>` : `<div class="muted" style="font-size:12px">Les étiquettes de cette boîte apparaîtront ici dès le prochain passage du script mails.</div>`}
+    <label class="field"><span>Dossier</span><input data-cl-dossier value="${esc(learned)}" placeholder="${folders.length ? "Tape pour filtrer les " + folders.length + " dossiers, ou un nouveau nom" : "Nom du dossier (ex. Clients / Icarus)"}" autocomplete="off"/></label>
+    <div class="chip-row cl-chips" style="margin:8px 0 4px"></div>
     <label class="inline-check" style="margin-top:10px"><input type="checkbox" data-cl-archiver checked/> Retirer de la boîte de réception (archiver)</label>
     <div class="inline" style="justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap"><button class="btn ghost" data-cl-lu>Marquer lu seulement</button><button class="btn" data-cl-ok>Classer</button></div>`);
-  const inp = document.querySelector("[data-cl-dossier]"), arch = document.querySelector("[data-cl-archiver]");
+  const inp = document.querySelector("[data-cl-dossier]"), arch = document.querySelector("[data-cl-archiver]"), row = document.querySelector(".cl-chips");
+  // Puces : sans filtre, les premiers dossiers (appris, récents, puis étiquettes) ; avec filtre, ceux qui
+  // contiennent le texte tapé (sans tenir compte des accents ni de la casse), au plus CL_CHIPS_MAX.
+  const drawChips = () => {
+    const cur = inp.value.trim(), q = folders.indexOf(cur) > -1 ? "" : noAccents(cur);   // dossier exact (présélectionné) : liste entière
+    const list = q ? folders.filter((f) => noAccents(f).indexOf(q) > -1) : folders;
+    const shown = list.slice(0, CL_CHIPS_MAX), more = list.length - shown.length;
+    row.innerHTML = shown.map((f) => `<button class="chip${f === cur ? " active" : ""}" data-cl-chip="${esc(f)}" type="button">${esc(f)}</button>`).join("")
+      + (more > 0 ? `<span class="muted" style="font-size:12px;align-self:center">+${more} autre${more > 1 ? "s" : ""} : continue à taper</span>` : "")
+      + (!folders.length ? `<span class="muted" style="font-size:12px">Les étiquettes de cette boîte apparaîtront ici dès le prochain passage du script mails.</span>` : "")
+      + (q && !list.length ? `<span class="muted" style="font-size:12px">Nouveau dossier « ${esc(cur)} » : il sera créé.</span>` : "");
+    row.querySelectorAll("[data-cl-chip]").forEach((b) => b.onclick = () => { inp.value = b.dataset.clChip; drawChips(); inp.focus(); });
+  };
+  drawChips();
   document.querySelector("[data-modal-close]").onclick = closeModal;
-  document.querySelectorAll("[data-cl-chip]").forEach((b) => b.onclick = () => { inp.value = b.dataset.clChip; document.querySelectorAll("[data-cl-chip]").forEach((x) => x.classList.toggle("active", x === b)); inp.focus(); });
-  inp.oninput = () => document.querySelectorAll("[data-cl-chip]").forEach((x) => x.classList.toggle("active", x.dataset.clChip === inp.value.trim()));
+  inp.oninput = drawChips;
   const finish = (dossier) => {
     mails.forEach((m) => recordClassement(m, dossier ? { dossier, archiver: arch.checked } : {}));
     closeModal(); done();
