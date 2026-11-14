@@ -4,6 +4,55 @@ Version web installable d'Operations01. Application **web** autonome : les donn�
 stockées **localement dans le navigateur** (fonctionne hors ligne, aucune installation de
 serveur). C'est un point de départ ; les autres modules (Finances, Dashboard…) suivront.
 
+## Vue d'ensemble : comment tout tient ensemble
+
+Quatre couches. Les scripts Apps Script n'en sont qu'une ; le cœur du montage, c'est le couple
+**Drive (données)** + **GitHub Pages (code)**.
+
+```
+  iPhone / Mac / navigateur            Google Drive (soft/src-json)              Comptes Google
+  ┌─────────────────────────┐          ┌────────────────────────────┐            ┌──────────────────────┐
+  │ app choice (PWA)        │ lit/écrit│ operations01-data.json     │ lisent /   │ Apps Script, par     │
+  │ cache local (hors ligne)│ ◄──────► │ -evenements / -assistant   │ écrivent   │ compte : relais,     │
+  │ fusion entre appareils  │ drive.file│ -mails(-boîte) / -banque  │ ◄────────► │ mails ×4, correspon- │
+  │ service worker (vNNN)   │          │ backups, copies « conflit »│            │ dances, banque,      │
+  └───────────┬─────────────┘          └────────────────────────────┘            │ rappels              │
+              │ code servi par                                                   └──────────┬───────────┘
+              ▼                                                                             │ GET/POST relais
+  ┌─────────────────────────┐   copie des fichiers,   ┌─────────────────────────┐  (secret) │ ◄── Gmail ──►
+  │ GitHub Pages            │ ◄── commit sur main ─── │ dépôt web-choice        │           ▼
+  │ dépôt operations01-web  │                         │ (branche de travail)    │ ┌──────────────────────┐
+  │ branche main            │ ── .gs déployés par ──► │ app + .gs + contrats .md│ │ Mac mini (Assistants)│
+  └─────────────────────────┘    clasp, ≤ 10 min      └─────────────────────────┘ │ classe, rédige,      │
+                                 (Mac mini)                                       │ transcrit, applique  │
+                                                                                  │ Messages / WhatsApp  │
+                                                                                  └──────────────────────┘
+```
+
+1. **L'app (PWA sur GitHub Pages).** HTML, CSS, JavaScript sans serveur, servis depuis la branche
+   `main` du dépôt `operations01-web` à une adresse unique pour tous les appareils. Le service
+   worker met les fichiers en cache ; chaque version porte un numéro (`APP_VERSION`, `?v=NNN`,
+   cache `operations01-vNNN`) pour qu'un rechargement remplace l'ancien cache.
+2. **Les données (Drive, copie maîtresse).** Chaque appareil garde une copie locale dans le
+   navigateur (hors ligne) ; Drive est la copie durable et partagée. Connexion par identifiant OAuth
+   (`config.js`), portée `drive.file` : l'app ne voit que les fichiers qu'elle a créés. Passage d'un
+   appareil à l'autre : avant d'écrire, l'app relit la date du fichier distant ; si un autre appareil
+   a écrit entre-temps, elle **fusionne** les deux états et conserve les deux versions en copies
+   « conflit ». Sauvegarde datée quotidienne par appareil, 14 conservées (détails plus bas).
+3. **Les scripts Google (Apps Script), un par compte.** Ils tournent dans tes comptes Google, pas
+   dans l'app, et lisent/écrivent les mêmes fichiers JSON du Drive. Ce sont les seuls ponts vers
+   Gmail (l'app n'écrit jamais dans les boîtes). Leur code vit dans le dépôt ; le Mac mini le
+   déploie par `clasp` dans les dix minutes après chaque commit sur `main`
+   (`CONTRAT-DEPLOIEMENT.md`). Les réglages propres à un compte restent saisis en ligne.
+4. **Le Mac mini (session Assistants).** Il lit l'export du relais toutes les cinq minutes, classe
+   les messages, rédige les propositions, transcrit les réunions, applique les décisions Messages et
+   WhatsApp, et confirme au relais. Les contrats `.md` du dépôt (`ASSISTANT-REPONSES.md`,
+   `CONTRAT-DEPLOIEMENT.md`, `CONTRAT-NYT.md`) sont sa feuille de route.
+
+**Commit des changements.** Le développement se fait dans `web-choice` (branche de travail) ; au
+déploiement, les fichiers changés sont copiés dans `operations01-web` et poussés sur `main` : deux
+dépôts, deux commits. GitHub Pages publie l'app, le Mac mini publie les `.gs`.
+
 ## Contenu
 
 | Fichier | Rôle |
